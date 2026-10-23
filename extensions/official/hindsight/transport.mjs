@@ -9,20 +9,22 @@ export function config(value) {
   const prefix=value.bankPrefix??'mewu';
   if(typeof prefix!=='string'||!/^[A-Za-z0-9_-]{1,48}$/u.test(prefix))throw Error('记忆库前缀无效');
   if(value.completedTurnSync!==undefined&&typeof value.completedTurnSync!=='boolean')throw Error('记忆同步选项无效');
-  return {endpoint,bankPrefix:prefix,completedTurnSync:value.completedTurnSync===true};
+  const bankId=value.bankId??'';
+  if(typeof bankId!=='string'||bankId.length>256||/[\x00-\x1f\x7f]/u.test(bankId))throw Error('记忆库无效');
+  return {endpoint,bankPrefix:prefix,completedTurnSync:value.completedTurnSync===true,...(bankId?{bankId}:{})};
 }
 export function bank(config,agentId) {
   if(typeof agentId!=='string'||!/^[A-Za-z0-9_-]{1,128}$/u.test(agentId))throw Error('Agent 身份无效');
-  return `${config.bankPrefix}-${agentId}`;
+  return config.bankId||`${config.bankPrefix}-${agentId}`;
 }
 export function api(ctx,settings,previewKey,secretKey='api') {
   const base=config(settings);
   if(previewKey!==undefined&&(typeof previewKey!=='string'||previewKey.length>8192||/[\x00-\x20\x7f]/u.test(previewKey)))throw Error('API Key 无效');
-  return async(method,path,body,{missing=false,readiness=false}={})=>{
+  return async(method,path,body,{missing=false,readiness=false,query}={})=>{
     const secret=previewKey===undefined?await ctx.secrets.status(secretKey):null;
     let response;
     try { response=await ctx.host.call('network.fetch',{
-      url:base.endpoint+'/'+path.map(encodeURIComponent).join('/'),method,
+      url:base.endpoint+'/'+path.map(encodeURIComponent).join('/')+(query?'?'+Object.entries(query).map(([k,v])=>encodeURIComponent(k)+'='+encodeURIComponent(String(v))).join('&'):''),method,
       headers:{Accept:'application/json','Content-Type':'application/json',...(previewKey?{Authorization:'Bearer '+previewKey}:{})},
       ...(secret?.configured?{authorization:{key:secretKey}}:{}),...(body===undefined?{}:{body})
     }); } catch { throw Error('连接中断，操作结果未知'); }
@@ -37,6 +39,19 @@ export function api(ctx,settings,previewKey,secretKey='api') {
   };
 }
 export const route=(id,...parts)=>['v1','default','banks',id,...parts];
+
+export async function listBanks(ctx,settings,previewKey,{offset=0,q=''}={}) {
+  if(!Number.isSafeInteger(offset)||offset<0||offset>1000000||typeof q!=='string'||q.length>128)throw Error('记忆库查询无效');
+  const result=await api(ctx,settings,previewKey)('GET',['v1','default','banks'],undefined,{query:{limit:100,offset,...(q?{q}:{})}});
+  if(!Array.isArray(result.banks)||result.banks.length>100)throw Error('服务返回内容无效');
+  const banks=result.banks.map(row=>{
+    if(!row||typeof row.bank_id!=='string'||!row.bank_id||row.bank_id.length>256||/[\x00-\x1f\x7f]/u.test(row.bank_id))throw Error('服务返回内容无效');
+    return {id:row.bank_id,name:typeof row.name==='string'?row.name.slice(0,256):''};
+  });
+  // Older servers return only banks. A short page ends pagination in both APIs.
+  const next=offset+banks.length;
+  return {ok:true,banks,nextOffset:banks.length===100&&(!Number.isSafeInteger(result.total)||next<result.total)?next:null};
+}
 
 export async function probe(ctx,settings,previewKey,secretKey='api') {
   const request=api(ctx,settings,previewKey,secretKey);

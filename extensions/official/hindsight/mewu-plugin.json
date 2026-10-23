@@ -3,7 +3,7 @@
   "hostApi": 2,
   "runtime": "javascript",
   "id": "abnste.hindsight",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "name": "Hindsight",
   "description": "独立的 Hindsight 长期记忆接入。连接设置与记忆协议随插件安装、停用和卸载。",
   "publisher": "Mewu",

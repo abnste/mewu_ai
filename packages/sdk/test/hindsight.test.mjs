@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import activate from '../../../extensions/official/hindsight/index.mjs';
-import {api,probe} from '../../../extensions/official/hindsight/transport.mjs';
+import {api,probe,listBanks,config,bank} from '../../../extensions/official/hindsight/transport.mjs';
 import {migrate} from '../../../extensions/official/hindsight/migration.mjs';
 
 const connection={endpoint:'https://memory.example.test',bankPrefix:'mewu'};
@@ -26,6 +26,65 @@ function fixture(respond=()=>({status:200,body:'{}'})) {
   return {ctx,values,services,requests,invoke:async(input,agentId='alice')=>services.get('memory')(input,{context:{agentId}})};
 }
 const json=body=>({status:200,body:JSON.stringify(body)});
+
+test('server bank listing uses the visible draft, safely encodes search and preserves opaque credentials',async()=>{
+  const f=fixture(()=>json({banks:[{bank_id:'existing-bank',name:'已有记忆'}],total:1}));
+  await activate(f.ctx);
+  assert.deepEqual(await f.services.get('settings')({type:'banks',config:{...connection,endpoint:'https://draft.example.test'},q:'a & b/?',offset:0}),{ok:true,banks:[{id:'existing-bank',name:'已有记忆'}],nextOffset:null});
+  const url=new URL(f.requests[0].url);
+  assert.equal(url.origin,'https://draft.example.test');assert.equal(url.pathname,'/v1/default/banks');
+  assert.equal(url.searchParams.get('q'),'a & b/?');assert.equal(url.searchParams.get('limit'),'100');assert.equal(url.searchParams.get('offset'),'0');
+  assert.deepEqual(f.requests[0].authorization,{key:'api'});
+  f.requests.length=0;
+  await listBanks(f.ctx,connection,'draft-key');assert.equal(f.requests[0].headers.Authorization,'Bearer draft-key');assert.equal(f.requests[0].authorization,undefined);
+});
+
+test('bank pages advance without silently truncating and reject malformed or unbounded results',async()=>{
+  let response={banks:Array.from({length:100},(_,i)=>({bank_id:'bank-'+i})),total:205};
+  const f=fixture(()=>json(response));
+  assert.equal((await listBanks(f.ctx,connection,undefined,{offset:100})).nextOffset,200);
+  response={banks:[{bank_id:'last'}],total:205};assert.equal((await listBanks(f.ctx,connection,undefined,{offset:204})).nextOffset,null);
+  await assert.rejects(listBanks(f.ctx,connection,undefined,{offset:-1}),/查询无效/);
+  await assert.rejects(listBanks(f.ctx,connection,undefined,{q:'x'.repeat(129)}),/查询无效/);
+  for(const banks of [null,[{bank_id:''}],[{bank_id:'unsafe\n'}],Array(101).fill({bank_id:'x'})]){response={banks};await assert.rejects(listBanks(f.ctx,connection),/内容无效/);}
+});
+
+test('a selected existing bank actually routes recall and retain there, while automatic banks stay isolated',async()=>{
+  const f=fixture(p=>p.url.endsWith('/recall')?json({results:[{document_id:'existing-doc',text:'server fact'}]}):json({success:true,bank_id:'existing/shared'}));
+  f.ctx.configuration.get=async key=>key==='connection'?{...connection,bankId:'existing/shared'}:null;
+  await activate(f.ctx);
+  assert.deepEqual(await f.invoke({operation:'recall',query:'fact'}),{memories:[{id:'existing-doc',text:'server fact'}]});
+  assert.equal(f.requests[0].url,connection.endpoint+'/v1/default/banks/existing%2Fshared/memories/recall');
+  const saved=await f.invoke({operation:'retain',text:'new fact'});assert.equal(saved.retained,true);
+  assert.equal(f.requests[1].url,connection.endpoint+'/v1/default/banks/existing%2Fshared/memories');
+  // Existing server documents are readable, not permission to delete arbitrary remote IDs.
+  assert.equal((await f.invoke({operation:'forget',id:'existing-doc'})).isError,true);assert.equal(f.requests.length,2);
+  const own=[...f.values.entries()].find(([,v])=>v?.id===saved.id);f.values.set(own[0],{...own[1],forgotten:true});
+  f.ctx.host.call=async()=>json({results:[{document_id:saved.id,text:'must stay suppressed'},{document_id:'existing-doc',text:'server fact'}]});
+  assert.deepEqual(await f.invoke({operation:'recall',query:'fact'}),{memories:[{id:'existing-doc',text:'server fact'}]});
+});
+
+test('explicit bank choice overrides an archived route without changing the archive; removing it restores the route',async()=>{
+  let choice={...connection,bankId:'chosen'};
+  const archived={bindingId:'old',endpoint:'https://old.example',bankId:'original-bank',policy:{recall:true}};
+  const f=fixture(()=>json({results:[]}));f.ctx.configuration.get=async key=>key==='connection'?choice:key==='archive.alice'?archived:null;
+  await activate(f.ctx);await f.invoke({operation:'recall',query:'x'});
+  assert.equal(f.requests[0].url,connection.endpoint+'/v1/default/banks/chosen/memories/recall');assert.deepEqual(f.requests[0].authorization,{key:'api'});
+  choice=connection;await f.invoke({operation:'recall',query:'x'});
+  assert.equal(f.requests[1].url,'https://old.example/v1/default/banks/original-bank/memories/recall');assert.deepEqual(f.requests[1].authorization,{key:'archive.old'});
+  assert.equal(archived.bankId,'original-bank');
+});
+
+test('bank selection is persisted with CAS, leaves an untouched key alone and survives a fresh plugin instance',async()=>{
+  let saved=connection,secretWrites=0;
+  const make=async()=>{const f=fixture(()=>json({results:[]}));f.ctx.configuration={get:async key=>key==='connection'?structuredClone(saved):null,compareAndSet:async(key,expected,next)=>{if(JSON.stringify(expected)!==JSON.stringify(saved))return false;saved=next;return true;}};f.ctx.secrets.set=async()=>{secretWrites++;};await activate(f.ctx);return f;};
+  const f=await make(),ui=f.services.get('settings');
+  const result=await ui({type:'save',expected:connection,config:{...connection,bankId:'existing'}});assert.equal(result.ok,true);assert.equal(result.config.bankId,'existing');assert.equal(secretWrites,0);
+  assert.equal((await ui({type:'save',expected:connection,config:connection})).ok,false);
+  const reopened=await make();assert.equal((await reopened.services.get('settings')({type:'get'})).config.bankId,'existing');
+  await reopened.invoke({operation:'recall',query:'x'});assert.match(reopened.requests[0].url,/\/banks\/existing\//);
+  assert.equal(bank(config(connection),'alice'),'mewu-alice');assert.equal(bank(config({...connection,bankId:'existing'}),'alice'),'existing');
+});
 
 test('only the settings request refills the actual key; memory operations keep using the opaque vault authorization',async()=>{
   const f=fixture(p=>p.url.endsWith('/recall')?json({results:[]}):json({success:true}));

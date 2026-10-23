@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 import {definePlugin} from '@mewu/sdk';
-import {api,config,bank,probe,route} from './transport.mjs';
+import {api,config,bank,probe,route,listBanks} from './transport.mjs';
 import {html} from './view.mjs';
 import {archives,migrate,legacyDocuments} from './migration.mjs';
 
@@ -19,7 +19,7 @@ async function updateReceipt(storage,key,change) {
 const publicError=error=>{
   const value=error?.message;
   return typeof value==='string'&&(/^(服务返回 HTTP \d{3})$/u.test(value)||[
-    '请配置 Hindsight 服务','服务地址无效','记忆库前缀无效','Agent 身份无效','API Key 无效',
+    '请配置 Hindsight 服务','服务地址无效','记忆库前缀无效','记忆库无效','记忆库查询无效','Agent 身份无效','API Key 无效',
     '连接中断，操作结果未知','服务拒绝认证','服务返回内容无效','服务 API 不兼容','服务尚未就绪',
     '配置已变化，请重新载入','记忆库身份不匹配','记忆内容无效','记忆记录不存在','记忆任务正在执行',
     '旧连接已变化，请重新载入','请先确认旧连接状态','该 Agent 已迁移其他连接','此连接未允许保存记忆','记忆同步选项无效'
@@ -51,6 +51,7 @@ export default definePlugin(async ctx=>{
       // Test exactly the visible draft. An explicitly typed key is transient;
       // an untouched field uses the host's existing origin-bound credential.
       if(input?.type==='test')return await probe(ctx,input.config,input.key);
+      if(input?.type==='banks')return await listBanks(ctx,input.config,input.key,{offset:input.offset,q:input.q});
       if(input?.type==='archives')return await archives(ctx,input.cursor);
       if(input?.type==='migrate')return await migrate(ctx,input);
       if(input?.type==='archivePage')return await ctx.host.call('memory.archive.page',{bindingId:input.bindingId,cursor:input.cursor});
@@ -61,15 +62,18 @@ export default definePlugin(async ctx=>{
     inputSchema:{type:'object',properties:{operation:{enum:['retain','recall','forget']},text:{type:'string',maxLength:65536},query:{type:'string',maxLength:4000},id:{type:'string'},limit:{type:'integer',minimum:1,maximum:100}},required:['operation'],additionalProperties:false}
   };
   const handle=async(input,{context})=>{try{
-    const archive=await ctx.configuration.get('archive.'+context.agentId);
-    const settings=config(archive?{endpoint:archive.endpoint}:await ctx.configuration.get('connection'));
+    const connection=await ctx.configuration.get('connection');
+    // An explicit settings selection takes precedence; removing it restores the
+    // prior per-agent/archive route without modifying its data or credentials.
+    const archive=connection?.bankId?null:await ctx.configuration.get('archive.'+context.agentId);
+    const settings=config(archive?{endpoint:archive.endpoint}:connection);
     if(input.operation==='retain'&&context.memoryOrigin==='completedTurn'
       && !(archive?archive.policy.completedTurnSync:settings.completedTurnSync))return {retained:false,skipped:true};
     const id=archive?.bankId??bank(settings,context.agentId),request=api(ctx,settings,undefined,archive?'archive.'+archive.bindingId:'api');
-    const namespace=`bank.${encodeURIComponent(settings.endpoint)}.${id}.`;
+    const namespace=`bank.${encodeURIComponent(settings.endpoint)}.${encodeURIComponent(id)}.`;
     if(input.operation==='recall'){
       if(archive&&!archive.policy.recall)return {memories:[]};
-      const response=await request('POST',route(id,'memories','recall'),{query:String(input.query??''),budget:'low',max_tokens:1500,types:['world','experience'],prefer_observations:false,trace:false,include:{entities:null,chunks:null,source_facts:null}},{missing:true});
+      const response=await request('POST',route(id,'memories','recall'),{query:String(input.query??''),budget:'low',max_tokens:1500,types:['world','experience'],prefer_observations:false,trace:false,include:{entities:null,chunks:null,source_facts:null}},{missing:!settings.bankId});
       if(response===null)return {memories:[]};
       if(!Array.isArray(response.results))throw Error('服务返回内容无效');
       const candidates=response.results.slice(0,128);
@@ -78,10 +82,11 @@ export default definePlugin(async ctx=>{
       for(const item of candidates){
         if(!item||typeof item.text!=='string'||typeof item.document_id!=='string')continue;
         const own=await ctx.storage.get(namespace+'document.'+item.document_id);
-        // Only plugin-owned documents in this agent's bank, never another
-        // installation's remote content; tombstones suppress late writes too.
+        // Selecting an existing bank explicitly authorizes recalling its remote
+        // contents. Automatic per-agent banks retain the original ownership gate.
+        // Local pending/unknown writes and tombstones are always suppressed.
         const old=legacy.get(item.document_id);
-        if(own?(own.forgotten||own.state!=='committed'):(!old||old.forgotten||old.state!=='committed'))continue;
+        if(own?(own.forgotten||own.state!=='committed'):(!settings.bankId&&(!old||old.forgotten||old.state!=='committed')))continue;
         memories.push({id:item.document_id,text:item.text.slice(0,8192)});
         if(memories.length>=Math.min(100,input.limit??8))break;
       }
@@ -113,7 +118,9 @@ export default definePlugin(async ctx=>{
       if(await ctx.storage.compareAndSet(sequenceKey,previous,sequence))break;
       if(attempt===31)throw Error('记忆任务正在执行');
     }
-    const document=`mewu-${context.agentId}-${sequence}`,key=namespace+'document.'+document;
+    // A chosen server bank may also be used by another installation. Do not
+    // overwrite its similarly numbered document with update_mode=replace.
+    const document=`mewu-${context.agentId}-${Date.now().toString(36)}-${sequence}-${Math.random().toString(36).slice(2,14)}`,key=namespace+'document.'+document;
     const receipt={id:document,state:'pending',forgotten:false,text,createdAt:new Date().toISOString()};
     await ctx.storage.set(key,receipt);
     try{
