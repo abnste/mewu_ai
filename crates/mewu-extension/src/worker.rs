@@ -17,6 +17,61 @@ enum Input {
 }
 type Output = Arc<dyn Fn(WorkerResponse) -> Result<(), ExtensionError> + Send + Sync>;
 
+fn invocation_limits(limits: &RuntimeLimits, permissions: &[String]) -> RuntimeLimits {
+    let mut selected = limits.clone();
+    // A model-backed service includes the user's Portal decision and several
+    // model/feedback round trips. Bound the whole invocation, rather than
+    // giving it the short default intended for local handlers. This grants
+    // no capability and never extends an explicit embedding/test deadline.
+    let process = permissions.iter().any(|p| p == "process.rpc");
+    let model = permissions.iter().any(|p| p == "model.invoke");
+    if (process || model)
+        && selected.request_timeout == Duration::from_secs(90)
+        && selected.max_host_calls == 512
+    {
+        selected.request_timeout = Duration::from_secs(300);
+        if process {
+            selected.max_host_calls = 4096;
+        }
+    }
+    selected
+}
+
+#[cfg(test)]
+mod invocation_budget_tests {
+    use super::*;
+
+    #[test]
+    fn model_round_trips_get_a_finite_budget_without_more_calls_or_memory() {
+        let defaults = RuntimeLimits::default();
+        let selected = invocation_limits(&defaults, &["model.invoke".into()]);
+        assert_eq!(selected.request_timeout, Duration::from_secs(300));
+        assert_eq!(selected.max_host_calls, defaults.max_host_calls);
+        assert_eq!(selected.initialization_timeout, defaults.initialization_timeout);
+        assert_eq!(selected.memory_bytes, defaults.memory_bytes);
+        assert_eq!(selected.stack_bytes, defaults.stack_bytes);
+        assert_eq!(invocation_limits(&defaults, &[]).request_timeout, defaults.request_timeout);
+        assert_eq!(invocation_limits(&defaults, &["region.input".into()]).request_timeout, defaults.request_timeout);
+        let process = invocation_limits(&defaults, &["process.rpc".into(), "model.invoke".into()]);
+        assert_eq!(process.request_timeout, Duration::from_secs(300));
+        assert_eq!(process.max_host_calls, 4096);
+    }
+
+    #[test]
+    fn explicit_deadlines_and_call_budgets_are_never_overridden() {
+        for timeout in [Duration::from_millis(30), Duration::from_secs(120), Duration::from_secs(300)] {
+            let limits = RuntimeLimits { request_timeout: timeout, ..RuntimeLimits::default() };
+            let selected = invocation_limits(&limits, &["model.invoke".into(), "process.rpc".into()]);
+            assert_eq!(selected.request_timeout, timeout);
+            assert_eq!(selected.max_host_calls, limits.max_host_calls);
+        }
+        let limits = RuntimeLimits { max_host_calls: 20, ..RuntimeLimits::default() };
+        let selected = invocation_limits(&limits, &["model.invoke".into()]);
+        assert_eq!(selected.max_host_calls, 20);
+        assert_eq!(selected.request_timeout, limits.request_timeout);
+    }
+}
+
 fn read_bounded_line(reader: &mut impl BufRead) -> Result<Option<Vec<u8>>, ExtensionError> {
     let mut bytes = Vec::new();
     loop {
@@ -140,15 +195,7 @@ pub fn run_worker<R: Read + Send + 'static, W: Write + Send + 'static>(
                 }
                 canceled.store(false, Ordering::Release);
                 *active_id.lock().map_err(|_| ExtensionError::Transport)? = Some(id.clone());
-                let mut invocation_limits=limits.clone();
-                // Process-backed protocols can spend time waiting for their
-                // peer. Explicit shorter embedding/test budgets stay intact.
-                if manifest.permissions.iter().any(|p|p=="process.rpc")
-                    && invocation_limits.request_timeout==std::time::Duration::from_secs(90)
-                    && invocation_limits.max_host_calls==512 {
-                    invocation_limits.request_timeout=std::time::Duration::from_secs(300);
-                    invocation_limits.max_host_calls=4096;
-                }
+                let invocation_limits = invocation_limits(&limits, &manifest.permissions);
                 let result = ExtensionRuntime::new(
                     ExtensionPackage { manifest, modules },
                     invocation_limits,
