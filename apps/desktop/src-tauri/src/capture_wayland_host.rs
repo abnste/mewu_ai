@@ -457,6 +457,11 @@ async fn present(window: &WebviewWindow, owned: Vec<Witness>, permit: Presentati
             let drawable=widget.window().ok_or("截图窗口尚未创建")?;
             let initial_size=monitor_size(&drawable).ok_or("截图显示器不可用")?;
             widget.set_opacity(0.0);
+            // Match the ordinary capture path. GNOME can refuse a delayed
+            // focus request after Portal consent; a mapped fullscreen window
+            // alone otherwise remains below the previously focused app.
+            // This is an owned capture surface, never the settings window.
+            widget.set_keep_above(true);
             // GTK fixes a nonresizable window's minimum/maximum at its default
             // width (1200 here), even when the compositor's output is smaller.
             // Real fullscreen already disables resize edges and decorations.
