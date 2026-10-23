@@ -187,6 +187,48 @@ test('independent region agent consumes screenshots after each action; mock host
   await scope.deactivate();
 });
 
+test('region agent can observe delayed feedback without replaying input; mock host only', async () => {
+  const { default: activate } = await import('../../../extensions/examples/region-agent/index.mjs');
+  let observations = 0, models = 0;
+  const { scope, calls } = harness(async (method, params) => {
+    if (method === 'region.observe') return { artifactId: `frame-${++observations}`, width: 640, height: 480, sha256: String(observations).repeat(64) };
+    if (method === 'region.action') return { ok: true };
+    if (method === 'model.invoke') {
+      assert.deepEqual(params.images, [`frame-${observations}`]);
+      return { content: JSON.stringify([
+        { action: { kind: 'click', x: 11, y: 17 } },
+        { observe: true },
+        { done: true, message: '页面已更新' }
+      ][models++]) };
+    }
+    throw new Error('Unexpected host method');
+  });
+  activate(scope.ctx); scope.finishRegistration();
+  const reply = await invoke(scope, 'example.region-agent.operate', { task: '等待确认结果' }, { regionId: 'authorized-region' });
+  assert.equal(reply.ok, true);
+  assert.equal(reply.result.completed, true);
+  assert.equal(reply.result.steps, 1);
+  assert.equal(observations, 3);
+  assert.equal(calls.filter(c => c.method === 'region.action').length, 1);
+  await scope.deactivate();
+});
+
+test('region agent bounds observation-only decisions without any input; mock host only', async () => {
+  const { default: activate } = await import('../../../extensions/examples/region-agent/index.mjs');
+  const { scope, calls } = harness(async method => method === 'region.observe'
+    ? { artifactId: 'frame', width: 640, height: 480, sha256: 'a'.repeat(64) }
+    : { content: '{"observe":true}' });
+  activate(scope.ctx); scope.finishRegistration();
+  const reply = await invoke(scope, 'example.region-agent.operate', { task: '观察加载', maxSteps: 3 }, { regionId: 'authorized-region' });
+  assert.equal(reply.ok, true);
+  assert.equal(reply.result.completed, false);
+  assert.equal(reply.result.stopReason, 'step_limit');
+  assert.equal(reply.result.steps, 0);
+  assert.equal(calls.filter(c => c.method === 'model.invoke').length, 3);
+  assert.equal(calls.filter(c => c.method === 'region.action').length, 0);
+  await scope.deactivate();
+});
+
 test('region tool rejects missing explicit region without any host call; agent still supports ordinary multimodal chat', async () => {
   const { default: activate } = await import('../../../extensions/examples/region-agent/index.mjs');
   const { scope, calls } = harness(async (method, params) => {
