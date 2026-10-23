@@ -128,6 +128,31 @@ fn genuine_async_host_roundtrip_retains_multimodal_json_and_context() {
 }
 
 #[test]
+fn transient_overlay_document_roundtrips_verbatim_through_the_host_bridge() {
+    let (mut runtime, rx, _) = runtime("export default ctx => ctx.commands.register({id:'overlay',title:'Overlay'},async (input,run) => ({surface:await ctx.ui.transient({html:input.html,width:260,height:260})}));", &[], RuntimeLimits::default());
+    initialize(&mut runtime).unwrap();
+    runtime
+        .begin_invoke("overlay", &json!({"html":"<svg id=\"crosshair\"></svg>"}), &json!({"sceneId":"scene-1"}))
+        .unwrap();
+    // The handler starts in a microtask; pump once before awaiting its call.
+    assert!(runtime.poll_result().unwrap().is_none());
+    let WorkerResponse::HostCall { id, method, params } =
+        rx.recv_timeout(Duration::from_secs(1)).unwrap()
+    else {
+        panic!("expected ui.transient host call")
+    };
+    assert_eq!(method, "ui.transient");
+    assert_eq!(params, json!({"html":"<svg id=\"crosshair\"></svg>","width":260,"height":260}));
+    runtime
+        .host_result(&id, Some(json!({"surfaceId":"0198f3c2-7d5a-4c8e-9f3f-08d91f3a1111"})), None)
+        .unwrap();
+    assert_eq!(
+        result(&runtime).unwrap(),
+        json!({"surface":{"surfaceId":"0198f3c2-7d5a-4c8e-9f3f-08d91f3a1111"}})
+    );
+}
+
+#[test]
 fn package_relative_and_sdk_imports_work() {
     let (mut runtime, _, _) = runtime("import {definePlugin} from '@mewu/sdk'; import {value} from './lib/value.mjs'; export default definePlugin(ctx => ctx.commands.register({id:'read',title:'Read'},()=>value));", &[("lib/value.mjs","import {base} from '../base.js'; export const value=base+1;"),("base.js","export const base=41;")], RuntimeLimits::default());
     initialize(&mut runtime).unwrap();
