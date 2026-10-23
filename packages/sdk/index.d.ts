@@ -101,10 +101,13 @@ export interface ExtensionContext {
     get(key: string): Promise<JsonValue>;
     compareAndSet(key: string, expected: JsonValue, value: JsonValue): Promise<boolean>;
   };
-  /** OS-backed plugin credentials. Stored values are never returned to JS.
-   * network.fetch authorization:{key,prefix?} attaches them only to that origin. */
+  /** OS-backed plugin credentials. network.fetch authorization:{key,prefix?}
+   * attaches them only to that origin. Reading requires separate secrets.read
+   * permission and a live settings surface belonging to this exact plugin;
+   * Agent/tool/delegated invocations cannot read stored credentials. */
   readonly secrets: {
     status(key: string): Promise<{revision:number;configured:boolean;origin:string|null}>;
+    read(key:string,expectedRevision:number): Promise<string>;
     set(key:string,value:string,origin:string,expectedRevision:number): Promise<{revision:number;configured:boolean;origin:string}>;
   };
   readonly commands: ServiceRegistry;

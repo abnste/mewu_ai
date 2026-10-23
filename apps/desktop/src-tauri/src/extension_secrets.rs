@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
-//! Plugin-scoped credentials. Workers receive status, never stored secret bytes.
-//! Only a live settings surface can replace a credential; each immutable blob
+//! Plugin-scoped credentials. Runtime tools receive status, not stored bytes.
+//! A separately permitted live settings editor can refill its own password
+//! field. Only a live settings surface can replace a credential; each immutable blob
 //! is committed with CAS. Network use is restricted to its configured origin.
 use super::*;
 use zeroize::Zeroizing;
@@ -55,6 +56,31 @@ pub(super) fn status(app: &AppHandle, context: &Context, params: &Value) -> Resu
         Some(r) => json!({"revision":r.revision,"configured":r.credential.is_some(),"origin":r.origin}),
         None => json!({"revision":0,"configured":false,"origin":null}),
     })
+}
+
+fn password_editor_owner(plugin: &str, revision: u64, window: bool, owner: Option<&crate::extension_surfaces::Owner>) -> Result<(), String> {
+    if !window || !owner.is_some_and(|owner|
+        owner.scene.is_empty() && owner.plugin == plugin && owner.revision == revision) {
+        return Err("请在插件设置界面读取凭据".into());
+    }
+    Ok(())
+}
+
+pub(super) fn reveal(app: &AppHandle, context: &Context, params: &Value) -> Result<Value, String> {
+    password_editor_owner(&context.record.manifest.id, context.record.revision,
+        context.surface_window.is_some(), context.surface_owner.as_ref().map(|(_, owner)| owner))?;
+    context.check(app)?;
+    let key = name(params)?;
+    let expected = params.get("expectedRevision").and_then(Value::as_u64).ok_or("缺少凭据版本")?;
+    let (before, reference) = read(app, context, key)?;
+    if reference.as_ref().map_or(0, |r| r.revision) != expected { return Err("凭据已变化，请重新载入".into()); }
+    let Some(id) = reference.and_then(|r| r.credential) else { return Ok(Value::String(String::new())); };
+    let host = app.state::<Host>();
+    let secret = crate::credentials::read_scoped(&host.root, "extensions", &owner(&context.record.manifest.id), &id)?;
+    context.check(app)?;
+    let (after, _) = read(app, context, key)?;
+    if before != after { return Err("凭据已变化，请重新载入".into()); }
+    Ok(Value::String(secret.to_string()))
 }
 
 pub(super) fn set(app: &AppHandle, context: &Context, params: Value) -> Result<Value, String> {
@@ -120,6 +146,16 @@ pub(super) fn authorization(app: &AppHandle, context: &Context, params: &Value, 
 
 #[cfg(test)] mod tests {
     use super::*;
+    #[test] fn only_the_exact_plugins_settings_editor_can_read_a_password() {
+        let owner = crate::extension_surfaces::Owner { plugin: "own.plugin".into(), revision: 3, service: "settings".into(), scene: String::new() };
+        assert!(password_editor_owner("own.plugin", 3, true, Some(&owner)).is_ok());
+        assert!(password_editor_owner("own.plugin", 3, true, None).is_err());
+        assert!(password_editor_owner("own.plugin", 3, false, Some(&owner)).is_err());
+        assert!(password_editor_owner("other.plugin", 3, true, Some(&owner)).is_err());
+        assert!(password_editor_owner("own.plugin", 4, true, Some(&owner)).is_err());
+        let object = crate::extension_surfaces::Owner { scene: "scene".into(), ..owner };
+        assert!(password_editor_owner("own.plugin", 3, true, Some(&object)).is_err());
+    }
     #[test] fn owners_are_stable_and_distinct_without_paths() {
         assert_eq!(owner("p"),owner("p")); assert_ne!(owner("p"),owner("p2"));
         assert!(uuid::Uuid::parse_str(&owner("p")).is_ok());

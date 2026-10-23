@@ -4,7 +4,7 @@ import { nativeSelectOwnsEscape } from '../native-select-escape';
 import { createEffect, createMemo, createSignal, For, on, onCleanup, Show } from 'solid-js';
 import { Check, ChevronDown, ChevronRight, CircleAlert, LoaderCircle, MoreHorizontal, Plus, RefreshCw, Search } from 'lucide-solid';
 import type { ConnectionAdvanced, ConnectionProfile, ConnectionTestResult, ProviderPreset } from '../contracts';
-import { cancelConnectionProbe, discoverConnectionModels, getProviderPresets, testConnection } from '../bridge';
+import { cancelConnectionProbe, discoverConnectionModels, getProviderPresets, readConnectionKey, testConnection } from '../bridge';
 import { normalizeConnectionPath, parseConnectionParameters, validateConnectionProfile } from '../connection-policy';
 import { subscribePlugins } from '../plugin-bridge';
 import { profileFromProviderPreset } from '../provider-presets';
@@ -58,10 +58,28 @@ export default function ConnectionsPanel(props: Props) {
     if (clearModels) setModels(old => { const next = { ...old }; delete next[id]; return next; });
   }
   function ensure(id: string) { if (!form(id) && savedProfile(id)) setDrafts(old => ({ ...old, [id]: fromProfile(savedProfile(id)!) })); }
-  function open(id: string) { cancelProbe(); ensure(id); setSelected(selected() === id ? '' : id); setMenu(''); setDeleting(''); setAdding(false); }
+  let keyRead = 0;
+  function releaseSavedKeys() {
+    keyRead++;
+    setDrafts(old => Object.fromEntries(Object.entries(old).map(([id, value]) => [id, value.keyEdited ? value : { ...value, key: '', keyLoaded: !value.profile.hasKey }])));
+  }
+  async function loadKey(id: string) {
+    const value = form(id), serial = ++keyRead;
+    if (!value || value.keyLoaded || value.keyEdited || !value.profile.hasKey || value.expectedRevision === undefined) return;
+    try {
+      const key = await readConnectionKey(id, value.expectedRevision);
+      if (disposed || serial !== keyRead || selected() !== id || !props.active) return;
+      setDrafts(old => {
+        const current = old[id];
+        return current && !current.keyEdited && current.expectedRevision === value.expectedRevision
+          ? { ...old, [id]: { ...current, key, keyLoaded: true } } : old;
+      });
+    } catch (error) { if (!disposed && serial === keyRead && selected() === id) setErrors(old => ({ ...old, [id]: message(error) })); }
+  }
+  function open(id: string) { cancelProbe(); releaseSavedKeys(); ensure(id); setSelected(selected() === id ? '' : id); setMenu(''); setDeleting(''); setAdding(false); if (selected() === id) void loadKey(id); }
   function edit(id: string, patch: Partial<Draft>, keepModels = false) {
     ensure(id); const current = form(id); if (!current) return;
-    invalidate(id, !keepModels); setDrafts(old => ({ ...old, [id]: { ...current, ...patch, dirty: true } }));
+    invalidate(id, !keepModels); setDrafts(old => ({ ...old, [id]: { ...current, ...patch, ...(Object.hasOwn(patch, 'key') ? { keyEdited: true, keyLoaded: true } : {}), dirty: true } }));
   }
   function field(id: string, patch: Partial<ConnectionProfile>, keepModels = false) { edit(id, { profile: { ...form(id).profile, ...patch } }, keepModels); }
   function advanced(id: string, patch: Partial<ConnectionAdvanced>) { field(id, { advanced: { ...form(id).profile.advanced, ...patch } }); }
@@ -77,11 +95,12 @@ export default function ConnectionsPanel(props: Props) {
     if (props.active) void loadPresets();
   }, 'settings').then(stop => { if (disposed) stop(); else { stopPlugins = stop; presetEpoch++; presetsDirty = true; if (props.active) void loadPresets(); } })
     .catch(error => { if (!disposed) setPresetError(message(error)); });
-  createEffect(on(active, value => { if (!value) { cancelProbe(); setMenu(''); } else if (!initialized || presetsDirty) void loadPresets(); }));
+  createEffect(on(active, value => { if (!value) { cancelProbe(); setMenu(''); releaseSavedKeys(); } else { if (!initialized || presetsDirty) void loadPresets(); if (selected()) void loadKey(selected()); } }));
   const revisions = createMemo(() => props.connections.map(value => `${value.id}:${value.revision}`).join('|'));
   createEffect(on(revisions, () => {
     setDrafts(old => Object.fromEntries(Object.entries(old).map(([id, value]) => [id, !value.dirty && !value.isNew && savedProfile(id) && savedProfile(id)!.revision !== value.expectedRevision ? fromProfile(savedProfile(id)!) : value])));
     const current = probe(); if (current && !current.draft.isNew && savedProfile(current.id)?.revision !== current.draft.expectedRevision) cancelProbe();
+    if (selected()) void loadKey(selected());
   }));
   const outsideMenu = (event: PointerEvent) => { if (!(event.target instanceof Element) || !event.target.closest('.connection-menu,.connection-summary .icon-button')) setMenu(''); };
   document.addEventListener('pointerdown', outsideMenu);
@@ -94,12 +113,12 @@ export default function ConnectionsPanel(props: Props) {
     setDrafts(old => ({ ...old, [id]: { ...fromProfile(profile), expectedRevision: undefined, isNew: true, dirty: true } }));
     setSelected(id); setAdding(false); setMenu(''); setQuery('');
   }
-  function reload(id: string) { const profile = savedProfile(id); if (!profile) return; cancelProbe(); invalidate(id); setDrafts(old => ({ ...old, [id]: fromProfile(profile) })); }
+  function reload(id: string) { const profile = savedProfile(id); if (!profile) return; cancelProbe(); invalidate(id); setDrafts(old => ({ ...old, [id]: fromProfile(profile) })); void loadKey(id); }
   function prepared(value: Draft, requireModel = true) {
     const profile = { ...value.profile, name: value.profile.name.trim(), baseUrl: value.profile.baseUrl.trim(), model: value.profile.model.trim(), advanced: { ...value.profile.advanced, requestPath: normalizeConnectionPath(value.profile.advanced.requestPath), requestParameters: parseConnectionParameters(value.parametersText) } };
     validateConnectionProfile(profile, requireModel); return profile;
   }
-  const keyArgument = (value: Draft) => value.clearKey ? '' : value.key || undefined;
+  const keyArgument = (value: Draft) => value.clearKey ? '' : value.keyEdited ? value.key : undefined;
   async function save(id: string) {
     const value = form(id); if (!value || pending()) return;
     cancelProbe(); setPending(id); setSaved(''); clearError(id);
@@ -110,6 +129,7 @@ export default function ConnectionsPanel(props: Props) {
       const settled = settleConnectionSave(value, current, savedProfile(id));
       setDrafts(old => old[id] === current ? { ...old, [id]: settled } : old);
       if (!settled.dirty) setSaved(id);
+      if (selected() === id) void loadKey(id);
     } catch (error) { if (!disposed) setErrors(old => ({ ...old, [id]: message(error) })); }
     finally { if (!disposed) setPending(''); }
   }
@@ -159,7 +179,7 @@ export default function ConnectionsPanel(props: Props) {
         <Show when={stale(id)}><div class="connection-conflict"><CircleAlert size={14} /><span>{savedProfile(id) ? t('连接已更改，草稿已保留') : t('连接已被删除，草稿已保留')}</span><Show when={savedProfile(id)}><button class="text-button" onClick={() => reload(id)}>{t("载入最新")}</button></Show></div></Show>
         <label class="field-label">{t("连接名称")}<input id={`connection-name-${id}`} value={value().profile.name} maxlength={80} onInput={event => field(id, { name: event.currentTarget.value }, true)} /></label>
         <Show when={value().profile.providerId.toLowerCase() === 'custom'}><label class="field-label">{t("API 地址")}<input type="url" aria-label={t("API 地址")} value={value().profile.baseUrl} placeholder="https://…/v1" spellcheck={false} onInput={event => field(id, { baseUrl: event.currentTarget.value })} /></label></Show>
-        <label class="field-label">API Key<input type="password" aria-label="API Key" value={value().key} autocomplete="off" spellcheck={false} disabled={value().clearKey} placeholder={value().clearKey ? t('保存后清除') : value().profile.hasKey ? '••••••••' : ''} onInput={event => edit(id, { key: event.currentTarget.value })} /></label>
+        <label class="field-label">API Key<input type="password" aria-label="API Key" value={value().clearKey ? '' : value().key} autocomplete="off" spellcheck={false} disabled={value().clearKey} placeholder={value().clearKey ? t('保存后清除') : ''} onInput={event => edit(id, { key: event.currentTarget.value })} /></label>
         <Show when={value().profile.hasKey}><button class="text-button connection-clear-key" onClick={() => edit(id, { clearKey: !value().clearKey })}>{value().clearKey ? t('撤销清除') : t('清除已保存密钥')}</button></Show>
         <label class="field-label">{t("模型")}<div class="connection-model"><input aria-label={t("模型")} list={`connection-models-${id}`} value={value().profile.model} spellcheck={false} placeholder={t("选择或输入模型 ID")} onInput={event => field(id, { model: event.currentTarget.value }, true)} /><datalist id={`connection-models-${id}`}><For each={models()[id] ?? []}>{model => <option value={model} />}</For></datalist><button class="icon-button" title={t("获取模型")} aria-label={t("获取模型")} disabled={Boolean(pending()) || probe()?.id === id} onClick={() => void runProbe(id, 'models')}><RefreshCw size={17} classList={{ spin: probe()?.id === id && probe()?.kind === 'models' }} /></button></div></label>
         <Show when={modelStatus()[id]}><p class="connection-note">{modelStatus()[id]}</p></Show>

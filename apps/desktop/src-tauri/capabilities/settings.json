@@ -20,6 +20,7 @@
     "allow-memory-entry",
     "allow-get-plugins",
     "allow-get-provider-presets",
+    "allow-read-connection-key",
     "allow-save-connection-profile",
     "allow-delete-connection-profile",
     "allow-discover-connection-models",

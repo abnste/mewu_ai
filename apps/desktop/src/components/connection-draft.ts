@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 import type { ConnectionProfile } from '../contracts';
 import { validateConnectionProfile } from '../connection-policy';
-export interface ConnectionDraft { profile: ConnectionProfile; parametersText: string; key: string; clearKey: boolean; expectedRevision?: number; isNew: boolean; dirty: boolean }
-export const connectionDraft = (profile: ConnectionProfile): ConnectionDraft => ({ profile: structuredClone(profile), parametersText: JSON.stringify(profile.advanced.requestParameters, null, 2), key: '', clearKey: false, expectedRevision: profile.revision, isNew: false, dirty: false });
+export interface ConnectionDraft { profile: ConnectionProfile; parametersText: string; key: string; keyLoaded: boolean; keyEdited: boolean; clearKey: boolean; expectedRevision?: number; isNew: boolean; dirty: boolean }
+export const connectionDraft = (profile: ConnectionProfile): ConnectionDraft => ({ profile: structuredClone(profile), parametersText: JSON.stringify(profile.advanced.requestParameters, null, 2), key: '', keyLoaded: !profile.hasKey, keyEdited: false, clearKey: false, expectedRevision: profile.revision, isNew: false, dirty: false });
 
 /** Discovery changes only this exact visible draft; saving remains explicit. */
 export function applyModelCatalogToDraft(submitted: ConnectionDraft, current: ConnectionDraft, resolvedBaseUrl: string): ConnectionDraft {
@@ -18,7 +18,7 @@ export function applyModelCatalogToDraft(submitted: ConnectionDraft, current: Co
 
 export function settleConnectionSave(submitted: ConnectionDraft, current: ConnectionDraft, latest?: ConnectionProfile): ConnectionDraft {
   const ownRevision = (submitted.expectedRevision ?? 0) + 1;
-  if (current === submitted && latest?.revision === ownRevision) return connectionDraft(latest);
+  if (latest?.revision === ownRevision && (current === submitted || (!current.dirty && !current.isNew && current.expectedRevision === ownRevision))) return connectionDraft(latest);
   // A later cross-window update is not the result of our save. Never adopt its
   // CAS token while keeping local edits, even if the original write succeeded.
   const ownKeySaved = submitted.clearKey ? false : Boolean(submitted.key) || submitted.profile.hasKey;
@@ -26,6 +26,8 @@ export function settleConnectionSave(submitted: ConnectionDraft, current: Connec
   return { ...current, isNew: false, dirty: true, expectedRevision: ownRevision,
     profile: { ...current.profile, revision: ownRevision, hasKey: metadata.hasKey, credentialId: metadata.credentialId },
     key: current.key === submitted.key ? '' : current.key,
+    keyLoaded: current.key !== submitted.key && current.keyLoaded,
+    keyEdited: current.key !== submitted.key && current.keyEdited,
     clearKey: current.clearKey === submitted.clearKey ? false : current.clearKey,
   };
 }

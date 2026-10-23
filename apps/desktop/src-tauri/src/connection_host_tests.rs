@@ -24,6 +24,19 @@ fn profile(name: &str) -> ConnectionProfile {
 }
 
 #[test]
+fn password_refill_is_not_a_space_pin_or_plugin_object_command() {
+    let settings: Value = serde_json::from_str(include_str!("../capabilities/settings.json")).unwrap();
+    assert_eq!(settings["windows"], json!(["settings"]));
+    assert!(settings["permissions"].as_array().unwrap().iter().any(|p| p == "allow-read-connection-key"));
+    for text in [include_str!("../capabilities/space.json"), include_str!("../capabilities/pin.json"),
+        include_str!("../capabilities/extension-object.json"), include_str!("../capabilities/frozen-widget.json"),
+        include_str!("../capabilities/recording-controls.json"), include_str!("../capabilities/scroll.json")] {
+        let capability: Value = serde_json::from_str(text).unwrap();
+        assert!(!capability["permissions"].as_array().unwrap().iter().any(|p| p == "allow-read-connection-key"));
+    }
+}
+
+#[test]
 fn plugin_templates_reuse_actual_host_protocol_endpoint_and_parameter_admission() {
     use crate::plugins::PluginContribution;
     let mut count = 0;
@@ -84,6 +97,27 @@ impl Drop for TestRoot {
             .starts_with("mewu-connection-host-"));
         let _ = std::fs::remove_dir_all(absolute);
     }
+}
+
+#[cfg(windows)]
+#[test]
+fn real_password_refill_reads_the_exact_dpapi_value_and_unchanged_save_keeps_its_blob() {
+    let root = TestRoot::new();
+    let mut store = Store::open_in_memory().unwrap();
+    let original = profile("Password editor");
+    let actual = "a123456789012345";
+    save_profile(&mut store, &root.0, original.clone(), None, Some(Zeroizing::new(actual.into()))).unwrap();
+    let current = current_profile(&store, &original.id, Some(1)).unwrap().unwrap();
+    let returned = credentials::read_profile(&root.0, &current).unwrap();
+    assert_eq!(returned.as_str(), actual);
+    assert_eq!(returned.chars().count(), 16);
+    let before = root.blobs(&original.id);
+    save_profile(&mut store, &root.0, current.clone(), Some(1), None).unwrap();
+    let after = current_profile(&store, &original.id, Some(2)).unwrap().unwrap();
+    assert_eq!(current.credential_id, after.credential_id);
+    assert_eq!(root.blobs(&original.id), before);
+    assert_eq!(credentials::read_profile(&root.0, &after).unwrap().as_str(), actual);
+    assert!(current_profile(&store, &original.id, Some(1)).is_err());
 }
 
 #[cfg(windows)]

@@ -17,8 +17,8 @@ function fixture(respond=()=>({status:200,body:'{}'})) {
     }
   };
   const ctx={storage,configuration:{get:async key=>key==='connection'?connection:null},
-    runtime:{describe:async()=>({capabilities:['secrets.network','memory.archive']})},
-    secrets:{status:async()=>({configured:true,revision:1})},
+    runtime:{describe:async()=>({capabilities:['secrets.network','secrets.settings','memory.archive']})},
+    secrets:{status:async()=>({configured:true,revision:1}),read:async()=> 'fixture-16-keyxx'},
     ui:{register:(d,h)=>services.set(d.id,h)},memory:{register:(d,h)=>services.set(d.id,h)},
     tools:{register:(d,h)=>services.set('tool.'+d.id,{descriptor:d,invoke:h})},
     host:{call:async(method,params)=>{assert.equal(method,'network.fetch');requests.push(params);return await respond(params);}}
@@ -26,6 +26,19 @@ function fixture(respond=()=>({status:200,body:'{}'})) {
   return {ctx,values,services,requests,invoke:async(input,agentId='alice')=>services.get('memory')(input,{context:{agentId}})};
 }
 const json=body=>({status:200,body:JSON.stringify(body)});
+
+test('only the settings request refills the actual key; memory operations keep using the opaque vault authorization',async()=>{
+  const f=fixture(p=>p.url.endsWith('/recall')?json({results:[]}):json({success:true}));
+  let reads=0;f.ctx.secrets.read=async(key,revision)=>{assert.equal(key,'api');assert.equal(revision,1);reads++;return 'a123456789012345';};
+  await activate(f.ctx);
+  assert.equal(reads,0);
+  const settings=await f.services.get('settings')({type:'get'});
+  assert.equal(settings.key,'a123456789012345');assert.equal(settings.key.length,16);
+  await f.invoke({operation:'recall',query:'own fact'});
+  assert.equal(reads,1);
+  assert.ok(f.requests.every(request=>request.authorization?.key==='api'));
+  assert.doesNotMatch(JSON.stringify(f.requests),/a123456789012345/);
+});
 
 test('Hindsight probe uses semantic server version and readiness HTTP status',async()=>{
   const f=fixture(p=>p.url.endsWith('/version')?json({api_version:'0.10.3',features:{}}):{status:200,body:'null'});

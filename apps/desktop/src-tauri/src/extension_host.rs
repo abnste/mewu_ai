@@ -2014,7 +2014,7 @@ fn tool_initialization_read(method: &str) -> bool {
     matches!(method, "runtime.describe" | "configuration.get" | "storage.get" | "storage.list" | "services.list" | "objects.library.describe")
 }
 pub(crate) fn runtime_capabilities()->Value {
-    json!({"hostApi":mewu_extension::HOST_API,"capabilities":["ui.settings","configuration.shared","secrets.network","memory.archive","process.jsonlines","process.frame-bindings"]})
+    json!({"hostApi":mewu_extension::HOST_API,"capabilities":["ui.settings","configuration.shared","secrets.network","secrets.settings","memory.archive","process.jsonlines","process.frame-bindings"]})
 }
 
 fn bridge_impl(
@@ -2036,6 +2036,7 @@ fn bridge_impl(
         "configuration.get" => "configuration.read",
         "configuration.compareAndSet" => "configuration.write",
         "secrets.status" => "secrets.use",
+        "secrets.read" => "secrets.read",
         "secrets.set" => "secrets.write",
         "memory.archive.list"|"memory.archive.page"|"memory.archive.lookup"=>"memory.archive.read",
         "memory.archive.credential"|"memory.archive.activate"|"memory.archive.forget"=>"memory.archive.write",
@@ -2058,6 +2059,7 @@ fn bridge_impl(
     let result = match method {
         "memory.archive.list"|"memory.archive.page"|"memory.archive.lookup"|"memory.archive.credential"|"memory.archive.activate"|"memory.archive.forget"=>memory_archive::call(app,context,method,params),
         "secrets.status" => secrets::status(app,context,&params),
+        "secrets.read" => secrets::reveal(app,context,&params),
         "secrets.set" => secrets::set(app,context,params),
         "configuration.get" => live_store(app,context,|store|store.value(&context.record.manifest.id,"plugin-configuration",string(&params,"key")?)),
         "configuration.compareAndSet" => {

@@ -759,6 +759,10 @@ export async function saveBlackboardText(sceneId:string,itemId:string,expectedAs
 export async function getProviderPresets(): Promise<ProviderPreset[]> {
   return native ? invoke('get_provider_presets') : bundledProviderPresets(Object.values(providerPackages));
 }
+export async function readConnectionKey(id: string, expectedRevision: number): Promise<string> {
+  if (!native) throw new Error('请在桌面版读取已保存密钥');
+  return invoke('read_connection_key', { id, expectedRevision });
+}
 export async function discoverConnectionModels(value: ConnectionProbe): Promise<ModelCatalog> {
   if (!native) throw new Error('请在桌面版获取模型，可手动输入模型 ID');
   return invoke('discover_connection_models', { ...value, expectedRevision: value.expectedRevision ?? null, apiKey: value.apiKey ?? null });

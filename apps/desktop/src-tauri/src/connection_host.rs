@@ -49,6 +49,33 @@ fn current_profile(
     Ok(current)
 }
 
+/// Refill only the first-party password editor, never snapshots, CLI or plugin
+/// model context. Recheck the settings window generation after keyring access.
+#[tauri::command]
+pub async fn read_connection_key(
+    app: AppHandle, window: WebviewWindow, id: String, expected_revision: u64,
+) -> Result<String, String> {
+    if window.label() != "settings" { return Err("请在设置界面读取连接密钥".into()); }
+    let ticket = app.state::<crate::extension_host::ExtensionHost>().surfaces.ticket("settings")
+        .ok_or("设置窗口已关闭")?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let host = app.state::<Host>();
+        host.exit.ensure_running()?;
+        let profile = {
+            let engine = host.lock()?;
+            current_profile(&engine.store, &id, Some(expected_revision))?.ok_or("连接已移除")?
+        };
+        let key = credentials::read_profile(&host.root, &profile)?;
+        host.exit.ensure_running()?;
+        let extensions = app.state::<crate::extension_host::ExtensionHost>();
+        if !extensions.surfaces.window_current(&ticket) { return Err("设置窗口已关闭".into()); }
+        let engine = host.lock()?;
+        let latest = current_profile(&engine.store, &id, Some(expected_revision))?.ok_or("连接已移除")?;
+        if latest.credential_id != profile.credential_id { return Err("连接已更改，请载入最新配置".into()); }
+        Ok(key.to_string())
+    }).await.map_err(|_| "连接密钥读取中断".to_string())?
+}
+
 fn normalize(profile: &mut ConnectionProfile) {
     profile.name = profile.name.trim().into();
     profile.base_url = profile.base_url.trim().trim_end_matches('/').into();

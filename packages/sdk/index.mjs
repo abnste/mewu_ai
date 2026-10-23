@@ -64,6 +64,7 @@ export function createContext(send) {
     }),
     secrets: Object.freeze({
       status: key => host.call('secrets.status', { key }),
+      read: (key, expectedRevision) => host.call('secrets.read', { key, expectedRevision }),
       set: (key, value, origin, expectedRevision) => host.call('secrets.set', { key, value, origin, expectedRevision })
     }),
     memoryArchive: Object.freeze({

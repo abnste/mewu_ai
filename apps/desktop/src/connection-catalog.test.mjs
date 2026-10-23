@@ -61,7 +61,7 @@ async function panel() {
   const tree = parse(source, { sourceType: 'module', plugins: ['typescript', 'jsx'] });
   const component = tree.program.body.find(n => n.type === 'ExportDefaultDeclaration').declaration;
   const body = component.body.body.filter(n => n.type !== 'ReturnStatement').map(n => source.slice(n.start, n.end)).join('\n');
-  const calls = [], flights = [], canceled = [], cleanups = [];
+  const calls = [], flights = [], canceled = [], cleanups = [], keyReads = [];
   const saved = profile(), props = { connections: [saved], defaultConnectionId: saved.id, active: true,
     onSave: async (...args) => calls.push(args), onDefault: async () => {}, onDelete: async () => {} };
   const scope = createContext({
@@ -70,6 +70,7 @@ async function panel() {
     createSignal(value) { return [() => value, next => value = typeof next === 'function' ? next(value) : next]; },
     createMemo: fn => fn, createEffect() {}, on() {}, onCleanup: fn => cleanups.push(fn),
     subscribePlugins: async () => () => {}, getProviderPresets: async () => [],
+    readConnectionKey: (id, revision) => { const flight = { ...deferred(), id, revision }; keyReads.push(flight); return flight.promise; },
     discoverConnectionModels: args => { const flight = { ...deferred(), args }; flights.push(flight); return flight.promise; },
     cancelConnectionProbe: async id => canceled.push(id), testConnection: async () => { throw Error('unexpected model request'); },
     fromProfile: draft.connectionDraft, applyModelCatalogToDraft: draft.applyModelCatalogToDraft, settleConnectionSave: draft.settleConnectionSave,
@@ -78,8 +79,47 @@ async function panel() {
   });
   runInContext(plain(body) + '\nglobalThis.api={open,ensure,field,edit,form,runProbe,save,models,modelStatus,errors,probe};', scope);
   await tick(); scope.api.open(saved.id);
-  return { api: scope.api, props, id: saved.id, calls, flights, canceled, dispose: () => cleanups.forEach(f => f()) };
+  return { api: scope.api, props, id: saved.id, calls, flights, canceled, keyReads, dispose: () => cleanups.forEach(f => f()) };
 }
+
+test('saved key is refilled as its real password value; unchanged save does not replace the encrypted key', async () => {
+  const f = await panel(), actualKey = 'a123456789012345';
+  assert.equal(f.keyReads.length, 1);
+  assert.equal(f.keyReads[0].revision, 7);
+  f.keyReads[0].resolve(actualKey); await tick();
+  assert.equal(f.api.form(f.id).key, actualKey);
+  assert.equal(f.api.form(f.id).key.length, 16);
+  assert.equal(f.api.form(f.id).keyEdited, false);
+  f.props.onSave = async (...args) => { f.calls.push(args); f.props.connections[0] = { ...args[0], revision: 8 }; };
+  await f.api.save(f.id);
+  assert.equal(f.calls[0][2], undefined);
+  f.keyReads.at(-1).resolve(actualKey); await tick();
+  f.api.edit(f.id, { key: actualKey + 'x' });
+  await f.api.save(f.id);
+  assert.equal(f.calls[1][2], actualKey + 'x');
+  f.dispose();
+});
+
+test('late saved-key reads cannot replace typed input, another profile, another revision or a disposed editor', async () => {
+  for (const action of ['edit', 'switch', 'revision', 'dispose']) {
+    const f = await panel();
+    if (action === 'edit') f.api.edit(f.id, { key: 'typed-replacement' });
+    else if (action === 'switch') { f.props.connections.push({ ...profile(), id: 'another' }); f.api.open('another'); }
+    else if (action === 'revision') f.api.edit(f.id, { expectedRevision: 8 });
+    else f.dispose();
+    f.keyReads[0].resolve('a123456789012345'); await tick();
+    if (action !== 'dispose') { assert.equal(f.api.form(f.id).key, action === 'edit' ? 'typed-replacement' : ''); f.dispose(); }
+  }
+});
+
+test('an own-save snapshot already refreshed by the reactive subscriber stays clean without discarding subsequent edits', () => {
+  const submitted = draft.connectionDraft(profile()), latest = { ...profile(), revision: 8 };
+  const refreshed = draft.connectionDraft(latest);
+  assert.equal(draft.settleConnectionSave(submitted, refreshed, latest).dirty, false);
+  const edited = { ...refreshed, dirty: true, profile: { ...latest, model: 'new-draft-model' } };
+  const result = draft.settleConnectionSave(submitted, edited, latest);
+  assert.equal(result.dirty, true); assert.equal(result.profile.model, 'new-draft-model');
+});
 
 test('actual panel accepts corrected base visibly, preserves model/key and never saves on discovery', async () => {
   const f = await panel();

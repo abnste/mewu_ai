@@ -3074,6 +3074,7 @@ fn main() {
                 read_artifact,
                 connection_host::get_provider_presets,
                 connection_host::save_connection_profile,
+                connection_host::read_connection_key,
                 connection_host::delete_connection_profile,
                 connection_host::discover_connection_models,
                 connection_host::test_connection,

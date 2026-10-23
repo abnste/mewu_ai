@@ -30,9 +30,14 @@ export default definePlugin(async ctx=>{
   const runtime=await ctx.runtime.describe();
   if(!runtime.capabilities.includes('secrets.network'))throw Error('请更新 Mewu 后使用此插件');
   if(!runtime.capabilities.includes('memory.archive'))throw Error('请更新 Mewu 后迁移记忆插件');
+  if(!runtime.capabilities.includes('secrets.settings'))throw Error('请更新 Mewu 后编辑已保存的密钥');
+  const settings=async()=>{
+    const secret=await ctx.secrets.status('api');
+    return {config:await ctx.configuration.get('connection'),secret,key:await ctx.secrets.read('api',secret.revision)};
+  };
   ctx.ui.register({id:'settings',title:'Hindsight',metadata:{surface:'settings'}},async input=>{
     if(input?.type==='mount')return {html,width:800,height:650};
-    if(input?.type==='get')return {config:await ctx.configuration.get('connection'),secret:await ctx.secrets.status('api')};
+    if(input?.type==='get')return settings();
     try{
       if(input?.type==='save'){
         const value=config(input.config),previous=await ctx.configuration.get('connection');
@@ -41,7 +46,7 @@ export default definePlugin(async ctx=>{
         // CAS leaves the prior endpoint unable to consume the new credential.
         if(typeof input.key==='string')await ctx.secrets.set('api',input.key,value.endpoint,input.secretRevision);
         if(!await ctx.configuration.compareAndSet('connection',previous,value))throw Error('配置已变化，请重新载入');
-        return {ok:true,config:value,secret:await ctx.secrets.status('api')};
+        return {ok:true,...await settings()};
       }
       // Test exactly the visible draft. An explicitly typed key is transient;
       // an untouched field uses the host's existing origin-bound credential.

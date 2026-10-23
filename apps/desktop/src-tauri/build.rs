@@ -134,6 +134,7 @@ fn main() {
             "export_text_asset",
             "read_artifact",
             "get_provider_presets",
+            "read_connection_key",
             "save_connection_profile",
             "delete_connection_profile",
             "discover_connection_models",

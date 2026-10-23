@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-read-connection-key"
+description = "Enables the read_connection_key command without any pre-configured scope."
+commands.allow = ["read_connection_key"]
+
+[[permission]]
+identifier = "deny-read-connection-key"
+description = "Denies the read_connection_key command without any pre-configured scope."
+commands.deny = ["read_connection_key"]
