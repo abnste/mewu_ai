@@ -398,13 +398,25 @@ pub(super) fn execute(session: &RegionSession, action: RegionAction) -> Result<(
 pub(super) fn capture(session: &RegionSession) -> Result<image::RgbaImage> {
     let s = state(&session.target)?;
     let frames = s.frames.lock().map_err(|_| unavailable())?;
-    let barrier = frames
-        .barrier()
-        .map_err(|e| RegionError::new("region_capture_failed", e))?;
     let expires = Instant::now() + Duration::from_secs(3);
+    let barrier = loop {
+        check(session, &[])?;
+        if Instant::now() >= expires {
+            eprintln!("[region-linux] capture_clock_not_ready");
+            return Err(RegionError::new("region_capture_failed", "屏幕采集尚未建立时间轴"));
+        }
+        match frames.try_barrier().map_err(|e| {
+            eprintln!("[region-linux] capture_clock_stream_ended");
+            RegionError::new("region_capture_failed", e)
+        })? {
+            Some(barrier) => break barrier,
+            None => std::thread::sleep(Duration::from_millis(5)),
+        }
+    };
     loop {
         check(session, &[])?;
         if Instant::now() >= expires {
+            eprintln!("[region-linux] capture_fresh_frame_timeout");
             return Err(RegionError::new(
                 "region_capture_failed",
                 "未取得操作后的新屏幕帧",
@@ -412,7 +424,10 @@ pub(super) fn capture(session: &RegionSession) -> Result<image::RgbaImage> {
         }
         let frame = frames
             .next_after(Duration::from_millis(40), Some(barrier))
-            .map_err(|e| RegionError::new("region_capture_failed", e))?;
+            .map_err(|e| {
+                eprintln!("[region-linux] capture_frame_stream_error");
+                RegionError::new("region_capture_failed", e)
+            })?;
         let Some(frame) = frame else { continue };
         if frame.width != s.binding.source_width || frame.height != s.binding.source_height {
             return Err(RegionError::new(

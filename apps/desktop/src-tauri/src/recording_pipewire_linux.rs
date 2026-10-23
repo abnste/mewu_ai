@@ -40,12 +40,15 @@ impl Frames {
         self.next_after(wait,None)
     }
     pub(crate) fn barrier(&self)->Result<u64,String>{
-        self.pipeline.current_running_time().map(|v|v.nseconds()).ok_or_else(||"无法确认屏幕帧时间".into())
+        self.try_barrier()?.ok_or_else(||"无法确认屏幕帧时间".into())
     }
-    /// A feedback frame must be captured after the caller's barrier, rather
-    /// than merely dequeued after input. Existing recording callers retain
-    /// their ordinary next() semantics.
-    pub(crate) fn next_after(&self, wait:Duration, minimum:Option<u64>)->Result<Option<Frame>,String>{
+    /// PLAYING is asynchronous for a live PipeWire source. Absence of its
+    /// clock during negotiation is pending, never a usable zero timestamp.
+    pub(crate) fn try_barrier(&self)->Result<Option<u64>,String>{
+        self.check_bus()?;
+        Ok(self.pipeline.current_running_time().map(|v|v.nseconds()))
+    }
+    fn check_bus(&self)->Result<(),String>{
         let bus = self.pipeline.bus().ok_or("屏幕采集总线不可用")?;
         for _ in 0..16 {
             let Some(message) = bus.pop() else { break; };
@@ -53,6 +56,13 @@ impl Frames {
                 return Err("屏幕共享已结束".into());
             }
         }
+        Ok(())
+    }
+    /// A feedback frame must be captured after the caller's barrier, rather
+    /// than merely dequeued after input. Existing recording callers retain
+    /// their ordinary next() semantics.
+    pub(crate) fn next_after(&self, wait:Duration, minimum:Option<u64>)->Result<Option<Frame>,String>{
+        self.check_bus()?;
         let Some(sample) = self.sink.try_pull_sample(gst::ClockTime::from_nseconds(wait.as_nanos().min(u64::MAX as u128) as u64)) else { return Ok(None); };
         if let Some(minimum)=minimum {
             let pts=sample.buffer().and_then(|b|b.pts()).ok_or("屏幕帧时间缺失")?;
@@ -99,6 +109,24 @@ fn packed_rows(data: &[u8], stride: usize, row: usize, height: usize) -> Result<
 }
 #[cfg(test)] mod tests {
     use super::*;
+    #[test] fn pending_live_clock_is_not_a_zero_barrier_and_stream_end_is_not_pending() {
+        gst::init().unwrap();
+        let pipeline=gst::Pipeline::new();
+        let source=element("appsrc").unwrap();
+        source.set_property("is-live",true);
+        let sink=element("appsink").unwrap().downcast::<gstreamer_app::AppSink>().unwrap();
+        sink.set_property("async",false);
+        pipeline.add_many([&source,sink.upcast_ref()]).unwrap();source.link(&sink).unwrap();
+        let frames=Frames{pipeline,sink};
+        assert_eq!(frames.try_barrier().unwrap(),None);
+        assert!(frames.barrier().is_err());
+        frames.pipeline.set_state(gst::State::Playing).unwrap();
+        let (result,current,_)=frames.pipeline.state(Some(gst::ClockTime::from_seconds(1)));
+        result.unwrap();assert_eq!(current,gst::State::Playing);
+        assert!(frames.try_barrier().unwrap().is_some());
+        frames.pipeline.bus().unwrap().post(gst::message::Eos::builder().src(&frames.pipeline).build()).unwrap();
+        assert!(frames.try_barrier().is_err());
+    }
     #[test] fn fresh_frame_barrier_discards_queued_pre_hide_pixels_on_a_real_pipeline() {
         gst::init().unwrap();
         let pipeline=gst::Pipeline::new();
