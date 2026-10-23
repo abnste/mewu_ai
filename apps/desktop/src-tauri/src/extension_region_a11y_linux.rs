@@ -30,7 +30,16 @@ async fn proxy<'a>(
     path: &'a str,
     interface: &'a str,
 ) -> Result<Proxy<'a>, String> {
-    bounded(Proxy::new(connection, peer, path, interface)).await
+    // Firefox implements individual Properties.Get calls but rejects GetAll.
+    // A lazy property cache invokes GetAll before the first property read and
+    // therefore rejects otherwise valid focus metadata. Read only the requested
+    // property, and always read current state rather than a cached focus value.
+    bounded(zbus::proxy::Builder::new(connection)
+        .destination(peer).map_err(|_| error())?
+        .path(path).map_err(|_| error())?
+        .interface(interface).map_err(|_| error())?
+        .cache_properties(zbus::proxy::CacheProperties::No)
+        .build()).await
 }
 async fn children(
     connection: &Connection,
@@ -245,6 +254,49 @@ fn keyboard_toolkit(toolkit: &str, version: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{io::BufRead, process::{Child, Command, Stdio}, sync::{Arc, atomic::{AtomicUsize, Ordering}}};
+
+    struct TestBus(Child);
+    impl Drop for TestBus {
+        fn drop(&mut self) { let _ = self.0.kill(); let _ = self.0.wait(); }
+    }
+    struct ToolkitProperties(Arc<AtomicUsize>);
+    #[zbus::interface(name = "dev.mewu.TestToolkitProperties")]
+    impl ToolkitProperties {
+        #[zbus(property)]
+        fn toolkit_name(&self) -> String { "Gecko".into() }
+        #[zbus(property)]
+        fn version(&self) -> String { "158.0.1".into() }
+        #[zbus(property)]
+        fn unrelated(&self) -> String {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            "not-requested".into()
+        }
+    }
+    #[test]
+    fn focus_properties_are_read_individually_without_get_all() {
+        let mut bus = TestBus(Command::new("dbus-daemon")
+            .args(["--session", "--nofork", "--print-address=1"])
+            .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null())
+            .spawn().expect("isolated test D-Bus"));
+        let mut address = String::new();
+        std::io::BufReader::new(bus.0.stdout.take().unwrap()).read_line(&mut address).unwrap();
+        assert!(address.starts_with("unix:"));
+        futures_lite::future::block_on(async {
+            let unrelated = Arc::new(AtomicUsize::new(0));
+            let server = zbus::connection::Builder::address(address.trim()).unwrap()
+                .name("dev.mewu.TestFocusProperties").unwrap()
+                .serve_at("/dev/mewu/TestFocusProperties", ToolkitProperties(unrelated.clone())).unwrap()
+                .build().await.unwrap();
+            let client = zbus::connection::Builder::address(address.trim()).unwrap().build().await.unwrap();
+            let reader = proxy(&client, "dev.mewu.TestFocusProperties", "/dev/mewu/TestFocusProperties",
+                "dev.mewu.TestToolkitProperties").await.unwrap();
+            assert_eq!(reader.get_property::<String>("ToolkitName").await.unwrap(), "Gecko");
+            assert_eq!(reader.get_property::<String>("Version").await.unwrap(), "158.0.1");
+            assert_eq!(unrelated.load(Ordering::SeqCst), 0, "focus must not trigger a bulk property read");
+            drop(server);
+        });
+    }
     #[test]
     fn password_ambiguous_toolkits_do_not_enable_keyboard() {
         assert!(!keyboard_toolkit("GTK", "4.14.5"));
