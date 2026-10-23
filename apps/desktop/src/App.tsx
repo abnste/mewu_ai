@@ -1376,7 +1376,16 @@ export default function App() {
       }
       case 'ocr.run': {
         const value = operation.params;
-        await withControlBusy(async () => accept(await plugins.runPluginOcr(crypto.randomUUID(), value.pluginId, value.revision, value.contributionId, value.target)));
+        try {
+          await withControlBusy(async () => accept(await plugins.runPluginOcr(crypto.randomUUID(), value.pluginId, value.revision, value.contributionId, value.target)));
+        } catch (error) {
+          // This native-only OCR command returns sanitized host diagnostics.
+          // Preserve its bounded text; arbitrary JS exceptions stay private.
+          if (typeof error === 'string' && error.length > 0 && error.length <= 256 && !/[\u0000-\u001f\u007f]/.test(error)) {
+            throw new AppControlError('OPERATION_FAILED', error);
+          }
+          throw error;
+        }
         const document = scene()?.regions.find(region => region.id === value.target.regionId)?.ocr?.document;
         if (!document) throw new AppControlError('OPERATION_FAILED', '文字识别回执无效');
         return controlReceipt({ regionId: value.target.regionId, text: document.lines.map(line => line.text).join('\n') });

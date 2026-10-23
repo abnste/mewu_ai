@@ -155,6 +155,16 @@ test('actual strict shared handlers propagate rejection instead of pretending a 
   }
 });
 
+test('native OCR failures retain bounded host diagnostics and release the busy lease without retry', async () => {
+  const { f, scope } = fixture(); let calls = 0;
+  scope.plugins.runPluginOcr = async () => { calls++; throw '文字识别超时，请缩小选区后重试'; };
+  await assert.rejects(scope.executeControl('ocr.run', { pluginId: 'ocr', revision: 1,
+    contributionId: 'text', target: { sceneId: 'scene', regionId: 'region' } }),
+    error => error instanceof control.AppControlError && error.code === 'OPERATION_FAILED'
+      && error.message === '文字识别超时，请缩小选区后重试');
+  assert.equal(calls, 1); assert.equal(f.busy, false); assert.equal(f.operations, 0);
+});
+
 test('actual flush adapter locks input for the shared barrier and releases operation tracking on failure', async () => {
   const { f, scope } = fixture();
   scope.flush = async () => { assert.equal(f.busy, true); assert.equal(f.operations, 1); throw Error('draft not saved'); };
