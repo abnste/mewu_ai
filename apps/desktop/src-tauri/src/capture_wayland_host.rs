@@ -773,12 +773,16 @@ async fn capture_inner(app: AppHandle, window: WebviewWindow, work: Arc<Work>, t
                 // Successful capture already completed its final native show
                 // and allocation checks before committing/publishing the image.
                 if !success {crate::show(&restore_app);}
-                // Ask for keyboard activation only after the acquired image
-                // has been adopted and this same owned surface is opaque.
-                // Earlier presents negotiate a deliberately invisible surface.
                 if success {
-                    if let (Some(activation), Ok(widget)) = (restore_work.activation, space.gtk_window()) {
-                        activation.present(&widget);
+                    if let Ok(widget) = space.gtk_window() {
+                        if let Some(drawable) = widget.window() {
+                            // The user has just approved this Portal capture.
+                            // GTK present(CURRENT_TIME) substitutes its cached
+                            // X11 user time, which predates the Portal dialog.
+                            // Ask GDK to let the compositor resolve CURRENT_TIME
+                            // instead; never manufacture a fresh input timestamp.
+                            drawable.focus(gtk::gdk::CURRENT_TIME);
+                        }
                     }
                 }
                 #[cfg(debug_assertions)] {
