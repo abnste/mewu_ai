@@ -16,7 +16,9 @@ use objc2::{
     rc::{autoreleasepool, Retained},
     AnyThread, ClassType,
 };
-use objc2_foundation::{NSArray, NSData, NSDictionary, NSError, NSIndexSet, NSRange, NSString};
+use objc2_foundation::{
+    NSArray, NSData, NSDictionary, NSError, NSIndexSet, NSProcessInfo, NSRange, NSString,
+};
 use objc2_vision::{
     VNImageRequestHandler, VNRecognizeTextRequest, VNRequest, VNRequestProgressProviding,
     VNRequestTextRecognitionLevel,
@@ -268,6 +270,25 @@ fn checked_text(value: &NSString, maximum_chars: usize) -> Result<String, String
     Ok(text)
 }
 
+fn recognition_revision(major: isize, supported: impl Fn(usize) -> bool) -> Option<usize> {
+    // macOS 27's revision 3 accurate recognizer can stall inside Vision on
+    // mixed Chinese/Latin text, even with correction disabled or CPU-only.
+    // Revision 2 remains an accurate recognizer with both Chinese scripts.
+    // Use it only on the affected OS and only when Vision advertises it;
+    // don't widen our deadline or downgrade other OS versions to fast OCR.
+    if major == 27 && supported(2) {
+        Some(2)
+    } else if major >= 13 && supported(3) {
+        Some(3)
+    } else if supported(2) {
+        Some(2)
+    } else if supported(1) {
+        Some(1)
+    } else {
+        None
+    }
+}
+
 fn configure_languages(
     request: &VNRecognizeTextRequest,
     diagnostics: OcrDiagnostics,
@@ -282,15 +303,11 @@ fn configure_languages(
     let revisions: Retained<NSIndexSet> =
         unsafe { objc2::msg_send![VNRecognizeTextRequest::class(), supportedRevisions] };
     diagnostics.event("languages.revisions", "none", None, None);
-    let revision = if objc2::available!(macos = 13.0) && revisions.containsIndex(3) {
-        3
-    } else if revisions.containsIndex(2) {
-        2
-    } else if revisions.containsIndex(1) {
-        1
-    } else {
-        return Err("本机系统没有可用的文字识别版本".into());
-    };
+    let major = NSProcessInfo::processInfo()
+        .operatingSystemVersion()
+        .majorVersion;
+    let revision = recognition_revision(major, |revision| revisions.containsIndex(revision))
+        .ok_or_else(|| "本机系统没有可用的文字识别版本".to_string())?;
     unsafe { request.setRevision(revision) };
     let supported =
         unsafe { request.supportedRecognitionLanguagesAndReturnError() }.map_err(|error| {
@@ -573,6 +590,19 @@ mod tests {
     use super::*;
     use image::{DynamicImage, Rgba};
     use mewu_core::{Drawing, DrawingKind, DrawingPoint, Region};
+
+    #[test]
+    fn revision_compatibility_is_os_scoped_and_requires_native_support() {
+        let all = |revision| [1, 2, 3].contains(&revision);
+        assert_eq!(recognition_revision(12, all), Some(2));
+        assert_eq!(recognition_revision(13, all), Some(3));
+        assert_eq!(recognition_revision(26, all), Some(3));
+        assert_eq!(recognition_revision(27, all), Some(2));
+        assert_eq!(recognition_revision(28, all), Some(3));
+        assert_eq!(recognition_revision(27, |revision| revision == 3), Some(3));
+        assert_eq!(recognition_revision(27, |revision| revision == 1), Some(1));
+        assert_eq!(recognition_revision(27, |_| false), None);
+    }
 
     #[test]
     fn normalized_lower_left_boxes_reverse_y_once_in_original_pixels() {
