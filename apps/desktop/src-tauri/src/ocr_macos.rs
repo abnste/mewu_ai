@@ -837,13 +837,22 @@ mod tests {
             "https://example.com/path?q=42&v=1",
             "user@example.com",
             "Phone+8613800001234",
-            "Punctuation:(test),[42];A/B!",
         ] {
             assert!(
                 text.contains(expected),
                 "missing {expected:?}; actual: {text}"
             );
         }
+        // Chinese-capable Vision revisions can emit full-width punctuation.
+        // Keep URL/contact assertions exact above; here require every mark,
+        // in order, in one of the two observed width forms. Production text
+        // is never normalized, since width can be meaningful to the user.
+        assert!(
+            ["Punctuation:(test),[42];A/B!", "Punctuation：（test），［42］；A/B！"]
+                .iter()
+                .any(|punctuation| text.contains(punctuation)),
+            "punctuation missing or changed: {text}"
+        );
         assert!(document.lines.iter().all(|line| !line.words.is_empty()));
         validate_ocr_document(&document).unwrap();
     }
