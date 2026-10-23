@@ -215,23 +215,38 @@ fn pointer(session: &RegionSession, p: RegionPoint) -> Result<()> {
             !session.revoked.load(Ordering::SeqCst)
         })
         .map_err(|_| unavailable())?;
-    let snap = check(session, &[[x, y]])?;
-    verify_pointer(s, &snap, [x, y])?;
+    // Portal acknowledges submission, not compositor consumption. Wait for
+    // the real witnessed pointer; do not resend motion or press a button while
+    // it is pending. Every observation still revalidates source and authority.
+    await_pointer(Instant::now() + Duration::from_millis(250), || {
+        let snap = check(session, &[[x, y]])?;
+        Ok(pointer_matches(s.bound.window.id, &snap, [x, y]))
+    })?;
     *s.pointer.lock().map_err(|_| unavailable())? = Some([x, y]);
     Ok(())
 }
 fn verify_pointer(s: &State, snap: &desktop::Snapshot, expected: [f64; 2]) -> Result<()> {
-    let p = snap.pointer.as_ref().ok_or_else(unavailable)?;
-    if p.window != Some(s.bound.window.id)
-        || (p.x - expected[0]).abs() > 1.
-        || (p.y - expected[1]).abs() > 1.
-    {
-        return Err(RegionError::new(
-            "region_cursor_clipped",
-            "鼠标位置已被改变或受到系统限制",
-        ));
+    if pointer_matches(s.bound.window.id, snap, expected) { Ok(()) }
+    else { Err(pointer_mismatch()) }
+}
+fn pointer_matches(window: u32, snap: &desktop::Snapshot, expected: [f64; 2]) -> bool {
+    snap.pointer.as_ref().is_some_and(|p| {
+        p.window == Some(window) && p.x.is_finite() && p.y.is_finite()
+            && (p.x - expected[0]).abs() <= 1. && (p.y - expected[1]).abs() <= 1.
+    })
+}
+fn pointer_mismatch() -> RegionError {
+    RegionError::new("region_cursor_clipped", "鼠标位置已被改变或受到系统限制")
+}
+fn await_pointer(deadline: Instant, mut observe: impl FnMut() -> Result<bool>) -> Result<()> {
+    loop {
+        if observe()? { return Ok(()); }
+        if Instant::now() >= deadline {
+            eprintln!("[region-linux] pointer_confirmation_timeout");
+            return Err(pointer_mismatch());
+        }
+        std::thread::sleep(Duration::from_millis(4));
     }
-    Ok(())
 }
 fn button(session: &RegionSession, down: bool) -> Result<()> {
     let s = state(&session.target)?;
@@ -455,4 +470,56 @@ pub(super) fn capture(session: &RegionSession) -> Result<image::RgbaImage> {
 #[cfg(test)]
 pub(super) fn fixture_target() -> Target {
     Target { state: None }
+}
+
+#[cfg(test)]
+mod pointer_tests {
+    use super::*;
+
+    #[test]
+    fn delayed_confirmation_is_observed_without_replaying_input() {
+        let mut observations = 0;
+        await_pointer(Instant::now() + Duration::from_secs(1), || {
+            observations += 1;
+            Ok(observations == 3)
+        }).unwrap();
+        assert_eq!(observations, 3);
+    }
+
+    #[test]
+    fn authority_or_target_failure_is_never_polled_away() {
+        let mut observations = 0;
+        let error = await_pointer(Instant::now() + Duration::from_secs(1), || {
+            observations += 1;
+            Err(RegionError::new("region_authority_revoked", "stopped"))
+        }).unwrap_err();
+        assert_eq!(error.code, "region_authority_revoked");
+        assert_eq!(observations, 1);
+    }
+
+    #[test]
+    fn missing_pointer_confirmation_has_a_finite_deadline() {
+        let start = Instant::now();
+        let error = await_pointer(start, || Ok(false)).unwrap_err();
+        assert_eq!(error.code, "region_cursor_clipped");
+        assert!(start.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn confirmation_requires_finite_position_and_exact_target_window() {
+        let mut snap: desktop::Snapshot = serde_json::from_value(serde_json::json!({
+            "protocol": 1, "epoch": "test", "stopped": false, "blocked": false,
+            "modifiers": 0, "pointer": {"x": 42.0, "y": 51.0, "window": 7},
+            "workspace": 0, "focus": 7, "monitors": [], "windows": [], "hits": []
+        })).unwrap();
+        assert!(pointer_matches(7, &snap, [42., 51.]));
+        assert!(!pointer_matches(8, &snap, [42., 51.]));
+        assert!(!pointer_matches(7, &snap, [45., 51.]));
+        snap.pointer.as_mut().unwrap().x = f64::NAN;
+        assert!(!pointer_matches(7, &snap, [42., 51.]));
+        snap.pointer.as_mut().unwrap().x = f64::INFINITY;
+        assert!(!pointer_matches(7, &snap, [42., 51.]));
+        snap.pointer = None;
+        assert!(!pointer_matches(7, &snap, [42., 51.]));
+    }
 }
