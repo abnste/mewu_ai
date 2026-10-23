@@ -34,6 +34,18 @@ const MAX_LINE_CHARS: usize = 8192;
 const MAX_WORD_CHARS: usize = 512;
 const MAX_PNG_BYTES: usize = MAX_RECOGNITION_PIXELS as usize * 4 + 1024 * 1024;
 static ACTIVE_WORKERS: AtomicUsize = AtomicUsize::new(0);
+static COMPAT_MODEL_READY: AtomicBool = AtomicBool::new(false);
+
+fn native_timeout(compatibility: bool, model_ready: bool) -> Duration {
+    if compatibility && !model_ready {
+        // The macOS 27 revision 2 model can spend about 19 seconds loading
+        // both scripts on its first request. This is a bounded cold-start
+        // allowance, not a retry or a longer deadline for ordinary OCR.
+        Duration::from_secs(30)
+    } else {
+        TIMEOUT
+    }
+}
 
 // Only fixed stage/reason labels and process-local counters are recorded. Do
 // not add NSError descriptions, image geometry, text, paths or caller IDs.
@@ -96,10 +108,18 @@ impl OcrDiagnostics {
 fn check_interest_diagnosed(
     cancel: &AtomicBool,
     started: Instant,
+    timeout: Duration,
     diagnostics: OcrDiagnostics,
     stage: &'static str,
 ) -> Result<(), String> {
-    check_interest(cancel, started).inspect_err(|error| {
+    let interest = if cancel.load(Ordering::Acquire) {
+        Err(CANCEL_ERROR.to_string())
+    } else if started.elapsed() >= timeout {
+        Err(TIMEOUT_ERROR.to_string())
+    } else {
+        Ok(())
+    };
+    interest.inspect_err(|error| {
         let reason = if error == CANCEL_ERROR {
             "cancel_flag"
         } else {
@@ -365,6 +385,13 @@ fn recognize_with_progress(
     let diagnostics = OcrDiagnostics::new(started);
     diagnostics.event("module.enter", "blocking_thread", None, None);
     let result = recognize_diagnosed(bitmap, cancel, on_progress, started, diagnostics);
+    // Empty/cancelled/failed requests don't prove the recognizer was loaded.
+    if result
+        .as_ref()
+        .is_ok_and(|document| !document.lines.is_empty())
+    {
+        COMPAT_MODEL_READY.store(true, Ordering::Release);
+    }
     let reason = match &result {
         Ok(_) => "success",
         Err(error) if error == CANCEL_ERROR => "cancel_flag",
@@ -382,7 +409,7 @@ fn recognize_diagnosed(
     started: Instant,
     diagnostics: OcrDiagnostics,
 ) -> Result<OcrDocument, String> {
-    check_interest_diagnosed(&cancel, started, diagnostics, "interest.entry")?;
+    check_interest_diagnosed(&cancel, started, TIMEOUT, diagnostics, "interest.entry")?;
     validate_pixels(&bitmap)?;
     diagnostics.event("permit.admission", "none", None, None);
     let _permit = WorkerPermit::acquire(diagnostics).inspect_err(|_| {
@@ -395,7 +422,7 @@ fn recognize_diagnosed(
     diagnostics.event("prepare.return", "none", None, None);
     for (index, pixel) in rgba.chunks_exact_mut(4).enumerate() {
         if index % 16_384 == 0 {
-            check_interest_diagnosed(&cancel, started, diagnostics, "interest.rgba")?;
+            check_interest_diagnosed(&cancel, started, TIMEOUT, diagnostics, "interest.rgba")?;
         }
         // Shared preparation returns Windows BGRA. PNG requires RGBA.
         pixel.swap(0, 2);
@@ -415,7 +442,13 @@ fn recognize_diagnosed(
     if png.len() > MAX_PNG_BYTES {
         return Err("文字识别图片缓冲区超过限制".into());
     }
-    check_interest_diagnosed(&cancel, started, diagnostics, "interest.pre_native")?;
+    check_interest_diagnosed(
+        &cancel,
+        started,
+        TIMEOUT,
+        diagnostics,
+        "interest.pre_native",
+    )?;
     autoreleasepool(move |_| {
         diagnostics.event("native.data.begin", "none", None, None);
         let data = NSData::with_bytes(&png);
@@ -424,6 +457,13 @@ fn recognize_diagnosed(
         let request = VNRecognizeTextRequest::new();
         diagnostics.event("native.request.created", "none", None, None);
         let language = configure_languages(&request, diagnostics)?;
+        let timeout = native_timeout(
+            NSProcessInfo::processInfo()
+                .operatingSystemVersion()
+                .majorVersion
+                == 27,
+            COMPAT_MODEL_READY.load(Ordering::Acquire),
+        );
         let stop = cancel.clone();
         let cancel_sent = Arc::new(AtomicBool::new(false));
         let sent = cancel_sent.clone();
@@ -448,7 +488,7 @@ fn recognize_diagnosed(
                     }
                 }
                 let externally_canceled = stop.load(Ordering::Acquire);
-                let deadline_expired = started.elapsed() >= TIMEOUT;
+                let deadline_expired = started.elapsed() >= timeout;
                 if (externally_canceled || deadline_expired) && !sent.swap(true, Ordering::AcqRel) {
                     let reason = match (externally_canceled, deadline_expired) {
                         (true, true) => "cancel_flag_and_deadline",
@@ -473,7 +513,13 @@ fn recognize_diagnosed(
             &NSDictionary::new(),
         );
         diagnostics.event("handler.created", "none", None, None);
-        check_interest_diagnosed(&cancel, started, diagnostics, "interest.pre_perform")?;
+        check_interest_diagnosed(
+            &cancel,
+            started,
+            timeout,
+            diagnostics,
+            "interest.pre_perform",
+        )?;
         // This synchronous call owns all request/input/block allocations until
         // it returns. Do not race it with an async timeout that drops this
         // stack. A stuck call keeps the native and caller-owned host permits.
@@ -503,7 +549,13 @@ fn recognize_diagnosed(
                 Some(progress_count.load(Ordering::Relaxed)),
             );
         }
-        check_interest_diagnosed(&cancel, started, diagnostics, "interest.post_perform")?;
+        check_interest_diagnosed(
+            &cancel,
+            started,
+            timeout,
+            diagnostics,
+            "interest.post_perform",
+        )?;
         performed.map_err(|error| native_error("文字识别", &error))?;
         let observations = request.results().ok_or_else(|| {
             diagnostics.event("results.nil", "native", None, None);
@@ -517,7 +569,7 @@ fn recognize_diagnosed(
         let mut word_count = 0;
         let mut text_bytes = 0usize;
         for index in 0..observations.len() {
-            check_interest_diagnosed(&cancel, started, diagnostics, "interest.results")?;
+            check_interest_diagnosed(&cancel, started, timeout, diagnostics, "interest.results")?;
             let observation = observations.objectAtIndex(index);
             let candidates = observation.topCandidates(1);
             if candidates.is_empty() {
@@ -534,7 +586,13 @@ fn recognize_diagnosed(
             }
             let mut located = Vec::new();
             for span in text_spans(&text) {
-                check_interest_diagnosed(&cancel, started, diagnostics, "interest.word_boxes")?;
+                check_interest_diagnosed(
+                    &cancel,
+                    started,
+                    timeout,
+                    diagnostics,
+                    "interest.word_boxes",
+                )?;
                 let rectangle = unsafe { candidate.boundingBoxForRange_error(span.range) }
                     .map_err(|error| {
                         diagnostics.event("word_boxes.error", "native", Some(error.code()), None);
@@ -580,7 +638,7 @@ fn recognize_diagnosed(
         validate_ocr_document(&document)
             .map_err(|_| "本机识别结果格式或大小无效，请缩小选区后重试".to_string())?;
         diagnostics.event("validation.return", "success", None, None);
-        check_interest_diagnosed(&cancel, started, diagnostics, "interest.return")?;
+        check_interest_diagnosed(&cancel, started, timeout, diagnostics, "interest.return")?;
         Ok(document)
     })
 }
@@ -590,6 +648,42 @@ mod tests {
     use super::*;
     use image::{DynamicImage, Rgba};
     use mewu_core::{Drawing, DrawingKind, DrawingPoint, Region};
+
+    #[test]
+    fn only_compatibility_model_startup_gets_extra_time_and_cancel_still_wins() {
+        assert_eq!(native_timeout(false, false), TIMEOUT);
+        assert_eq!(native_timeout(false, true), TIMEOUT);
+        assert_eq!(native_timeout(true, true), TIMEOUT);
+        assert_eq!(native_timeout(true, false), Duration::from_secs(30));
+        let started = Instant::now() - Duration::from_secs(20);
+        let diagnostics = OcrDiagnostics::new(started);
+        let cancel = AtomicBool::new(false);
+        assert!(check_interest_diagnosed(
+            &cancel,
+            started,
+            native_timeout(true, false),
+            diagnostics,
+            "test.cold"
+        )
+        .is_ok());
+        assert_eq!(
+            check_interest_diagnosed(&cancel, started, TIMEOUT, diagnostics, "test.warm")
+                .unwrap_err(),
+            TIMEOUT_ERROR
+        );
+        cancel.store(true, Ordering::Release);
+        assert_eq!(
+            check_interest_diagnosed(
+                &cancel,
+                started,
+                native_timeout(true, false),
+                diagnostics,
+                "test.cancel"
+            )
+            .unwrap_err(),
+            CANCEL_ERROR
+        );
+    }
 
     #[test]
     fn revision_compatibility_is_os_scoped_and_requires_native_support() {
@@ -761,7 +855,8 @@ mod tests {
                 stroke_width: 1.,
                 points: vec![DrawingPoint { x, y }],
                 text: Some(text.into()),
-                font_size: Some(font_size), text_style: None,
+                font_size: Some(font_size),
+                text_style: None,
                 origin: None,
                 rich: None,
             })
@@ -848,9 +943,12 @@ mod tests {
         // in order, in one of the two observed width forms. Production text
         // is never normalized, since width can be meaningful to the user.
         assert!(
-            ["Punctuation:(test),[42];A/B!", "Punctuation：（test），［42］；A/B！"]
-                .iter()
-                .any(|punctuation| text.contains(punctuation)),
+            [
+                "Punctuation:(test),[42];A/B!",
+                "Punctuation：（test），［42］；A/B！"
+            ]
+            .iter()
+            .any(|punctuation| text.contains(punctuation)),
             "punctuation missing or changed: {text}"
         );
         assert!(document.lines.iter().all(|line| !line.words.is_empty()));
