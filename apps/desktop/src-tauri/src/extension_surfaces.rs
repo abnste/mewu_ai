@@ -15,7 +15,7 @@ pub(crate) struct Owner {
 struct Generation { live:AtomicBool,commit:Mutex<()> }
 #[derive(Clone,Debug)]
 pub(crate) struct WindowTicket {pub label:String,epoch:u64}
-struct Document { owner: Owner, html: Vec<u8>,generation:Arc<Generation>,width:u32,height:u32,window:Option<bool>,prepared:bool,host_window:Option<WindowTicket> }
+struct Document { owner: Owner, html: Vec<u8>,generation:Arc<Generation>,width:u32,height:u32,window:Option<bool>,prepared:bool,host_window:Option<WindowTicket>,transient:bool }
 #[derive(Default)]
 pub(crate) struct Surfaces(Mutex<HashMap<String, Document>>,AtomicU64,AtomicU64);
 #[derive(Deserialize)]
@@ -65,15 +65,33 @@ impl Surfaces {
         if let Some((id,d))=entries.iter().find(|(_,d)|d.owner==owner&&d.window.is_some()&&d.generation.live.load(Ordering::SeqCst)){
             return Ok(Mounted{surface_id:id.clone(),url:format!("{origin}/{id}"),width:d.width,height:d.height});
         }
-        // Reopening replaces exactly this service and scene's prior generation.
+        // Reopening replaces exactly this service and scene's prior durable
+        // generation. Gesture-scoped transient overlays stay until their own
+        // pointer/Escape/blur close, never the panel lifecycle.
         entries.retain(|_,v|{
-            if v.owner==owner {v.generation.live.store(false,Ordering::SeqCst);false}else{true}
+            if v.owner==owner&&!v.transient {v.generation.live.store(false,Ordering::SeqCst);false}else{true}
         });
         if entries.len()>=32 {return Err("插件界面数量已达上限".into());}
         let id=uuid::Uuid::new_v4().to_string();
         let html=format!("<!doctype html><meta charset=\"utf-8\"><script>{}</script>{}",
             include_str!("../../../../packages/sdk/client.js"),document.html).into_bytes();
-        entries.insert(id.clone(),Document{owner,html,generation:Arc::new(Generation{live:AtomicBool::new(true),commit:Mutex::new(() )}),width:document.width,height:document.height,window:None,prepared:false,host_window:host_window.cloned()});
+        entries.insert(id.clone(),Document{owner,html,generation:Arc::new(Generation{live:AtomicBool::new(true),commit:Mutex::new(() )}),width:document.width,height:document.height,window:None,prepared:false,host_window:host_window.cloned(),transient:false});
+        Ok(Mounted{url:format!("{origin}/{id}"),surface_id:id,width:document.width,height:document.height})
+    }
+    /// Pointer-following overlay documents. Several may coexist for one owner;
+    /// they never replace or resurrect that service's durable panels and share
+    /// the same global cap as ordinary mounts.
+    pub(crate) fn mount_transient(&self, owner: Owner, document: DocumentInput, origin: &str) -> Result<Mounted,String> {
+        if document.html.len()>256*1024 || document.html.is_empty()
+            || !(80..=1600).contains(&document.width) || !(40..=1200).contains(&document.height) {
+            return Err("插件界面尺寸或内容无效".into());
+        }
+        let mut entries=self.0.lock().map_err(|_|"插件界面不可用")?;
+        if entries.len()>=32 {return Err("插件界面数量已达上限".into());}
+        let id=uuid::Uuid::new_v4().to_string();
+        let html=format!("<!doctype html><meta charset=\"utf-8\"><script>{}</script>{}",
+            include_str!("../../../../packages/sdk/client.js"),document.html).into_bytes();
+        entries.insert(id.clone(),Document{owner,html,generation:Arc::new(Generation{live:AtomicBool::new(true),commit:Mutex::new(() )}),width:document.width,height:document.height,window:None,prepared:false,host_window:None,transient:true});
         Ok(Mounted{url:format!("{origin}/{id}"),surface_id:id,width:document.width,height:document.height})
     }
     pub(crate) fn window_owner(&self,id:&str)->Option<Owner>{
@@ -249,6 +267,27 @@ mod tests {
         assert!(surfaces.check(&second.surface_id,&b).is_ok());
         surfaces.revoke(None);
         assert!(surfaces.check(&second.surface_id,&b).is_err());
+    }
+    #[test]
+    fn transient_mounts_coexist_with_durable_panels_and_share_the_global_cap() {
+        let surfaces=Surfaces::default();let a=owner("one");
+        let panel=surfaces.mount(a.clone(),document(),"http://localhost:1").unwrap();
+        let transient=surfaces.mount_transient(a.clone(),document(),"http://localhost:1").unwrap();
+        assert_ne!(panel.surface_id,transient.surface_id);
+        assert!(surfaces.check(&panel.surface_id,&a).is_ok());
+        // Reopening the durable panel must not kill the gesture-scoped overlay.
+        let reopened=surfaces.mount(a.clone(),document(),"http://localhost:1").unwrap();
+        assert_ne!(reopened.surface_id,panel.surface_id);
+        assert!(surfaces.check(&reopened.surface_id,&a).is_ok());
+        assert!(surfaces.check(&transient.surface_id,&a).is_ok());
+        // Same validation as durable mounts applies to transient documents.
+        assert!(surfaces.mount_transient(a,DocumentInput{html:String::new(),width:300,height:200},"http://localhost:1").is_err());
+        assert!(surfaces.mount_transient(owner("two"),DocumentInput{html:"<i/>".into(),width:79,height:200},"http://localhost:1").is_err());
+        assert!(surfaces.mount_transient(owner("two"),DocumentInput{html:"<i/>".into(),width:300,height:39},"http://localhost:1").is_err());
+        assert!(surfaces.close(&transient.surface_id,&owner("two")).is_ok());
+        assert!(surfaces.check(&transient.surface_id,&owner("one")).is_ok());
+        surfaces.close(&transient.surface_id,&owner("one")).unwrap();
+        assert!(surfaces.check(&transient.surface_id,&owner("one")).is_err());
     }
     #[test]
     fn closing_serializes_with_a_commit_and_rejects_late_writes() {
