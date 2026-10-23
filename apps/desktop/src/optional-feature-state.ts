@@ -14,13 +14,15 @@ export function createOptionalFeatureState(connections: () => ConnectionProfile[
   const [extensionEpoch, setExtensionEpoch] = createSignal(0), [listening, setListening] = createSignal(false);
   const key = createMemo(() => JSON.stringify([optionalCapabilityKey(plugins(), connections(), configuration?.()), extensionEpoch(), listening()]));
   let request = 0, disposed = false, stop: (() => void) | undefined, stopExtensions: (() => void) | undefined, stopBindings: (() => void) | undefined;
-  createEffect(on(key, expected => {
+  const refresh = async (expected = untrack(key)) => {
     const serial = ++request;
     if (!listening() || untrack(plugins).revision < 0) return;
-    void getOptionalCapabilities().then(value => {
+    try {
+      const value = await getOptionalCapabilities();
       if (!disposed && request === serial && expected === key()) setResult({ key: expected, value });
-    }).catch(() => { if (!disposed && request === serial) setResult(undefined); });
-  }));
+    } catch { if (!disposed && request === serial) setResult(undefined); }
+  };
+  createEffect(on(key, expected => { void refresh(expected); }));
   onMount(async () => {
     const accept = (value: PluginSnapshot) => { if (!disposed && value.revision >= installed().revision) setInstalled(value); };
     try {
@@ -43,5 +45,7 @@ export function createOptionalFeatureState(connections: () => ConnectionProfile[
   });
   // Presentation may retain an editor across metadata refreshes, but a known
   // plugin revocation must take effect immediately, before that request ends.
-  return Object.assign(capabilities, { installed: plugins });
+  // An explicit action may recover a failed cold-start metadata read. This is
+  // one authoritative query, never a replay of an operation or a polling loop.
+  return Object.assign(capabilities, { installed: plugins, refresh: () => refresh() });
 }

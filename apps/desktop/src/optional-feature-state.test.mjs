@@ -281,6 +281,30 @@ test('active scene model/Agent and defaults refresh configuration metadata while
   f.setConfiguration({...configuration,agents:[{id:'independent',defaultConnectionId:otherConnectionId}]});await tick();assert.equal(f.reads.length,3);
 });
 
+test('an explicit action can recover a failed cold-start metadata read without replaying mutations', async t => {
+  const f = await fixture(); t.after(f.dispose);
+  f.reads[0].reject(Error('temporarily unavailable')); await tick();
+  assert.equal(f.state(), undefined);
+  const recovered = f.state.refresh();
+  assert.equal(f.reads.length, 2);
+  f.reads[1].resolve(capabilities(f.plugins(), f.snapshot().connections));
+  await recovered;
+  assert.equal(f.state()?.agent?.pluginId, 'mewu.agent');
+  await tick(); assert.equal(f.reads.length, 2);
+});
+
+test('an explicit recovery cannot revive a grant revoked while its query was pending', async t => {
+  const f = await fixture(); t.after(f.dispose);
+  const old = capabilities(f.plugins(), f.snapshot().connections);
+  f.reads[0].reject(Error('temporarily unavailable')); await tick();
+  const recovered = f.state.refresh();
+  f.setPlugins(plugins(6, 'disabled', 2)); await tick();
+  f.reads[1].resolve(old); await recovered;
+  assert.equal(f.state(), undefined);
+  f.reads[2].resolve(capabilities(f.plugins(), f.snapshot().connections)); await tick();
+  assert.equal(f.state()?.agent, null);
+});
+
 console.log(JSON.stringify({
   verification: 'actual-product-hook-with-real-solid-reactivity-and-synthetic-ipc',
   hookSha256: createHash('sha256').update(hookSource).digest('hex'),
