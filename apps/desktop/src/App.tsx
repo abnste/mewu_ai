@@ -428,34 +428,50 @@ export default function App() {
   }
   onMount(async () => {
     try { pinObjectsSubscription = await subscribePinObjects(setPinObjects, showError); if(disposed){pinObjectsSubscription.stop();return;} } catch(cause){showError(cause);}
-    await syncNativeLanguage(preferences().uiLanguage).catch(showError);
+  });
+  onMount(() => { void syncNativeLanguage(preferences().uiLanguage).catch(showError); });
+  // These independent native subscriptions must not serialize the initial
+  // snapshot behind an unavailable optional service or a hidden-window query.
+  onMount(async () => {
     try {
       stopExitEvents = await bridge.subscribeExitPreparation(request => { void exitPreparation.prepare(request); }, request => exitPreparation.cancel(request));
       if (disposed) { stopExitEvents(); return; }
     } catch (error) { showError(error); }
+  });
+  onMount(async () => {
     try {
       stopPinEscape = await pinBridge.subscribePinEscape(() => { if (!disposed) document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })); });
       if (disposed) { stopPinEscape(); return; }
     } catch (error) { showError(error); }
+  });
+  onMount(async () => {
     try {
       stopTranslationEvents = await translationBridge.subscribeTranslation(value => translationRequests.progress(value));
       if (disposed) { stopTranslationEvents(); return; }
     } catch (error) { showError(error); }
+  });
+  onMount(async () => {
     try {
       stopPluginEvents = await plugins.subscribePlugins(acceptPlugins);
       if (disposed) { stopPluginEvents(); return; }
       acceptPlugins(await plugins.getPlugins());
     } catch (error) { showError(error); }
+  });
+  onMount(async () => {
     try {
       stopRecordingEvents = await bridge.subscribeRecording(recordingEvent);
       if (disposed) { stopRecordingEvents(); return; }
       setRecordingReady(true);
     } catch (error) { showError(error); }
+  });
+  onMount(async () => {
     try {
       stopScrollEvents = await scrollBridge.subscribeScroll(scrollEvent);
       if (disposed) { stopScrollEvents(); return; }
       setScrollReady(true);
     } catch (error) { showError(error); }
+  });
+  onMount(async () => {
     try {
       stopEvents = await bridge.subscribe(accept, runEvent, showError);
       if (disposed) { stopEvents(); return; }
