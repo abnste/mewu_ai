@@ -7,6 +7,7 @@
 | [`region-agent`](https://github.com/abnste/mewu-plugin-region-agent) | tool、agent | 从原有对话条发起任务；观察真实选区 → 模型决定一个动作 → 原生操作 → 新截图反馈，最多 30 步；也能作为普通对话 Agent 使用 |
 | [`journal-memory`](https://github.com/abnste/mewu-plugin-journal-memory) | memory | 按 Agent 隔离独立记忆记录，原子 CAS 分配 ID，分页检索、删除，无固定总条数 |
 | [`interactive-widget`](https://github.com/abnste/mewu-plugin-interactive-widget) | renderer、ui、command | 返回透明 HTML/SVG 圆角尺，内容可交互，由宿主空间对象提供移动等控件 |
+| [`pointer-overlay`](./pointer-overlay) | command | `space-toolbar` 命令经 `ctx.ui.transient` 在指针处弹出半透明 SVG 十字标尺并实时回显坐标；弹层完全透传指针，抬指、Esc 或窗口失焦即销毁，只需 `ui.overlay` 权限 |
 
 区域操作仅支持 Windows 的原生适配器。必须由用户在当前真实截图选区上发起；插件清单中的权限不等于此轮屏幕操作授权。输入焦点、目标应用身份、显示器及选区会持续核验。macOS 和 Linux 尚未实现输入适配器，不能将跨平台 JavaScript 等同于跨平台输入支持。
 

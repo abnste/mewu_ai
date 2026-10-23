@@ -96,6 +96,16 @@ Each invocation receives a bounded recent conversation window, preserving the Ag
 
 `ctx.ui.render({html, width, height})` creates a persistent HTML object in the current space. It uses the existing isolated, movable object renderer and blackboard behavior. HTML/SVG/Canvas can be interactive inside the sandbox; it does not receive unrestricted Tauri IPC or access to the application's DOM.
 
+## Transient pointer overlays (`ui.overlay`)
+
+`ctx.ui.transient({html, width, height})` pops a transient overlay at the pointer and resolves with `{surfaceId}`. It requires the dedicated `ui.overlay` permission — one method, one permission — and a scene-bound invocation (space commands and scene tools qualify). The document html is passed inline as a parameter because the calling worker is blocked inside the current invocation and cannot run another of its own mount handlers.
+
+The overlay is gesture-scoped: the frame follows the pointer (offset below-right, clamped into the viewport) and is destroyed on the next pointerup — any button — on Escape, or when the window loses focus. Destruction closes the server-side document; the same scene, revision and enabled checks as persistent panels apply while it lives.
+
+The frame is strictly `pointer-events: none` for its whole life, so the gesture underneath continues: selection drags in the space pass through untouched, and the plugin only observes. Pointer samples are forwarded by the host through the isolated client bridge; plugin html receives them with `mewu.on('pointer', ({x, y, buttons}) => ...)`, where `x`/`y` are CSS pixels of the space window and `buttons` is the live button mask. All other client bridge traffic is ignored for transient frames.
+
+Unlike `ctx.ui.render` panels, transient overlays never appear in the persistent panel list, never replace or resurrect a service's durable documents, may coexist several at a time per plugin within the shared surface cap (html ≤ 256 KB, width 80–1600, height 40–1200), and are owned by the service that called `ui.transient`. The independent [pointer-overlay example](../extensions/examples/pointer-overlay) shows a self-contained SVG crosshair with a live coordinate readout.
+
 ## Region operation example
 
 The independent [region Agent](../extensions/examples/region-agent) registers an operation tool and an optional Agent implementation. Select and reference the region, then send the task through the existing conversation bar. The current Agent chooses whether to call the plugin; there is no separate task button or task-entry dialog. The plugin observes the authorized region, passes the new image artifact to the selected model, interprets the model's decision, performs one action, and obtains another screenshot. The core contains neither that plugin's identity nor its decision algorithm.
