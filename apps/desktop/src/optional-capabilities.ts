@@ -19,14 +19,14 @@ export interface OptionalCapabilities {
 
 export interface OptionalAgentConfiguration {
   activeSceneId: string | null;
-  activeScene?: Pick<Scene, 'id' | 'agentId' | 'connectionId'>;
+  activeScene?: Pick<Scene, 'id' | 'agentId' | 'connectionId' | 'background'>;
   agents: Pick<AgentProfile, 'id' | 'defaultConnectionId'>[];
   defaultConnectionId: string | null;
 }
 
 export function optionalCapabilityKey(plugins: PluginSnapshot, connections: ConnectionProfile[], configuration?: OptionalAgentConfiguration): string {
   return JSON.stringify([plugins.revision, connections.map(value => [value.id, value.revision]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
-    configuration ? [configuration.activeSceneId, configuration.activeScene ? [configuration.activeScene.id, configuration.activeScene.agentId, configuration.activeScene.connectionId ?? null] : null,
+    configuration ? [configuration.activeSceneId, configuration.activeScene ? [configuration.activeScene.id, configuration.activeScene.agentId, configuration.activeScene.connectionId ?? null, configuration.activeScene.background?.id ?? null] : null,
       configuration.defaultConnectionId, configuration.agents.map(agent => [agent.id, agent.defaultConnectionId ?? null]).sort((a, b) => String(a[0]).localeCompare(String(b[0])))] : null]);
 }
 

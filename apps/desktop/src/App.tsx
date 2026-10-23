@@ -974,9 +974,11 @@ export default function App() {
     finally { setBusy(false); finishOperation(); }
   }
   async function openBlackboard(strict = false) {
+    const current=scene();
     if (strict && !capabilities()) await capabilities.refresh();
+    if (strict && (disposed || scene()?.id !== current?.id)) throw new AppControlError('CONFLICT', '会话已变化');
     if (strict && !capabilities()) throw new AppControlError('NOT_READY', '功能状态尚未就绪，请稍后重试');
-    const current=scene(), boardGrant=capabilities()?.blackboard;
+    const boardGrant=capabilities()?.blackboard;
     if(!blackboardAvailable()||!current||busy()||sending()||recording()||scroll()||exitPreparing()||current.run?.status==='running'){if(strict)throw new AppControlError('BUSY','当前无法打开黑板');return;}
     if(isBlackboard(current)&&blackboardEditing()!==current.id){setBlackboardEditing(current.id);return;}
     const finish=spaceOperations.begin();setBusy(true);
@@ -1002,9 +1004,11 @@ export default function App() {
     }catch(error){showError(error);if(strict)throw error;return false;}finally{setBusy(false);finish();}
   }
   async function reopenBlackboard(itemId:string,strict=false){
+    const current=scene();
     if (strict && !capabilities()) await capabilities.refresh();
+    if (strict && (disposed || scene()?.id !== current?.id)) throw new AppControlError('CONFLICT', '会话已变化');
     if (strict && !capabilities()) throw new AppControlError('NOT_READY', '功能状态尚未就绪，请稍后重试');
-    const current=scene(),boardGrant=capabilities()?.blackboard;if(!blackboardAvailable()||!current||busy()||sending()||recording()||scroll()||exitPreparing()||current.run?.status==='running'){if(strict)throw new AppControlError('BUSY','当前无法打开黑板');return;}
+    const boardGrant=capabilities()?.blackboard;if(!blackboardAvailable()||!current||busy()||sending()||recording()||scroll()||exitPreparing()||current.run?.status==='running'){if(strict)throw new AppControlError('BUSY','当前无法打开黑板');return;}
     const finish=spaceOperations.begin();setBusy(true);
     try{await flush();if(!sameOptionalGrant(boardGrant,capabilities()?.blackboard)||disposed||scene()?.id!==current.id||exitPreparing())throw Error('会话已变化');const next=await bridge.openBlackboard(current.id,itemId);accept(next);setBlackboardEditing(next.activeSceneId);}
     catch(error){showError(error);if(strict)throw error;}finally{setBusy(false);finish();}

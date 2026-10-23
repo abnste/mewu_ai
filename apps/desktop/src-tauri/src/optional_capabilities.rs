@@ -141,12 +141,13 @@ pub(crate) async fn get_optional_capabilities(app: AppHandle) -> Result<Capabili
         host.exit.ensure_running()?;
         let (connections, optional, agent_ids) = {
             let engine = host.lock()?;
-            let snapshot = engine.store.snapshot();
-            let agent_ids = snapshot
-                .agents
-                .into_iter()
+            // Eligibility needs profile metadata only, never a clone of every
+            // scene, message and captured object in the user's history.
+            let agent_ids = engine.store
+                .agent_profiles()
+                .iter()
                 .filter(|agent| !agent.archived)
-                .map(|agent| agent.id)
+                .map(|agent| agent.id.clone())
                 .collect::<Vec<_>>();
             (
                 engine.store.connection_profiles().to_vec(),

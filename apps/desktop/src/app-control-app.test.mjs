@@ -36,6 +36,33 @@ function controlMount() {
   return stripTypeScriptTypes(`async function connectControl() { ${raw.slice(found.start, found.end)} }`, { mode: 'transform' });
 }
 const plain = value => JSON.parse(JSON.stringify(value));
+
+test('a scene change during optional metadata recovery cannot redirect blackboard creation or reopening', async () => {
+  for (const name of ['openBlackboard', 'reopenBlackboard']) {
+    let release, value, current = { id: 'original', items: [], regions: [] }, writes = 0;
+    const pending = new Promise(resolve => { release = resolve; });
+    const capabilities = Object.assign(() => value, { refresh: () => pending });
+    const scope = {
+      AppControlError: control.AppControlError, capabilities, scene: () => current,
+      blackboardAvailable: () => Boolean(value?.blackboard), busy: () => false, sending: () => false,
+      recording: () => null, scroll: () => null, exitPreparing: () => false, disposed: false,
+      isBlackboard: () => false, sameOptionalGrant: () => true,
+      spaceOperations: { begin: () => () => {} }, setBusy() {}, flush: async () => {}, showError() {},
+      bridge: {
+        createBlackboard: async () => { writes++; },
+        openBlackboard: async () => { writes++; },
+      },
+    };
+    vm.createContext(scope); vm.runInContext(productFunction(name), scope);
+    const operation = name === 'openBlackboard' ? scope[name](true) : scope[name]('object', true);
+    current = { id: 'successor', items: [], regions: [] };
+    value = { blackboard: { pluginId: 'mewu.blackboard', revision: 1, contributionId: 'blackboard' } };
+    release();
+    await assert.rejects(operation, error => error.code === 'CONFLICT');
+    assert.equal(writes, 0, name);
+  }
+});
+
 function fixture() {
   const scene = { id: 'scene', background: { id: 'background' }, regions: [{ id: 'region', drawingRevision: 3 }], refs: [], draft: '', items: [], messages: [{ text: 'private-history-never-returned' }] };
   const f = { scene, saved: { revision: 8, activeSceneId: 'scene', scenes: [scene], agents: [{ instructions: 'private-soul' }] }, calls: [], busy: false, sending: false,

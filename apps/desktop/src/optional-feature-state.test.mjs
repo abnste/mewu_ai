@@ -281,6 +281,17 @@ test('active scene model/Agent and defaults refresh configuration metadata while
   f.setConfiguration({...configuration,agents:[{id:'independent',defaultConnectionId:otherConnectionId}]});await tick();assert.equal(f.reads.length,3);
 });
 
+test('the first captured background recovers hidden startup metadata without querying for each drawing or resize', async t => {
+  const configuration={activeSceneId:'scene',activeScene:{id:'scene',agentId:'independent',connectionId:connectionId},agents:[{id:'independent',defaultConnectionId:null}],defaultConnectionId:connectionId};
+  const f=await fixture({initialAgentConfig:configuration});t.after(f.dispose);
+  f.reads[0].reject(Error('hidden startup unavailable'));await tick();assert.equal(f.state(),undefined);
+  const captured={...configuration,activeScene:{...configuration.activeScene,background:{id:'capture-1',width:1280,height:800}}};
+  f.setConfiguration(captured);await tick();assert.equal(f.reads.length,2);
+  f.reads[1].resolve(capabilities(f.plugins(),f.snapshot().connections));await tick();assert.ok(f.state());
+  f.setConfiguration({...captured,activeScene:{...captured.activeScene,background:{...captured.activeScene.background,width:640},drawings:['stroke']}});await tick();assert.equal(f.reads.length,2);
+  f.setConfiguration({...captured,activeScene:{...captured.activeScene,background:{id:'capture-2'}}});await tick();assert.equal(f.reads.length,3);assert.equal(f.state(),undefined);
+});
+
 test('an explicit action can recover a failed cold-start metadata read without replaying mutations', async t => {
   const f = await fixture(); t.after(f.dispose);
   f.reads[0].reject(Error('temporarily unavailable')); await tick();
