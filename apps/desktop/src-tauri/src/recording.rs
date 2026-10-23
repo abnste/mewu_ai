@@ -169,6 +169,40 @@ pub fn get_recording_status(app: AppHandle) -> Result<Option<Status>, String> {
         .as_ref()
         .map(|a| a.status.clone()))
 }
+
+/// A terminal receipt is not inferred from the absence of an active recorder.
+/// Only the most recent completed receipt survives, and only until process exit.
+#[derive(Serialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub(crate) enum RecordingResult {
+    Active { id: String, recording: Status },
+    Finished { id: String },
+    Failed { id: String, error: RecordingFailure },
+    Unknown { id: String },
+}
+#[derive(Serialize)]
+pub(crate) struct RecordingFailure { code: &'static str, message: String }
+
+fn completed_result(id: &str, receipt: Option<Result<(), String>>) -> RecordingResult {
+    match receipt {
+        Some(Ok(())) => RecordingResult::Finished { id: id.into() },
+        Some(Err(message)) => RecordingResult::Failed { id: id.into(), error: RecordingFailure {
+            code: "RECORDING_FAILED", message: message.chars().take(256).collect(),
+        } },
+        None => RecordingResult::Unknown { id: id.into() },
+    }
+}
+
+pub(crate) fn get_recording_result(app: AppHandle, id: &str) -> Result<RecordingResult, String> {
+    if let Some(recording) = get_recording_status(app.clone())?.filter(|s| s.id == id) {
+        return Ok(RecordingResult::Active { id: id.into(), recording });
+    }
+    #[cfg(target_os = "linux")]
+    if let Some(receipt) = crate::recording_wayland_host::completed_result(id)? {
+        return Ok(completed_result(id, Some(receipt)));
+    }
+    Ok(completed_result(id, app.state::<RecordingState>().completed(id)?))
+}
 fn emit(app: &AppHandle, status: &Option<Status>) {
     let _ = app.emit_to("space", "recording-status", status);
     let _ = app.emit_to(LABEL, "recording-status", status);
@@ -1120,6 +1154,23 @@ fn supervise(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn recording_cli_result_matches_only_the_exact_terminal_id_and_never_infers_success() {
+        let state = super::RecordingState::default();
+        let encode = |id: &str| serde_json::to_value(super::completed_result(id, state.completed(id).unwrap())).unwrap();
+        assert_eq!(encode("first")["state"], "unknown");
+        *state.1.lock().unwrap() = Some(("first".into(), Err("原生编码未完成".into())));
+        let failed = encode("first");
+        assert_eq!(failed["state"], "failed");
+        assert_eq!(failed["error"]["code"], "RECORDING_FAILED");
+        assert_eq!(failed["error"]["message"], "原生编码未完成");
+        assert_eq!(encode("other")["state"], "unknown");
+        *state.1.lock().unwrap() = Some(("next".into(), Ok(())));
+        assert_eq!(encode("first")["state"], "unknown");
+        assert_eq!(encode("next")["state"], "finished");
+        *state.1.lock().unwrap() = Some(("next".into(), Err("错🙂".repeat(300))));
+        assert_eq!(encode("next")["error"]["message"].as_str().unwrap().chars().count(), 256);
+    }
     use super::*;
     #[cfg(target_os = "macos")]
     #[test]

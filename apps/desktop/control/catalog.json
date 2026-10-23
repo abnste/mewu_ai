@@ -1008,6 +1008,103 @@
         "retryable"
       ],
       "additionalProperties": false
+    },
+    "RecordingResult": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/Uuid"
+            },
+            "state": {
+              "const": "active"
+            },
+            "recording": {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/RecordingStatus"
+                },
+                {
+                  "type": "object"
+                }
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "state",
+            "recording"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/Uuid"
+            },
+            "state": {
+              "const": "finished"
+            }
+          },
+          "required": [
+            "id",
+            "state"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/Uuid"
+            },
+            "state": {
+              "const": "failed"
+            },
+            "error": {
+              "type": "object",
+              "properties": {
+                "code": {
+                  "const": "RECORDING_FAILED"
+                },
+                "message": {
+                  "type": "string",
+                  "maxLength": 256
+                }
+              },
+              "required": [
+                "code",
+                "message"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "id",
+            "state",
+            "error"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/Uuid"
+            },
+            "state": {
+              "const": "unknown"
+            }
+          },
+          "required": [
+            "id",
+            "state"
+          ],
+          "additionalProperties": false
+        }
+      ]
     }
   },
   "commands": [
@@ -3865,17 +3962,35 @@
     },
     {
       "method": "recording.status",
-      "description": "读取原生当前录屏状态或 null。null 表示当前无活动录屏，不单独证明上一成片已导出。",
+      "description": "无 id 时读取当前录屏或 null；提供录制 id 时查询 active/finished/failed/unknown。finished 只确认原生任务结束，成片仍需核对 scene.get。仅保留本进程最近一次完成结果。",
       "execution": "query",
       "asyncOperation": false,
       "inputSchema": {
         "type": "object",
-        "properties": {},
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
         "required": [],
         "additionalProperties": false
       },
       "resultSchema": {
-        "$ref": "#/$defs/RecordingStatus"
+        "oneOf": [
+          {
+            "$ref": "#/$defs/RecordingStatus"
+          },
+          {
+            "$ref": "#/$defs/RecordingResult"
+          }
+        ]
       },
       "examples": [
         {
@@ -3884,6 +3999,16 @@
             "id": "example-recording-status",
             "method": "recording.status",
             "params": {}
+          }
+        },
+        {
+          "description": "Query the original recording ID after stopping; never infer success from null or replay a recording on unknown.",
+          "request": {
+            "id": "example-recording-result",
+            "method": "recording.status",
+            "params": {
+              "id": "00000000-0000-4000-8000-000000000009"
+            }
           }
         }
       ]

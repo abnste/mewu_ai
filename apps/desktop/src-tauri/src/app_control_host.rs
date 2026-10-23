@@ -86,6 +86,9 @@ struct Empty {}
 struct Id { id: String }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RecordingStatusQuery { #[serde(default)] id: Option<String> }
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct SceneQuery { scene_id: String, #[serde(default = "default_limit")] limit: usize }
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -339,7 +342,19 @@ fn dispatch_inner(app: &AppHandle, request: Request, revision: u64) -> Result<Va
             if request.method == "agent.list" { output(engine.store.agent_profiles().iter().filter(|agent| !agent.archived).collect::<Vec<_>>()) } else { output(engine.store.connection_profiles()) }
         }
         "plugin.list" => { let _: Empty = params(request.params)?; let host = app.state::<crate::Host>(); let value = host.plugins.lock().map_err(|_|error(ErrorCode::Internal,"插件状态不可用"))?.store.snapshot().map_err(|_|error(ErrorCode::Internal,"插件状态不可用"))?; output(value) }
-        "recording.status" => { let _: Empty = params(request.params)?; output(crate::recording::get_recording_status(app.clone()).map_err(|_|error(ErrorCode::Internal,"录屏状态不可用"))?) }
+        "recording.status" => {
+            let query: RecordingStatusQuery = params(request.params)?;
+            if let Some(id) = query.id {
+                if uuid::Uuid::parse_str(&id).is_err() || id.len() != 36 {
+                    return Err(error(ErrorCode::InvalidRequest,"录制 ID 必须是 UUID"));
+                }
+                output(crate::recording::get_recording_result(app.clone(), &id)
+                    .map_err(|_|error(ErrorCode::Internal,"录屏结果不可用"))?)
+            } else {
+                output(crate::recording::get_recording_status(app.clone())
+                    .map_err(|_|error(ErrorCode::Internal,"录屏状态不可用"))?)
+            }
+        }
         "operation.get" => {
             let query: Id = params(request.params)?;
             let runtime = app.state::<Runtime>(); let mut inner = runtime.inner.lock().map_err(|_|error(ErrorCode::Internal,"控制状态不可用"))?;

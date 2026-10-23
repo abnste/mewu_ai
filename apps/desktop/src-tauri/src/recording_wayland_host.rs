@@ -116,6 +116,10 @@ pub(crate) fn selecting()->bool { state().lock().is_ok_and(|s|s.lease.as_ref().i
     l.status.is_none()&&l.controls.lock().is_ok_and(|c|c.terminal.is_none()))) }
 pub(crate) fn has_lease()->bool { state().lock().is_ok_and(|s|s.lease.is_some()) }
 pub(crate) fn status()->Result<Option<recording::Status>,String>{Ok(state().lock().map_err(|_|"录屏状态不可用")?.lease.as_ref().and_then(|l|l.status.clone()))}
+pub(crate) fn completed_result(id:&str)->Result<Option<Result<(),String>>,String>{
+    Ok(state().lock().map_err(|_|"录屏状态不可用")?.finished.as_ref()
+        .filter(|(finished,_)|finished==id).map(|(_,result)|result.clone()))
+}
 fn emit(app:&AppHandle,value:&Option<recording::Status>){
     crate::recording_tray_linux::refresh(app,value.as_ref().map(|status|status.phase));
     let _=app.emit_to("space","recording-status",value);

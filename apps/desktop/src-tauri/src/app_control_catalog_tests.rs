@@ -8,6 +8,30 @@ fn catalog() -> Value {
     serde_json::from_slice(include_bytes!("../../control/catalog.json")).expect("valid UTF-8 control catalog")
 }
 
+#[test]
+fn recording_status_catalog_preserves_legacy_queries_and_exposes_exact_terminal_results() {
+    let catalog = catalog();
+    let command = catalog["commands"].as_array().unwrap().iter().find(|v| v["method"] == "recording.status").unwrap();
+    let input = jsonschema::validator_for(&schema(&catalog, &command["inputSchema"])).unwrap();
+    let result = jsonschema::validator_for(&schema(&catalog, &command["resultSchema"])).unwrap();
+    let id = "00000000-0000-4000-8000-000000000009";
+    for value in [json!({}),json!({"id":null}),json!({"id":id})] {
+        assert!(input.is_valid(&value));
+        serde_json::from_value::<super::RecordingStatusQuery>(value).unwrap();
+    }
+    for value in [json!({"id":"bad"}),json!({"id":42}),json!({"id":id,"retry":true})] {
+        assert!(!input.is_valid(&value));
+    }
+    for value in [json!(null),json!({"id":id,"state":"unknown"}),json!({"id":id,"state":"finished"}),
+        json!({"id":id,"state":"failed","error":{"code":"RECORDING_FAILED","message":"编码失败"}})] {
+        assert!(result.is_valid(&value),"{value}");
+    }
+    for value in [json!({"id":id,"state":"active","recording":null}),json!({"id":id,"state":"failed"}),
+        json!({"id":id,"state":"finished","saved":true}),json!({"id":id,"state":"failed","error":{"code":"RECORDING_FAILED","message":"a".repeat(257)}})] {
+        assert!(!result.is_valid(&value),"{value}");
+    }
+}
+
 fn schema(catalog: &Value, part: &Value) -> Value {
     let mut schema = part.clone();
     schema["$schema"] = json!("https://json-schema.org/draft/2020-12/schema");

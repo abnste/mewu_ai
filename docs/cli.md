@@ -147,6 +147,10 @@ The host rejects queued work after 30 seconds as `not_sent`. Once the renderer c
 
 宿主对排队超过 30 秒的操作返回 `not_sent`；界面接手执行后的回执等候最多 300 秒，超时返回 `unknown`。该期限用于释放控制队列，不代表底层原生任务已取消；下一步应根据实际场景或录屏状态决定，不自动重放。
 
+`mewu call recording.status --json '{"id":"RECORDING_UUID"}'` reads the original recording’s terminal receipt: `active`, `finished`, `failed` (with a bounded native error), or `unknown`. Only the most recent completed recording is retained in memory; restarting Mewu or starting later work can make an older result unavailable. `finished` means the native task ended successfully, including a stop before media was produced: inspect `scene.get` for the resulting video before treating it as saved. `unknown` never authorizes replay. Calling without `id` preserves the current status-or-null response.
+
+录屏停止后，可使用原录制 ID 查询结束结果和实际错误。`finished` 不替代成片检查，`unknown` 也不代表未执行；不要据此重新录制。无参数调用仍返回当前录屏或 `null`。
+
 ## Coordinates and shared state / 坐标与共同操作
 
 Use real IDs and revisions from `app.status`, `scene.get` and `plugin.list`. `--scene ID --revision N` supplies optional `params.context` guards for a mutation. It fills missing context values without replacing explicit JSON values; native read-only queries do not accept context.
