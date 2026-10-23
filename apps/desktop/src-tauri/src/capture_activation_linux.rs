@@ -38,8 +38,15 @@ pub(crate) fn install() {
     // activate signal drops the DBusMenu Event's timestamp before Muda/Tauri
     // forwards the menu ID. Capture metadata here, leave the message untouched.
     gio::bus_get(gio::BusType::Session, gio::Cancellable::NONE, |result| {
+        #[cfg(debug_assertions)]
+        eprintln!("mewu-capture-activation observer-ready={}", result.is_ok());
         if let Ok(connection) = result {
             connection.add_filter(|_, message, incoming| {
+                #[cfg(debug_assertions)]
+                if incoming && message.interface().as_deref() == Some("com.canonical.dbusmenu") {
+                    eprintln!("mewu-capture-activation menu-method={:?} signature={:?}",
+                        message.member(), message.body().map(|body| body.type_().to_string()));
+                }
                 if let Some(timestamp) = menu_timestamp(message, incoming) {
                     if let Ok(mut slot) = pending().lock() {
                         *slot = Some(Activation { timestamp, received: Instant::now() });
@@ -51,8 +58,11 @@ pub(crate) fn install() {
     });
 }
 pub(crate) fn take_menu() -> Option<Activation> {
-    pending().lock().ok()?.take()
-        .filter(|event| event.received.elapsed() <= Duration::from_secs(1))
+    let activation = pending().lock().ok()?.take()
+        .filter(|event| event.received.elapsed() <= Duration::from_secs(1));
+    #[cfg(debug_assertions)]
+    eprintln!("mewu-capture-activation menu-event-available={}", activation.is_some());
+    activation
 }
 
 #[cfg(test)]
