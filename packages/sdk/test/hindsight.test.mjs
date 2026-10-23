@@ -75,6 +75,14 @@ test('explicit bank choice overrides an archived route without changing the arch
   assert.equal(archived.bankId,'original-bank');
 });
 
+test('choosing the same archived bank cannot resurrect forgotten or uncertain legacy documents',async()=>{
+  const f=fixture(()=>json({results:[{document_id:'deleted',text:'hidden'},{document_id:'uncertain',text:'unknown'},{document_id:'existing',text:'allowed'}]}));
+  f.ctx.configuration.get=async key=>key==='connection'?{...connection,bankId:'archived'}:key==='archive.alice'?{endpoint:connection.endpoint,bankId:'archived',bindingId:'old'}:null;
+  const fetch=f.ctx.host.call;f.ctx.host.call=async(method,p)=>method==='memory.archive.lookup'?[{documentId:'deleted',evidence:{state:'suppressed',forgotten:true}},{documentId:'uncertain',evidence:{state:'unknown'}}]:fetch(method,p);
+  await activate(f.ctx);assert.deepEqual(await f.invoke({operation:'recall',query:'x'}),{memories:[{id:'existing',text:'allowed'}]});
+  for(const bankId of ['.','..','  ', 'a\nb'])assert.throws(()=>config({...connection,bankId}),/记忆库无效/);
+});
+
 test('bank selection is persisted with CAS, leaves an untouched key alone and survives a fresh plugin instance',async()=>{
   let saved=connection,secretWrites=0;
   const make=async()=>{const f=fixture(()=>json({results:[]}));f.ctx.configuration={get:async key=>key==='connection'?structuredClone(saved):null,compareAndSet:async(key,expected,next)=>{if(JSON.stringify(expected)!==JSON.stringify(saved))return false;saved=next;return true;}};f.ctx.secrets.set=async()=>{secretWrites++;};await activate(f.ctx);return f;};

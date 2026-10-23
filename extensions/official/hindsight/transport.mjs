@@ -10,7 +10,7 @@ export function config(value) {
   if(typeof prefix!=='string'||!/^[A-Za-z0-9_-]{1,48}$/u.test(prefix))throw Error('记忆库前缀无效');
   if(value.completedTurnSync!==undefined&&typeof value.completedTurnSync!=='boolean')throw Error('记忆同步选项无效');
   const bankId=value.bankId??'';
-  if(typeof bankId!=='string'||bankId.length>256||/[\x00-\x1f\x7f]/u.test(bankId))throw Error('记忆库无效');
+  if(typeof bankId!=='string'||bankId.length>256||bankId.trim()!==bankId||bankId==='.'||bankId==='..'||/[\x00-\x1f\x7f]/u.test(bankId))throw Error('记忆库无效');
   return {endpoint,bankPrefix:prefix,completedTurnSync:value.completedTurnSync===true,...(bankId?{bankId}:{})};
 }
 export function bank(config,agentId) {
@@ -45,7 +45,8 @@ export async function listBanks(ctx,settings,previewKey,{offset=0,q=''}={}) {
   const result=await api(ctx,settings,previewKey)('GET',['v1','default','banks'],undefined,{query:{limit:100,offset,...(q?{q}:{})}});
   if(!Array.isArray(result.banks)||result.banks.length>100)throw Error('服务返回内容无效');
   const banks=result.banks.map(row=>{
-    if(!row||typeof row.bank_id!=='string'||!row.bank_id||row.bank_id.length>256||/[\x00-\x1f\x7f]/u.test(row.bank_id))throw Error('服务返回内容无效');
+    if(!row||typeof row.bank_id!=='string'||!row.bank_id)throw Error('服务返回内容无效');
+    try{config({...settings,bankId:row.bank_id});}catch{throw Error('服务返回内容无效');}
     return {id:row.bank_id,name:typeof row.name==='string'?row.name.slice(0,256):''};
   });
   // Older servers return only banks. A short page ends pagination in both APIs.

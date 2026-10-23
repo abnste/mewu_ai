@@ -65,7 +65,8 @@ export default definePlugin(async ctx=>{
     const connection=await ctx.configuration.get('connection');
     // An explicit settings selection takes precedence; removing it restores the
     // prior per-agent/archive route without modifying its data or credentials.
-    const archive=connection?.bankId?null:await ctx.configuration.get('archive.'+context.agentId);
+    const priorArchive=await ctx.configuration.get('archive.'+context.agentId);
+    const archive=connection?.bankId?null:priorArchive;
     const settings=config(archive?{endpoint:archive.endpoint}:connection);
     if(input.operation==='retain'&&context.memoryOrigin==='completedTurn'
       && !(archive?archive.policy.completedTurnSync:settings.completedTurnSync))return {retained:false,skipped:true};
@@ -77,7 +78,8 @@ export default definePlugin(async ctx=>{
       if(response===null)return {memories:[]};
       if(!Array.isArray(response.results))throw Error('服务返回内容无效');
       const candidates=response.results.slice(0,128);
-      const legacy=new Map((await legacyDocuments(ctx,archive,candidates.filter(v=>typeof v?.document_id==='string').map(v=>v.document_id))).map(v=>[v.documentId,v.evidence]));
+      const evidenceArchive=archive??(priorArchive?.endpoint===settings.endpoint&&priorArchive?.bankId===id?priorArchive:null);
+      const legacy=new Map((await legacyDocuments(ctx,evidenceArchive,candidates.filter(v=>typeof v?.document_id==='string').map(v=>v.document_id))).map(v=>[v.documentId,v.evidence]));
       const memories=[];
       for(const item of candidates){
         if(!item||typeof item.text!=='string'||typeof item.document_id!=='string')continue;
@@ -86,7 +88,7 @@ export default definePlugin(async ctx=>{
         // contents. Automatic per-agent banks retain the original ownership gate.
         // Local pending/unknown writes and tombstones are always suppressed.
         const old=legacy.get(item.document_id);
-        if(own?(own.forgotten||own.state!=='committed'):(!settings.bankId&&(!old||old.forgotten||old.state!=='committed')))continue;
+        if(own?(own.forgotten||own.state!=='committed'):(old?(old.forgotten||old.state!=='committed'):!settings.bankId))continue;
         memories.push({id:item.document_id,text:item.text.slice(0,8192)});
         if(memories.length>=Math.min(100,input.limit??8))break;
       }
