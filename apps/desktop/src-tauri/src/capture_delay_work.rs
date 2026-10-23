@@ -45,6 +45,8 @@ impl CaptureJobs {
         });
         Ok(Some(Work {
             id,
+            #[cfg(target_os = "linux")]
+            activation: None,
             registry: self.clone(),
             canceled,
             wake,
@@ -81,6 +83,8 @@ impl CaptureJobs {
 }
 pub(crate) struct Work {
     id: u64,
+    #[cfg(target_os = "linux")]
+    pub(crate) activation: Option<crate::capture_activation_linux::Activation>,
     registry: Arc<CaptureJobs>,
     canceled: Arc<AtomicBool>,
     wake: Arc<Notify>,

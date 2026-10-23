@@ -30,6 +30,8 @@ mod optional_capabilities;
 mod optional_authorizations;
 mod capture_cursor;
 mod capture_delay_work;
+#[cfg(target_os = "linux")]
+mod capture_activation_linux;
 #[cfg(windows)]
 mod capture_presentation;
 mod capture_preferences;
@@ -1616,6 +1618,12 @@ fn capture_background_ready_blocking(
 
 #[tauri::command]
 async fn capture_screen(app: AppHandle) -> Result<HostSnapshot, String> {
+    capture_screen_with_activation(app, #[cfg(target_os = "linux")] None).await
+}
+
+async fn capture_screen_with_activation(app: AppHandle,
+    #[cfg(target_os = "linux")] activation: Option<capture_activation_linux::Activation>,
+) -> Result<HostSnapshot, String> {
     let mut timing = interaction_performance::Trace::start(interaction_performance::Kind::Capture);
     recording::ensure_idle(&app)?;
     let host = app.state::<Host>();
@@ -1638,6 +1646,8 @@ async fn capture_screen(app: AppHandle) -> Result<HostSnapshot, String> {
     let Some(work) = host.capture_jobs.begin()? else {
         return get_snapshot_blocking(app.clone(), &host);
     };
+    #[cfg(target_os = "linux")]
+    let work = { let mut work = work; work.activation = activation; work };
     let _invoke = work.cancel_on_drop();
     #[cfg(target_os = "linux")]
     let work = Arc::new(work);
@@ -2780,6 +2790,12 @@ fn cancel_run_blocking(
 }
 
 fn start_capture(app: &AppHandle) {
+    start_capture_with_activation(app, #[cfg(target_os = "linux")] None);
+}
+
+fn start_capture_with_activation(app: &AppHandle,
+    #[cfg(target_os = "linux")] activation: Option<capture_activation_linux::Activation>,
+) {
     if !app
         .try_state::<Host>()
         .is_some_and(|host| host.exit.accepts_new_operations() && host.storage.is_ready())
@@ -2788,7 +2804,7 @@ fn start_capture(app: &AppHandle) {
     }
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        if let Err(error) = capture_screen(app.clone()).await {
+        if let Err(error) = capture_screen_with_activation(app.clone(), #[cfg(target_os = "linux")] activation).await {
             if error != capture_delay_work::CANCELED {
                 let _ = app.emit_to("space", "host-error", error);
             }
@@ -3532,7 +3548,7 @@ fn main() {
                 })
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     #[cfg(target_os = "linux")]
-                    "capture" => start_capture(app),
+                    "capture" => start_capture_with_activation(app, capture_activation_linux::take_menu()),
                     #[cfg(target_os = "linux")]
                     id if recording_tray_linux::handle(app, id) => {},
                     "settings" => {
@@ -3552,6 +3568,8 @@ fn main() {
                 tray = tray.icon(icon.clone());
             }
             tray.build(app)?;
+            #[cfg(target_os = "linux")]
+            capture_activation_linux::install();
             // A failed trial stays Activated and fails closed/retries the same
             // target on next launch. Never reopen the old source while a Host
             // still owns the copied databases or has accepted user input.

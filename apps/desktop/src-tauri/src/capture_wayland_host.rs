@@ -484,6 +484,9 @@ async fn present(window: &WebviewWindow, owned: Vec<Witness>, permit: Presentati
             // is created before the user's portal consent.
             target.unminimize().map_err(|_| "无法显示截图空间")?;
             target.set_focus().map_err(|_| "无法显示截图空间")?;
+            if let PresentationPermit::Screenshot(work) = &permit {
+                if let Some(activation) = work.activation { activation.present(&widget); }
+            }
             Ok((widget,initial_size,trace))
         })();
         match start {
@@ -548,6 +551,9 @@ async fn present(window: &WebviewWindow, owned: Vec<Witness>, permit: Presentati
                                     // show/deiconify can then negotiate safely.
                                     widget.set_default_size(size.0,size.1);
                                     crate::show(target.app_handle());
+                                    if let PresentationPermit::Screenshot(work) = &permit {
+                                        if let Some(activation) = work.activation { activation.present(&widget); }
+                                    }
                                     final_size=Some(size);
                                     stable_ticks=0;
                                     return Ok(None);
