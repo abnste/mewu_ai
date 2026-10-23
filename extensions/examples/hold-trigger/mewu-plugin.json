@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 2,
+  "id": "example.hold-trigger",
+  "version": "0.1.0",
+  "name": "按住 Alt 触发器",
+  "description": "按住 Alt 修饰键演示触发器的按下、松开与取消事件，每个事件在画布盖一枚徽章。",
+  "publisher": "Mewu contributors",
+  "license": "MPL-2.0",
+  "hostApi": 2,
+  "runtime": "javascript",
+  "entry": "index.mjs",
+  "permissions": ["input.trigger", "ui.render"],
+  "tags": ["input", "triggers"],
+  "dependencies": {}
+}

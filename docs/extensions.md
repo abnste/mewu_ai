@@ -78,6 +78,7 @@ All registrations use the same lifecycle and executable handler. A handler recei
 | `ctx.memory.register` | A memory implementation selectable for an Agent |
 | `ctx.models.register`, `ctx.channels.register` | Model and communication services callable through the service bridge |
 | `ctx.renderers.register`, `ctx.ui.register` | Interactive content and interface services |
+| `ctx.triggers.register` | Hold-type modifier triggers; see [Hold triggers](#hold-triggers-inputtrigger) |
 | `ctx.services.register` | An author's own named service contract; the core need not know its business domain |
 
 Services can declare `inputSchema`. Other plugins use `ctx.services.list` and `ctx.services.call("plugin-id/service-id", input)`. Cross-plugin calls require a declared, compatible dependency; permissions are attenuated across the call chain. Use `metadata.contract` to identify a custom contract and its version. Do not treat module tags as permissions or service protocols.
@@ -95,6 +96,25 @@ Each invocation receives a bounded recent conversation window, preserving the Ag
 `ctx.model.invoke` uses the current conversation's selected model and host-held credentials. It accepts visible messages, a prompt and image artifact identifiers. No connection key is passed to plugin code. A plugin can implement its own observation/action loop instead of inheriting the built-in Agent's loop.
 
 `ctx.ui.render({html, width, height})` creates a persistent HTML object in the current space. It uses the existing isolated, movable object renderer and blackboard behavior. HTML/SVG/Canvas can be interactive inside the sandbox; it does not receive unrestricted Tauri IPC or access to the application's DOM.
+
+## Hold triggers (`input.trigger`)
+
+A plugin activation can declare hold-type triggers: while the user holds a bare modifier key (`Alt`, `Control`, `Shift`) or an exact modifier combination such as Ctrl+Alt, each matching registration receives an ordinary invocation. The space window owns the keyboard listeners; there is no OS-global hook.
+
+```js
+export default definePlugin(ctx => {
+  ctx.triggers.register({ id: 'yourname.alt-hold', code: 'Alt' }, event => {
+    if (event.phase === 'down') { /* begin */ }
+    if (event.phase === 'up') { /* event.pointer.x / y, event.modifiers */ }
+  });
+});
+```
+
+The descriptor admits modifiers only: `code` is the key that starts the hold (`'Alt' | 'Control' | 'Shift'`), and the optional `with` array lists extra modifiers (`'Ctrl' | 'Shift' | 'Alt'`) that must be held together with it. The runtime rejects letters, digits and every other key at registration. Matching is exact set equality, so a bare `Alt` trigger does not fire while Ctrl+Alt is held.
+
+The invocation input carries phase and geometry, never characters: `{type: 'trigger', phase: 'down' | 'up' | 'cancel', reason?: 'escape' | 'blur', pointer: {x, y, buttons}, modifiers: {ctrl, shift, alt}}`. `pointer` is the space window's CSS pixels at the moment of the event; `up` reports the modifiers remaining after the release. `Escape` during a hold and a window blur both end it with `cancel`. The host owns typing-conflict protection: auto-repeat and composition (`isComposing`) keydowns are ignored, and because bare modifiers do not type, a hold may arm while an input is focused. Trigger delivery requires the manifest permission `input.trigger` and rechecks the live registry like any invocation. With no characters in the payload, a trigger cannot be used as a keylogger.
+
+The independent [hold-trigger example](../extensions/examples/hold-trigger) renders a small canvas badge for every phase so arrivals are visible without instrumentation.
 
 ## Region operation example
 
