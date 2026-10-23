@@ -17,8 +17,17 @@ impl Controls {
     }
 }
 struct Lease { nonce:String, scene_id:String, background:Option<Asset>, region:Option<Region>,
+    transition:Arc<crate::SpaceTransition>,
     controls:Arc<Mutex<Controls>>, status:Option<recording::Status>, finalized:bool, suppress_reveal:bool,
     grant:Option<crate::plugins::RecordingGrant>, audio_grant:Option<crate::recording_audio_host::RecordingAudioGrant> }
+impl Lease {
+    fn countdown_transition(&self,nonce:&str)->Result<Arc<crate::SpaceTransition>,String>{
+        let status=self.status.as_ref().ok_or("录屏尚未开始")?;
+        let terminal=self.controls.lock().map_err(|_|"录屏控制不可用")?.terminal.is_some();
+        if !tray_can_begin(&self.nonce,nonce,status.phase,terminal){return Err("录屏准备已结束".into());}
+        Ok(self.transition.clone())
+    }
+}
 #[derive(Default)] struct State { lease:Option<Lease>, finished:Option<(String,Result<(),String>)> }
 fn state()->&'static Mutex<State> {static STATE:OnceLock<Mutex<State>>=OnceLock::new();STATE.get_or_init(||Mutex::new(State::default()))}
 struct PreparingGuard { nonce:String, armed:bool }
@@ -193,6 +202,7 @@ pub(crate) async fn prepare_wayland_recording(app:AppHandle,window:WebviewWindow
     {let mut s=state().lock().map_err(|_|"录屏状态不可用")?;host.exit.ensure_new_operation()?;
         if s.lease.is_some(){return Err("请先完成当前录屏准备".into());}
         s.lease=Some(Lease{nonce:nonce.clone(),scene_id:scene_id.clone(),background:None,region:None,
+            transition:transition.clone(),
             controls:controls.clone(),status:None,finalized:false,suppress_reveal:false,grant:None,audio_grant:None});s.finished=None;
     }
     let mut preparing=PreparingGuard{nonce:nonce.clone(),armed:true};
@@ -348,7 +358,10 @@ pub(crate) async fn start(app:AppHandle,window:WebviewWindow,scene_id:String,reg
     // Keep the same capture surface visible for 3/2/1. It must be unmapped and
     // acknowledged before Start; a monitor stream cannot exclude this window.
     crate::recording_tray_linux::present(&app,&id).await?;
-    let transition=Arc::new(crate::begin_space_transition(&app,&host)?);
+    // Preparation owns the transition through the live Portal worker. Starting
+    // must share that exact guard, not try to acquire its own held lock again.
+    let transition={let s=state().lock().map_err(|_|"录屏状态不可用")?;
+        s.lease.as_ref().ok_or("录屏准备已结束")?.countdown_transition(&id)?};
     emit(&app,&Some(status));
     let owner=app.clone();tauri::async_runtime::spawn(async move {
         let result=async {
@@ -389,7 +402,8 @@ mod lifecycle_tests {
     }
     fn lease(nonce:&str)->(Lease,Arc<Mutex<Controls>>){
         let controls=Arc::new(Mutex::new(Controls::default()));
-        (Lease{nonce:nonce.into(),scene_id:"scene".into(),background:None,region:None,
+        let transition=Arc::new(crate::SpaceTransition::try_begin(&Arc::new(std::sync::atomic::AtomicBool::new(false))).unwrap());
+        (Lease{nonce:nonce.into(),scene_id:"scene".into(),background:None,region:None,transition,
             controls:controls.clone(),status:Some(recording::Status{id:nonce.into(),scene_id:"scene".into(),
                 phase:"countdown",countdown:3,elapsed_ms:0,rect:recording::Rect{x:0.,y:0.,width:1.,height:1.},
                 stop_hotkey:String::new(),audio:backend::AudioMode::Mute}),finalized:false,suppress_reveal:false,grant:None,audio_grant:None},controls)
@@ -402,6 +416,24 @@ mod lifecycle_tests {
         for phase in ["starting","recording","paused","stopping"]{
             assert!(!tray_can_begin("current","current",phase,false));
         }
+    }
+    #[test]
+    fn countdown_shares_prepared_transition_until_the_last_owner_finishes(){
+        use std::sync::atomic::{AtomicBool,Ordering};
+        let active=Arc::new(AtomicBool::new(false));
+        let prepared=Arc::new(crate::SpaceTransition::try_begin(&active).unwrap());
+        let (mut lease,controls)=lease("current");lease.transition=prepared.clone();
+        assert!(crate::SpaceTransition::try_begin(&active).is_none());
+        assert!(lease.countdown_transition("old").is_err());
+        let countdown=lease.countdown_transition("current").unwrap();
+        assert!(Arc::ptr_eq(&prepared,&countdown));
+        controls.lock().unwrap().terminal=Some(true);
+        assert!(lease.countdown_transition("current").is_err());
+        drop(prepared);drop(lease);
+        assert!(active.load(Ordering::Acquire));
+        drop(countdown);
+        assert!(!active.load(Ordering::Acquire));
+        assert!(crate::SpaceTransition::try_begin(&active).is_some());
     }
     #[test]
     fn starting_invoke_drop_cancels_only_its_live_lease_and_preserves_stop(){
