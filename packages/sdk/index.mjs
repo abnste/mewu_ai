@@ -89,6 +89,7 @@ export function createContext(send) {
       observe: regionId => host.call('region.observe', { regionId }),
       action: (regionId, action) => host.call('region.action', { regionId, action })
     }),
+    actions: Object.freeze({ invoke: request => host.call('action.invoke', request) }),
     services: Object.freeze({
       register: register('service'),
       list: kind => host.call('services.list', { kind }),

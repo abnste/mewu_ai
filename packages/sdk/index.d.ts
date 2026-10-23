@@ -84,6 +84,16 @@ export interface RegionObservation { artifactId: string; width: number; height: 
 export interface ModelMessage { role: 'user' | 'assistant' | 'system'; content: string }
 export interface ModelRequest { prompt: string; images?: string[]; messages?: ModelMessage[] }
 export interface ModelReply { content: string; toolCalls: JsonValue[] }
+/** Host UI actions a plugin can request for a live capture region. */
+export type HostActionName = 'copy' | 'save' | 'pin' | 'reference';
+export interface HostActionRequest {
+  action: HostActionName;
+  /** A regionId from the invocation context, e.g. a selection-toolbar command. */
+  regionId: string;
+  /** annotated (default) or original pixels; copy and save only. */
+  variant?: 'annotated' | 'original';
+}
+export type HostActionResult = { ok: true } | { ok: false; reason: string };
 export interface RenderedObject {
   html: string;
   width: number;
@@ -130,6 +140,10 @@ export interface ExtensionContext {
     observe(regionId: string): Promise<RegionObservation>;
     action(regionId: string, action: RegionAction): Promise<JsonValue>;
   };
+  /** Host actions on the current scene's region. Each action name requires its
+   * own declared permission: copy→action.clipboard, save→action.export,
+   * pin→action.pin, reference→action.reference. */
+  readonly actions: { invoke(request: HostActionRequest): Promise<HostActionResult> };
   readonly services: ServiceRegistry & {
     list(kind?: ServiceKind): Promise<Array<{ pluginId: string; revision: number; serviceId: string; kind: ServiceKind; title: string }>>;
     call(serviceId: string, input: JsonValue): Promise<JsonValue>;

@@ -32,6 +32,7 @@ pub struct ExtensionHost {
     store: Mutex<Store>,
     pending: Mutex<HashMap<String, Pending>>,
     runs: Mutex<HashMap<String, ActiveRun>>,
+    pub(crate) actions: PendingActions,
     #[cfg(windows)]
     pub(crate) region_focus_owner: Mutex<Option<String>>,
     // SQLite is dropped before this final lease owner releases the root lock.
@@ -50,6 +51,60 @@ struct ActiveRun {
     canceled: Arc<AtomicBool>,
     surface: Option<(String,crate::extension_surfaces::Owner)>,
     surface_window: Option<crate::extension_surfaces::WindowTicket>,
+}
+const HOST_ACTION_TIMEOUT: Duration = Duration::from_secs(30);
+const HOST_ACTION_RESIDUE: Duration = Duration::from_secs(120);
+const MAX_PENDING_ACTIONS: usize = 64;
+/// One space-window action request awaiting its single reply. The worker's
+/// receive thread owns the channel receiver; this map only keeps host-generated
+/// request IDs reachable for a late resolve and bounds stale entries.
+#[derive(Default)]
+pub(crate) struct PendingActions {
+    pending: Mutex<HashMap<String, PendingAction>>,
+}
+struct PendingAction {
+    sender: mpsc::Sender<Result<(), String>>,
+    until: Instant,
+}
+impl PendingActions {
+    fn begin(
+        &self,
+        id: &str,
+        sender: mpsc::Sender<Result<(), String>>,
+        now: Instant,
+    ) -> Result<(), String> {
+        let mut pending = self.pending.lock().map_err(|_| "宿主动作状态不可用")?;
+        // Timed-out callers are gone; evict their entries so a lost window
+        // cannot grow the map without bound.
+        pending.retain(|_, action| action.until > now);
+        if pending.len() >= MAX_PENDING_ACTIONS {
+            return Err("宿主动作请求过多，请稍后重试".into());
+        }
+        pending.insert(
+            id.into(),
+            PendingAction {
+                sender,
+                until: now + HOST_ACTION_RESIDUE,
+            },
+        );
+        Ok(())
+    }
+    /// A reply for an unknown or already evicted id is a late arrival, never
+    /// an error: its caller has left or timed out.
+    fn resolve(&self, id: &str, ok: bool, reason: Option<&str>) {
+        let Ok(mut pending) = self.pending.lock() else {
+            return;
+        };
+        if let Some(action) = pending.remove(id) {
+            let _ = action.sender.send(match ok {
+                true => Ok(()),
+                false => Err(reason
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or("宿主动作执行失败")
+                    .to_owned()),
+            });
+        }
+    }
 }
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -153,6 +208,7 @@ impl ExtensionHost {
             store: Mutex::new(Store::open(root)?),
             pending: Mutex::new(HashMap::new()),
             runs: Mutex::new(HashMap::new()),
+            actions: Default::default(),
             #[cfg(windows)]
             region_focus_owner: Mutex::new(None),
             _storage_lock: storage_lock,
@@ -515,6 +571,25 @@ fn safe_region_reason(message: &str) -> &'static str {
         .find(|known| *known == message)
         .unwrap_or("区域操作失败")
 }
+/// Only first-party action reasons survive diagnostics; native error bodies and
+/// any foreign text fall back to the fixed generic reason.
+fn safe_action_reason(message: &str) -> &'static str {
+    const REASONS: &[&str] = &[
+        "选区不存在或已关闭",
+        "宿主正忙",
+        "已取消",
+        "复制失败",
+        "没有可用的贴图功能",
+        "贴图失败",
+        "空间尚未就绪",
+        "会话已变化",
+    ];
+    REASONS
+        .iter()
+        .copied()
+        .find(|known| *known == message)
+        .unwrap_or("宿主动作执行失败")
+}
 fn record_region_error(
     diagnostic: &mut Option<RegionDiagnostic>,
     error: region::RegionError,
@@ -622,6 +697,7 @@ impl HostCallFailure {
             "objects.library.commit" => ("objects.library.commit", "COLLECTION_OPERATION_FAILED", "对象收藏失败"),
             "objects.library.restore" => ("objects.library.restore", "COLLECTION_OPERATION_FAILED", "收藏对象取出失败"),
             "events.emit" => ("events.emit", "EVENT_OPERATION_FAILED", "插件事件发送失败"),
+            "action.invoke" => ("action.invoke", "HOST_ACTION_FAILED", "宿主动作执行失败"),
             _ => ("unsupported", "HOST_UNSUPPORTED", "宿主不支持此扩展接口"),
         };
         if matches!(method, "region.observe" | "region.action") {
@@ -638,6 +714,20 @@ impl HostCallFailure {
                 method,
                 code: "HOST_PERMISSION_DENIED",
                 reason: "插件未声明所需权限",
+            };
+        }
+        if let Some(detail) = message.strip_prefix("动作执行失败：") {
+            return Self {
+                method,
+                code: "HOST_ACTION_FAILED",
+                reason: safe_action_reason(detail),
+            };
+        }
+        if message == "动作执行超时" {
+            return Self {
+                method,
+                code: "HOST_ACTION_FAILED",
+                reason: "动作执行超时",
             };
         }
         if matches!(
@@ -1265,6 +1355,24 @@ pub fn stop_extension(
         state.cancel_all()
     }
     crate::extension_surface_window::reconcile(&app);
+    Ok(())
+}
+/// The space window answers one pending `action.invoke` request. Unknown IDs
+/// are late replies for already timed-out callers and are silently ignored.
+#[tauri::command]
+pub fn resolve_extension_action(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    id: String,
+    ok: bool,
+    reason: Option<String>,
+) -> Result<(), String> {
+    if window.label() != "space" {
+        return Err("此窗口不能回复宿主动作".into());
+    }
+    app.state::<ExtensionHost>()
+        .actions
+        .resolve(&id, ok, reason.as_deref());
     Ok(())
 }
 
@@ -1988,6 +2096,15 @@ fn bridge_impl(
         "process.resolve" | "process.open" | "process.write" | "process.read" | "process.close" => "process.rpc",
         "network.fetch" => "network.fetch",
         "events.emit" => "events.emit",
+        // The four host actions split permissions by their own effect; the
+        // dispatch happens here so the same request cannot mix privileges.
+        "action.invoke" => match string(&params, "action")? {
+            "copy" => "action.clipboard",
+            "save" => "action.export",
+            "pin" => "action.pin",
+            "reference" => "action.reference",
+            _ => return Err("宿主动作无效".into()),
+        },
         _ => return Err("宿主不支持此扩展接口".into()),
     };
     context.permission(permission)?;
@@ -2162,6 +2279,35 @@ fn bridge_impl(
                 let info = json!({"artifactId":id,"width":frame.width,"height":frame.height,"sha256":frame.sha256,"mimeType":"image/png"});
                 context.frames.insert(id, frame);
                 Ok(info)
+            }
+        }
+        "action.invoke" => {
+            let action = string(&params, "action")?;
+            let region_id = string(&params, "regionId")?;
+            let variant = match params.get("variant") {
+                None | Some(Value::Null) => None,
+                Some(Value::String(value)) if matches!(value.as_str(), "annotated" | "original") => {
+                    Some(value.clone())
+                }
+                Some(_) => return Err("图片导出版本无效".into()),
+            };
+            let id = uuid::Uuid::new_v4().to_string();
+            let (sender, receiver) = mpsc::channel();
+            app.state::<ExtensionHost>()
+                .actions
+                .begin(&id, sender, Instant::now())?;
+            app.emit_to(
+                "space",
+                "extension-action-request",
+                json!({"id":id,"action":action,"regionId":region_id,"variant":variant}),
+            )
+            .map_err(|_| "无法发送宿主动作请求")?;
+            // This runs on one worker's receive thread; waiting here blocks only
+            // that plugin's run, never other workers or the UI thread.
+            match receiver.recv_timeout(HOST_ACTION_TIMEOUT) {
+                Ok(Ok(())) => Ok(json!({"ok":true})),
+                Ok(Err(reason)) => Err(format!("动作执行失败：{reason}")),
+                Err(_) => Err("动作执行超时".into()),
             }
         }
         "model.invoke" => model_invoke(app, context, params),
@@ -3063,6 +3209,7 @@ mod extension_tool_registry_tests {
             "network.fetch",
             "services.call",
             "events.emit",
+            "action.invoke",
             "unknown",
         ] {
             assert!(!tool_initialization_read(method));
@@ -3416,5 +3563,131 @@ mod failure_diagnostic_tests {
         );
         assert!(!public.contains("private-test-token"));
         assert!(!public.contains("unknown_internal_code"));
+    }
+
+    #[test]
+    fn host_action_failures_keep_permission_denied_typed_action_code_and_timeout_reason() {
+        let failure = HostCallFailure::from_error("action.invoke", "插件未声明权限：action.pin", None);
+        assert_eq!(failure.method, "action.invoke");
+        assert_eq!(failure.code, "HOST_PERMISSION_DENIED");
+        assert_eq!(failure.reason, "插件未声明所需权限");
+        for (message, reason) in [
+            ("动作执行失败：选区不存在或已关闭", "选区不存在或已关闭"),
+            ("动作执行失败：宿主正忙", "宿主正忙"),
+            ("动作执行失败：已取消", "已取消"),
+            ("动作执行失败：没有可用的贴图功能", "没有可用的贴图功能"),
+            ("动作执行失败：贴图失败", "贴图失败"),
+        ] {
+            let failure = HostCallFailure::from_error("action.invoke", message, None);
+            assert_eq!(failure.code, "HOST_ACTION_FAILED");
+            assert_eq!(failure.reason, reason);
+        }
+        let failure = HostCallFailure::from_error("action.invoke", "动作执行超时", None);
+        assert_eq!(failure.code, "HOST_ACTION_FAILED");
+        assert_eq!(failure.reason, "动作执行超时");
+    }
+
+    #[test]
+    fn host_action_diagnostics_never_forward_foreign_failure_reasons() {
+        let sensitive = "HTTP 403 Bearer sk-private-test-token C:\\private\\payload.json arbitrary stack";
+        for message in [
+            format!("动作执行失败：{sensitive}"),
+            "动作执行失败：".to_owned(),
+            "宿主动作请求过多，请稍后重试".to_owned(),
+        ] {
+            let failure = HostCallFailure::from_error("action.invoke", &message, None);
+            assert_eq!(failure.code, "HOST_ACTION_FAILED");
+            assert_eq!(failure.reason, "宿主动作执行失败");
+            let public = worker_failure(
+                &ProtocolError {
+                    code: "RUNTIME_ERROR".into(),
+                    message: sensitive.into(),
+                },
+                Some(failure),
+                HostCallProgress::default(),
+            );
+            assert!(public.contains("action.invoke"));
+            assert!(public.contains("HOST_ACTION_FAILED"));
+            for secret in ["sk-private-test-token", "C:\\private", "Bearer", "HTTP 403"] {
+                assert!(!public.contains(secret));
+            }
+            assert!(public.len() <= 512);
+        }
+    }
+}
+
+#[cfg(test)]
+mod host_action_tests {
+    use super::*;
+
+    #[test]
+    fn pending_actions_deliver_exactly_one_reply_per_request() {
+        let registry = PendingActions::default();
+        let (sender, receiver) = mpsc::channel();
+        let now = Instant::now();
+        registry.begin("id-1", sender, now).unwrap();
+        registry.resolve("id-1", true, None);
+        assert_eq!(receiver.recv(), Ok(Ok(())));
+        // A duplicate reply is a late arrival and must not reach anyone; the
+        // registry owned the only sender, so its removal disconnects the channel.
+        registry.resolve("id-1", false, Some("已取消"));
+        assert_eq!(
+            receiver.recv_timeout(Duration::from_millis(1)),
+            Err(mpsc::RecvTimeoutError::Disconnected)
+        );
+    }
+
+    #[test]
+    fn pending_actions_map_failure_replies_and_ignore_unknown_ids() {
+        let registry = PendingActions::default();
+        let (sender, receiver) = mpsc::channel();
+        registry.begin("id-2", sender, Instant::now()).unwrap();
+        registry.resolve("missing", true, None); // Unknown id: silently ignored.
+        registry.resolve("id-2", false, None);
+        assert_eq!(receiver.recv(), Ok(Err("宿主动作执行失败".into())));
+        let (sender, receiver) = mpsc::channel();
+        registry.begin("id-3", sender, Instant::now()).unwrap();
+        registry.resolve("id-3", false, Some("已取消"));
+        assert_eq!(receiver.recv(), Ok(Err("已取消".into())));
+    }
+
+    #[test]
+    fn expired_entries_release_their_receiver_instead_of_hanging_the_caller() {
+        let registry = PendingActions::default();
+        let (sender, receiver) = mpsc::channel();
+        let now = Instant::now();
+        registry.begin("stale", sender, now).unwrap();
+        // The caller has timed out and left; its residue is pruned by the next
+        // begin, dropping the sender so that receiver cannot wait forever.
+        let (fresh_sender, fresh_receiver) = mpsc::channel();
+        registry
+            .begin("fresh", fresh_sender, now + HOST_ACTION_RESIDUE)
+            .unwrap();
+        assert_eq!(
+            receiver.recv_timeout(Duration::from_millis(1)),
+            Err(mpsc::RecvTimeoutError::Disconnected)
+        );
+        assert_eq!(
+            fresh_receiver.recv_timeout(Duration::from_millis(1)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        );
+        registry.resolve("fresh", true, None);
+        assert_eq!(fresh_receiver.recv(), Ok(Ok(())));
+    }
+
+    #[test]
+    fn pending_action_capacity_is_bounded_but_stale_slots_are_reusable() {
+        let registry = PendingActions::default();
+        let now = Instant::now();
+        for index in 0..MAX_PENDING_ACTIONS {
+            let (sender, _receiver) = mpsc::channel();
+            registry.begin(&format!("id-{index}"), sender, now).unwrap();
+        }
+        let (sender, _receiver) = mpsc::channel();
+        assert!(registry.begin("overflow", sender, now).is_err());
+        let (sender, _receiver) = mpsc::channel();
+        registry
+            .begin("next", sender, now + HOST_ACTION_RESIDUE)
+            .unwrap();
     }
 }
