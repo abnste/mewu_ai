@@ -9,7 +9,7 @@ export const html=String.raw`<!doctype html><meta charset="utf-8">
 <script>
 const $=id=>document.getElementById(id);let data,busy=true,disposed=false,keyChanged=false;
 function controls(){document.querySelectorAll('input,button').forEach(e=>e.disabled=busy||e.dataset.unavailable==='true'||e.dataset.done==='true');}
-function show(value){data=value;$('endpoint').value=value.config?.endpoint||'';$('prefix').value=value.config?.bankPrefix||'mewu';$('sync').checked=value.config?.completedTurnSync===true;$('key').value='';$('key').placeholder=value.secret.configured?'已保存，留空保留':'';keyChanged=false;}
+function show(value){data=value;$('endpoint').value=value.config?.endpoint||'';$('prefix').value=value.config?.bankPrefix||'mewu';$('sync').checked=value.config?.completedTurnSync===true;$('key').value='';$('key').placeholder=value.secret.configured?'••••••••':'';keyChanged=false;}
 $('key').oninput=()=>{keyChanged=true;};
 async function perform(type){if(busy)return;busy=true;controls();$('error').textContent='';$('status').textContent=type==='test'?'检测中…':'';
 try{const result=await mewu.call({type,config:{endpoint:$('endpoint').value,bankPrefix:$('prefix').value,completedTurnSync:$('sync').checked},...(type==='save'?{expected:data.config,secretRevision:data.secret.revision}:{}),...(keyChanged?{key:$('key').value}:{})});if(disposed)return;if(result.ok===false)throw Error(result.error);if(type==='save')show(result);$('status').textContent=type==='test'?'连接正常':'已保存';}catch(error){$('status').textContent='';$('error').textContent=error.message||'操作失败';}finally{busy=false;controls();}}
