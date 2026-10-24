@@ -19,6 +19,7 @@ export async function controlExtension(record: ExtensionRecord, action: Extensio
   desktop(); return invoke('control_extension', { pluginId: record.manifest.id, revision: record.revision, action });
 }
 export async function invokeExtension(invocation: ExtensionInvocation): Promise<unknown> { desktop(); return invoke('invoke_extension', { invocation }); }
+export async function resolveExtensionAction(id: string, ok: boolean, reason?: string): Promise<void> { desktop(); return invoke('resolve_extension_action', { id, ok, reason: reason ?? null }); }
 export async function openSurfaceWindow(surfaceId:string,x:number,y:number):Promise<void>{desktop();return invoke('open_extension_surface_window',{surfaceId,x,y});}
 export async function releaseSurfaceWindow(surfaceId:string):Promise<void>{desktop();return invoke('release_extension_surface_window',{surfaceId});}
 export async function requestCloseSurfaceWindow(surfaceId:string):Promise<void>{desktop();return invoke('request_close_extension_surface_window',{surfaceId});}
@@ -36,3 +37,5 @@ export async function subscribeExtensionBindings(accept: (bindings: ExtensionBin
 export async function setExtensionBinding(agentId: string, kind: 'agent' | 'memory', expectedRevision: number | undefined, choice?: { pluginId: string; serviceId: string }): Promise<ExtensionBinding[]> {
   desktop(); return invoke('set_extension_binding', { binding: { agentId, kind, pluginId: choice?.pluginId ?? null, serviceId: choice?.serviceId ?? null, expectedRevision: expectedRevision ?? null } });
 }
+
+export async function executeExtensionAction(id: string): Promise<boolean> { desktop(); return invoke('execute_extension_action', { id }); }

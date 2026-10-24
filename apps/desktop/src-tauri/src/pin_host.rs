@@ -35,6 +35,7 @@ const CANCELED: &str = "已取消贴图";
 struct Cancel {
     flag: Arc<AtomicBool>,
     notify: Arc<Notify>,
+    action: Option<crate::extension_host::actions::ActionLease>,
 }
 impl Cancel {
     fn cancel(&self) {
@@ -42,6 +43,7 @@ impl Cancel {
         self.notify.notify_waiters();
     }
     fn check(&self) -> Result<(), String> {
+        if let Some(lease) = &self.action { lease.check()?; }
         if self.flag.load(Ordering::Acquire) {
             Err(CANCELED.into())
         } else {
@@ -49,6 +51,12 @@ impl Cancel {
         }
     }
     async fn cancelled(&self) {
+        if self.action.is_some() {
+            loop {
+                if self.check().is_err() { return; }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        }
         let n = self.notify.notified();
         tokio::pin!(n);
         n.as_mut().enable();
@@ -808,6 +816,14 @@ pub async fn run_plugin_pin(
     target: OcrTarget,
     translation_id: Option<String>,
 ) -> Result<PinCreated, String> {
+    run_extension_pin(app, window, request_id, plugin_id, revision, contribution_id, target, translation_id, None).await
+}
+pub(crate) async fn run_extension_pin(
+    app: AppHandle, window: WebviewWindow, request_id: String, plugin_id: String,
+    revision: u64, contribution_id: String, target: OcrTarget, translation_id: Option<String>,
+    action: Option<crate::extension_host::actions::ActionLease>,
+) -> Result<PinCreated, String> {
+    if let Some(lease) = &action { lease.check()?; }
     space_owner(&window)?;
     if !valid_uuid(&request_id) {
         return Err("贴图请求无效".into());
@@ -857,7 +873,7 @@ pub async fn run_plugin_pin(
                 contribution_id,
             }),
         };
-        let cancel = Cancel::default();
+        let cancel = Cancel { action, ..Default::default() };
         let mut s = registry.state.lock().map_err(|_| "贴图状态不可用")?;
         register_request(&mut s, &request_id, &origin, &cancel)?;
         (
@@ -1286,6 +1302,7 @@ pub async fn pin_ready(app: AppHandle, window: WebviewWindow, success: bool) -> 
             let mut s = r.state.lock().map_err(|_| "贴图状态不可用")?;
             cancel.check()?;
             let e = s.entries.get_mut(window.label()).ok_or(CANCELED)?;
+            if let Some(lease) = &cancel.action { lease.accept()?; }
             e.live = true;
             if let Some(tx) = e.ready.take() {
                 let _ = tx.send(Ok(()));
@@ -1804,6 +1821,24 @@ fn save_png(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn extension_pin_observes_creator_cancel_and_keeps_completed_pin_independent() {
+        let parent = Arc::new(AtomicBool::new(false));
+        let lease = crate::extension_host::actions::ActionLease::new(parent.clone(), Instant::now());
+        let canceled = Cancel { action: Some(lease), ..Default::default() };
+        parent.store(true, Ordering::Release);
+        assert!(canceled.check().is_err());
+        tokio::time::timeout(Duration::from_millis(100), canceled.cancelled()).await.unwrap();
+        let parent = Arc::new(AtomicBool::new(false));
+        let lease = crate::extension_host::actions::ActionLease::new(parent.clone(), Instant::now());
+        lease.accept().unwrap();
+        let completed = Cancel { action: Some(lease), ..Default::default() };
+        parent.store(true, Ordering::Release);
+        assert!(completed.check().is_ok());
+        completed.cancel();
+        assert!(completed.check().is_err());
+    }
     use image::Rgba;
     struct TestRoot(PathBuf);
     impl TestRoot {

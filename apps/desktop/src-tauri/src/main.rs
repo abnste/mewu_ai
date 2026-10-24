@@ -3093,6 +3093,8 @@ fn main() {
                 extension_host::install_extension,
                 extension_host::control_extension,
                 extension_host::invoke_extension,
+                extension_host::actions::resolve_extension_action,
+                extension_host::actions::execute_extension_action,
                 extension_surface_window::open_extension_surface_window,
                 extension_surface_window::get_extension_surface_window,
                 extension_surface_window::control_extension_surface_window,

@@ -134,6 +134,7 @@ struct Pending {
     region: Option<RegionOrigin>,
     cancel: Arc<AtomicBool>,
     publishing: bool,
+    action: Option<crate::extension_host::actions::ActionLease>,
 }
 #[derive(Default)]
 struct Inner {
@@ -155,6 +156,14 @@ impl Registry {
         region: Option<RegionOrigin>,
         admit: impl FnOnce() -> Result<(), String>,
     ) -> Result<(Work, Arc<AtomicBool>), String> {
+        self.begin_with_action(owner, region, None, admit)
+    }
+    fn begin_with_action(
+        &self, owner: String, region: Option<RegionOrigin>,
+        action: Option<crate::extension_host::actions::ActionLease>,
+        admit: impl FnOnce() -> Result<(), String>,
+    ) -> Result<(Work, Arc<AtomicBool>), String> {
+        if let Some(lease) = &action { lease.check()?; }
         let mut pending = self.lock();
         if pending.is_some() {
             return Err("图片正在导出".into());
@@ -171,6 +180,7 @@ impl Registry {
             region,
             cancel: cancel.clone(),
             publishing: false,
+            action,
         });
         Ok((
             Work {
@@ -224,6 +234,7 @@ impl Registry {
         if pending.publishing {
             return Err("图片已开始保存".into());
         }
+        if let Some(lease) = &pending.action { lease.check()?; }
         admit()
     }
     fn reconcile(&self, snapshot: &Snapshot) {
@@ -267,7 +278,10 @@ impl Work {
         }
     }
     pub fn check_cancel(&self) -> Result<(), String> {
-        check_cancel(&self.cancel)
+        check_cancel(&self.cancel)?;
+        let state = self.registry.lock();
+        if let Some(lease) = state.as_ref().and_then(|p| p.action.as_ref()) { lease.check()?; }
+        Ok(())
     }
     pub async fn cancelled(&self) {
         loop {
@@ -293,6 +307,7 @@ impl Work {
             return Err("图片已开始保存".into());
         }
         admit()?;
+        if let Some(lease) = &pending.action { lease.accept()?; }
         pending.publishing = true;
         Ok(())
     }
@@ -600,12 +615,18 @@ pub async fn export_region(
     clipboard: bool,
     variant: Option<ImageExportVariant>,
 ) -> Result<bool, String> {
-    export_document(app, window, scene_id, ExportSource::Region(region_id), clipboard, variant, None).await
+    export_document(app, window, scene_id, ExportSource::Region(region_id), clipboard, variant, None, None).await
+}
+pub(crate) async fn export_extension_region(
+    app: AppHandle, window: WebviewWindow, scene_id: String, region_id: String,
+    clipboard: bool, variant: ImageExportVariant, action: crate::extension_host::actions::ActionLease,
+) -> Result<bool, String> {
+    export_document(app, window, scene_id, ExportSource::Region(region_id), clipboard, Some(variant), None, Some(action)).await
 }
 enum ExportSource { Region(String), ImageItem { item_id: String, source_asset_id: String } }
 #[tauri::command]
 pub async fn export_image_item(app: AppHandle, window: WebviewWindow, scene_id: String, item_id: String, source_asset_id: String, clipboard: bool, variant: Option<ImageExportVariant>) -> Result<bool, String> {
-    export_document(app, window, scene_id, ExportSource::ImageItem { item_id, source_asset_id }, clipboard, variant, None).await
+    export_document(app, window, scene_id, ExportSource::ImageItem { item_id, source_asset_id }, clipboard, variant, None, None).await
 }
 #[tauri::command]
 pub async fn export_control_image(app: AppHandle, window: WebviewWindow, scene_id: String, region_id: String, path: String, variant: ImageExportVariant) -> Result<serde_json::Value, String> {
@@ -614,12 +635,12 @@ pub async fn export_control_image(app: AppHandle, window: WebviewWindow, scene_i
     if path.len() > 16 * 1024 || path.chars().any(char::is_control) || !destination.is_absolute() {
         return Err("请提供绝对保存路径".into());
     }
-    let written = export_document(app, window, scene_id, ExportSource::Region(region_id), false, Some(variant), Some(destination.clone())).await?;
+    let written = export_document(app, window, scene_id, ExportSource::Region(region_id), false, Some(variant), Some(destination.clone()), None).await?;
     if !written { return Err("图片未导出".into()); }
     let path = destination.canonicalize().map_err(|_| "导出文件不可用")?;
     Ok(serde_json::json!({"path":path}))
 }
-async fn export_document(app: AppHandle, window: WebviewWindow, scene_id: String, source: ExportSource, clipboard: bool, variant: Option<ImageExportVariant>, explicit_destination: Option<PathBuf>) -> Result<bool, String> {
+async fn export_document(app: AppHandle, window: WebviewWindow, scene_id: String, source: ExportSource, clipboard: bool, variant: Option<ImageExportVariant>, explicit_destination: Option<PathBuf>, action: Option<crate::extension_host::actions::ActionLease>) -> Result<bool, String> {
     if window.label() != "space" {
         return Err("此窗口不能导出截图".into());
     }
@@ -655,7 +676,7 @@ async fn export_document(app: AppHandle, window: WebviewWindow, scene_id: String
         region.ocr = None;
         let (work, cancel) =
             host.image_exports
-                .begin("space".into(), Some(origin.clone()), || {
+                .begin_with_action("space".into(), Some(origin.clone()), action, || {
                     atomic_region_gate(&host, handle)
                 })?;
         (
@@ -851,6 +872,35 @@ pub async fn drain(app: &AppHandle, timeout: Duration) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn extension_export_revocation_reaches_real_publication_gate() {
+        for stop_parent in [true, false] {
+            let registry = Registry::default();
+            let parent = Arc::new(AtomicBool::new(false));
+            let lease = crate::extension_host::actions::ActionLease::new(parent.clone(), std::time::Instant::now());
+            let (work, _) = registry.begin_with_action("space".into(), None, Some(lease.clone()), || Ok(())).unwrap();
+            assert!(work.check_cancel().is_ok());
+            if stop_parent { parent.store(true, Ordering::Release); } else { lease.cancel(); }
+            assert!(work.check_cancel().is_err());
+            assert!(registry.check(&work.id, || Ok(())).is_err());
+            assert!(work.accept_publication(|| Ok(())).is_err());
+            assert!(!registry.lock().as_ref().unwrap().publishing);
+            drop(work);
+            assert!(registry.lock().is_none());
+        }
+    }
+
+    #[test]
+    fn extension_export_success_is_not_canceled_retroactively() {
+        let registry = Registry::default();
+        let parent = Arc::new(AtomicBool::new(false));
+        let lease = crate::extension_host::actions::ActionLease::new(parent.clone(), std::time::Instant::now());
+        let (work, _) = registry.begin_with_action("space".into(), None, Some(lease), || Ok(())).unwrap();
+        work.accept_publication(|| Ok(())).unwrap();
+        parent.store(true, Ordering::Release);
+        assert_eq!(work.settle_export_result(Ok(())).unwrap(), true);
+    }
 
     #[test]
     fn toolbar_variants_are_typed_and_clipboard_keeps_annotations() {

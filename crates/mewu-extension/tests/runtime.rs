@@ -141,6 +141,30 @@ fn genuine_async_host_roundtrip_retains_multimodal_json_and_context() {
 }
 
 #[test]
+fn host_action_invoke_roundtrips_request_params_and_result() {
+    let (mut runtime, rx, _) = runtime("export default ctx => ctx.commands.register({id:'act',title:'Act'},async (input,run)=>ctx.actions.invoke({action:input.action,regionId:run.context.regionId,variant:'original'}));", &[], RuntimeLimits::default());
+    initialize(&mut runtime).unwrap();
+    runtime
+        .begin_invoke("act", &json!({"action":"copy"}), &json!({"regionId":"region-7"}))
+        .unwrap();
+    assert!(runtime.poll_result().unwrap().is_none());
+    let WorkerResponse::HostCall { id, method, params } =
+        rx.recv_timeout(Duration::from_secs(1)).unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(method, "action.invoke");
+    assert_eq!(
+        params,
+        json!({"action":"copy","regionId":"region-7","variant":"original"})
+    );
+    runtime
+        .host_result(&id, Some(json!({"ok":true})), None)
+        .unwrap();
+    assert_eq!(result(&runtime).unwrap(), json!({"ok":true}));
+}
+
+#[test]
 fn package_relative_and_sdk_imports_work() {
     let (mut runtime, _, _) = runtime("import {definePlugin} from '@mewu/sdk'; import {value} from './lib/value.mjs'; export default definePlugin(ctx => ctx.commands.register({id:'read',title:'Read'},()=>value));", &[("lib/value.mjs","import {base} from '../base.js'; export const value=base+1;"),("base.js","export const base=41;")], RuntimeLimits::default());
     initialize(&mut runtime).unwrap();

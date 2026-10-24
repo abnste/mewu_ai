@@ -37,6 +37,7 @@ pub struct ExtensionHost {
     store: Mutex<Store>,
     pending: Mutex<HashMap<String, Pending>>,
     runs: Mutex<HashMap<String, ActiveRun>>,
+    pub(crate) actions: PendingActions,
     #[cfg(windows)]
     pub(crate) region_focus_owner: Mutex<Option<String>>,
     // SQLite is dropped before this final lease owner releases the root lock.
@@ -56,6 +57,9 @@ struct ActiveRun {
     surface: Option<(String,crate::extension_surfaces::Owner)>,
     surface_window: Option<crate::extension_surfaces::WindowTicket>,
 }
+#[path = "extension_actions.rs"]
+pub(crate) mod actions;
+use actions::{PendingActions, HOST_ACTION_TIMEOUT};
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Proposal {
@@ -158,6 +162,7 @@ impl ExtensionHost {
             store: Mutex::new(Store::open(root)?),
             pending: Mutex::new(HashMap::new()),
             runs: Mutex::new(HashMap::new()),
+            actions: Default::default(),
             #[cfg(windows)]
             region_focus_owner: Mutex::new(None),
             _storage_lock: storage_lock,
@@ -526,6 +531,25 @@ fn safe_region_reason(message: &str) -> &'static str {
         .find(|known| *known == message)
         .unwrap_or("区域操作失败")
 }
+/// Only first-party action reasons survive diagnostics; native error bodies and
+/// any foreign text fall back to the fixed generic reason.
+fn safe_action_reason(message: &str) -> &'static str {
+    const REASONS: &[&str] = &[
+        "选区不存在或已关闭",
+        "宿主正忙",
+        "已取消",
+        "复制失败",
+        "没有可用的贴图功能",
+        "贴图失败",
+        "空间尚未就绪",
+        "会话已变化",
+    ];
+    REASONS
+        .iter()
+        .copied()
+        .find(|known| *known == message)
+        .unwrap_or("宿主动作执行失败")
+}
 fn record_region_error(
     diagnostic: &mut Option<RegionDiagnostic>,
     error: region::RegionError,
@@ -636,6 +660,7 @@ impl HostCallFailure {
             "objects.library.commit" => ("objects.library.commit", "COLLECTION_OPERATION_FAILED", "对象收藏失败"),
             "objects.library.restore" => ("objects.library.restore", "COLLECTION_OPERATION_FAILED", "收藏对象取出失败"),
             "events.emit" => ("events.emit", "EVENT_OPERATION_FAILED", "插件事件发送失败"),
+            "action.invoke" => ("action.invoke", "HOST_ACTION_FAILED", "宿主动作执行失败"),
             _ => ("unsupported", "HOST_UNSUPPORTED", "宿主不支持此扩展接口"),
         };
         if matches!(method, "region.observe" | "region.action") {
@@ -652,6 +677,20 @@ impl HostCallFailure {
                 method,
                 code: "HOST_PERMISSION_DENIED",
                 reason: "插件未声明所需权限",
+            };
+        }
+        if let Some(detail) = message.strip_prefix("动作执行失败：") {
+            return Self {
+                method,
+                code: "HOST_ACTION_FAILED",
+                reason: safe_action_reason(detail),
+            };
+        }
+        if message == "动作执行超时" {
+            return Self {
+                method,
+                code: "HOST_ACTION_FAILED",
+                reason: "动作执行超时",
             };
         }
         if matches!(
@@ -1288,7 +1327,6 @@ pub fn stop_extension(
     crate::extension_surface_window::reconcile(&app);
     Ok(())
 }
-
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct BindingChange {
@@ -2050,6 +2088,15 @@ fn bridge_impl(
         "process.resolve" | "process.open" | "process.write" | "process.read" | "process.close" => "process.rpc",
         "network.fetch" => "network.fetch",
         "events.emit" => "events.emit",
+        // The four host actions split permissions by their own effect; the
+        // dispatch happens here so the same request cannot mix privileges.
+        "action.invoke" => match string(&params, "action")? {
+            "copy" => "action.clipboard",
+            "save" => "action.export",
+            "pin" => "action.pin",
+            "reference" => "action.reference",
+            _ => return Err("宿主动作无效".into()),
+        },
         _ => return Err("宿主不支持此扩展接口".into()),
     };
     context.permission(permission)?;
@@ -2229,6 +2276,32 @@ fn bridge_impl(
                 let info = json!({"artifactId":id,"width":frame.width,"height":frame.height,"sha256":frame.sha256,"mimeType":"image/png"});
                 context.frames.insert(id, frame);
                 Ok(info)
+            }
+        }
+        "action.invoke" => {
+            let request = actions::ActionRequest::parse(&params, context.scene_id.as_deref())?;
+            let id = uuid::Uuid::new_v4().to_string();
+            let (sender, receiver) = mpsc::channel();
+            let state = app.state::<ExtensionHost>();
+            let lease = state.actions.begin(&id, sender, request.clone(), context.canceled.clone(), Instant::now())?;
+            let _pending = actions::PendingGuard { registry: &state.actions, id: &id };
+            app.emit_to("space", "extension-action-request", request.event(&id))
+                .map_err(|_| "无法发送宿主动作请求")?;
+            // Check the originating run throughout UI preparation/dialogs. A late
+            // first-party invoke cannot claim a retired request or publish pixels.
+            loop {
+                if let Err(error) = context.check(app) { lease.cancel(); return Err(error); }
+                if let Err(error) = lease.check() { return Err(error); }
+                match receiver.recv_timeout(Duration::from_millis(20)) {
+                    Ok(Ok(())) => break Ok(json!({"ok":true})),
+                    Ok(Err(reason)) => break Err(format!("动作执行失败：{reason}")),
+                    Err(mpsc::RecvTimeoutError::Disconnected) => break Err("宿主动作已结束".into()),
+                    Err(mpsc::RecvTimeoutError::Timeout) => {
+                        if lease.age() >= HOST_ACTION_TIMEOUT + Duration::from_secs(15) {
+                            break Err("宿主动作结果未确认".into());
+                        }
+                    }
+                }
             }
         }
         "model.invoke" => model_invoke(app, context, params),
@@ -3161,6 +3234,7 @@ mod extension_tool_registry_tests {
             "network.fetch",
             "services.call",
             "events.emit",
+            "action.invoke",
             "unknown",
         ] {
             assert!(!tool_initialization_read(method));
@@ -3551,6 +3625,55 @@ mod failure_diagnostic_tests {
                 assert_eq!(failure.reason, "区域操作失败");
                 assert!(!failure.public_message().contains("private-test-token"));
             }
+        }
+    }
+    #[test]
+    fn host_action_failures_keep_permission_denied_typed_action_code_and_timeout_reason() {
+        let failure = HostCallFailure::from_error("action.invoke", "插件未声明权限：action.pin", None);
+        assert_eq!(failure.method, "action.invoke");
+        assert_eq!(failure.code, "HOST_PERMISSION_DENIED");
+        assert_eq!(failure.reason, "插件未声明所需权限");
+        for (message, reason) in [
+            ("动作执行失败：选区不存在或已关闭", "选区不存在或已关闭"),
+            ("动作执行失败：宿主正忙", "宿主正忙"),
+            ("动作执行失败：已取消", "已取消"),
+            ("动作执行失败：没有可用的贴图功能", "没有可用的贴图功能"),
+            ("动作执行失败：贴图失败", "贴图失败"),
+        ] {
+            let failure = HostCallFailure::from_error("action.invoke", message, None);
+            assert_eq!(failure.code, "HOST_ACTION_FAILED");
+            assert_eq!(failure.reason, reason);
+        }
+        let failure = HostCallFailure::from_error("action.invoke", "动作执行超时", None);
+        assert_eq!(failure.code, "HOST_ACTION_FAILED");
+        assert_eq!(failure.reason, "动作执行超时");
+    }
+
+    #[test]
+    fn host_action_diagnostics_never_forward_foreign_failure_reasons() {
+        let sensitive = "HTTP 403 Bearer sk-private-test-token C:\\private\\payload.json arbitrary stack";
+        for message in [
+            format!("动作执行失败：{sensitive}"),
+            "动作执行失败：".to_owned(),
+            "宿主动作请求过多，请稍后重试".to_owned(),
+        ] {
+            let failure = HostCallFailure::from_error("action.invoke", &message, None);
+            assert_eq!(failure.code, "HOST_ACTION_FAILED");
+            assert_eq!(failure.reason, "宿主动作执行失败");
+            let public = worker_failure(
+                &ProtocolError {
+                    code: "RUNTIME_ERROR".into(),
+                    message: sensitive.into(),
+                },
+                Some(failure),
+                HostCallProgress::default(),
+            );
+            assert!(public.contains("action.invoke"));
+            assert!(public.contains("HOST_ACTION_FAILED"));
+            for secret in ["sk-private-test-token", "C:\\private", "Bearer", "HTTP 403"] {
+                assert!(!public.contains(secret));
+            }
+            assert!(public.len() <= 512);
         }
     }
 }

@@ -13,6 +13,7 @@ import { createOptionalFeatureState } from './optional-feature-state';
 import { optionalAgentAvailable, optionalAgentReady, sameOptionalGrant } from './optional-capabilities';
 import { isBlackboard } from './blackboard';
 import { coreDrawingGrant } from './core-drawing';
+import { isCoreReplacementPlugin } from './plugin-core';
 import type { DrawingHistoryControls, RegisterDrawingHistory } from './drawing-editor-port';
 import * as bridge from './bridge';
 import {restoreReplyArtifact,type ReplyArtifactRequest} from './reply-artifact';
@@ -78,6 +79,8 @@ import { discardUnsavedDrawingDraft, listUnsavedDrawingDrafts, type PendingDrawi
 import { ContinuationController } from './run-journal';
 import type { ContinuationDecision, RunJournalSummary } from './journal-contracts';
 import { AppControlError, attachAppControl, sameControlReferences, type AppControlMethod, type AppControlOperation, type AppControlParameters } from './app-control';
+import { attachExtensionActions, extensionActionReason, type ExtensionActionRequest, type HostActionResult } from './extension-actions';
+import { resolveExtensionAction, executeExtensionAction } from './extension-bridge';
 
 
 function withoutScene<T>(values: Record<string, T>, sceneId: string): Record<string, T> {
@@ -244,6 +247,7 @@ export default function App() {
   let stopPluginEvents: (() => void) | undefined;
   let stopExitEvents: (() => void) | undefined;
   let stopControlEvents: (() => void) | undefined;
+  let stopExtensionActions: (() => void) | undefined;
   let stopTranslationEvents: (() => void) | undefined;
   let stopPinEscape: (() => void) | undefined;
   let pendingPin: { requestId: string; canceled: boolean } | undefined;
@@ -509,6 +513,16 @@ export default function App() {
       } catch { stopControlEvents?.(); stopControlEvents = undefined; }
     }
   });
+  onMount(async () => {
+    if (!bridge.native || disposed) return;
+    // A development WebView can lag native commands; unanswered plugin actions
+    // then surface as the native timeout instead of breaking the space.
+    try {
+      const stop = await attachExtensionActions({ execute: executeHostAction, resolve: (id, ok, reason) => resolveExtensionAction(id, ok, reason) });
+      if (disposed) { stop(); return; }
+      stopExtensionActions = stop;
+    } catch { stopExtensionActions = undefined; }
+  });
   onMount(() => { void readVoiceCapabilities(); });
   onMount(() => { void readRecordingAudio(); });
   onCleanup(() => { recordingAudio.dispose(); stopRecordingAudio?.(); });
@@ -516,7 +530,7 @@ export default function App() {
   onCleanup(() => { stopVideoEvents?.(); void videoLane.dispose().catch(() => {}); });
   onMount(() => { if (codeBridge.codeNative) void codeBridge.subscribeCodeInvalidated(id => codes.invalidate(id)).then(stop => { if (disposed) stop(); else { stopCodeEvents = stop; setCodesReady(true); } }).catch(() => {}); });
   onCleanup(() => { codes.dispose(); stopCodeEvents?.(); });
-  onCleanup(() => { disposed = true; stopControlEvents?.(); streamBuffer.dispose(); pinObjectsSubscription?.stop(); voice.dispose(); stopVoiceEvents?.(); regionGeometry.dispose(); cancelPendingPin(); stopPinEscape?.(); translationRequests.dispose(); stopTranslationEvents?.(); exitPreparation.dispose(); stopExitEvents?.(); stopEvents?.(); stopRecordingEvents?.(); stopScrollEvents?.(); stopPluginEvents?.(); clearTimeout(debounce); clearTimeout(errorTimer); });
+  onCleanup(() => { disposed = true; stopControlEvents?.(); stopExtensionActions?.(); streamBuffer.dispose(); pinObjectsSubscription?.stop(); voice.dispose(); stopVoiceEvents?.(); regionGeometry.dispose(); cancelPendingPin(); stopPinEscape?.(); translationRequests.dispose(); stopTranslationEvents?.(); exitPreparation.dispose(); stopExitEvents?.(); stopEvents?.(); stopRecordingEvents?.(); stopScrollEvents?.(); stopPluginEvents?.(); clearTimeout(debounce); clearTimeout(errorTimer); });
   createEffect(() => { voiceScope(); voice.reconcile(); });
   createEffect(on(() => scene()?.id, () => { voiceComposing = false; }));
   const voiceVisibility = () => { if (document.visibilityState === 'hidden') void voice.cancel().catch(showError); };
@@ -1406,6 +1420,28 @@ export default function App() {
         return controlReceipt({ pinId: result.id });
       }
     }
+  }
+  /** Flush the originating scene; native owns the one-shot capability and effects. */
+  async function executeHostAction(request: ExtensionActionRequest): Promise<HostActionResult> {
+    const current = scene();
+    if (!current || current.id !== request.sceneId || !current.regions.some(region => region.id === request.regionId)) return { ok: false, reason: '选区不存在或已关闭' };
+    if (busy() || recording() || scroll() || exitPreparing()) return { ok: false, reason: '宿主正忙' };
+    const finishOperation = spaceOperations.begin();
+    setBusy(true);
+    try {
+      await flush();
+      const saved = scene();
+      if (disposed || exitPreparing() || saved?.id !== current.id || saved.closed || saved.frozen) return { ok: false, reason: '选区不存在或已关闭' };
+      const completed = await executeExtensionAction(request.id);
+      if (!completed) return { ok: false, reason: '已取消' };
+      if (request.action === 'reference') {
+        if (disposed || exitPreparing() || scene()?.id !== current.id) return { ok: false, reason: '选区不存在或已关闭' };
+        if (!refs().some(reference => reference.kind === 'region' && reference.id === request.regionId)) toggleReference({ kind: 'region', id: request.regionId });
+      }
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, reason: extensionActionReason(error) };
+    } finally { if (!disposed) setBusy(false); finishOperation(); }
   }
   async function continueJournal(summary: RunJournalSummary, decision: ContinuationDecision, selected?: string[]): Promise<boolean> {
     if (!agentReady()) return false;
