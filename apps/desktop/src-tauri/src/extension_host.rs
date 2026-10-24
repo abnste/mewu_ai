@@ -654,6 +654,7 @@ impl HostCallFailure {
                 "插件服务调用失败",
             ),
             "ui.render" => ("ui.render", "RENDER_OPERATION_FAILED", "界面生成失败"),
+            "ui.transient" => ("ui.transient", "TRANSIENT_OPERATION_FAILED", "瞬态弹层创建失败"),
             "objects.library.get" => ("objects.library.get", "COLLECTION_OPERATION_FAILED", "对象库读取失败"),
             "objects.library.preview" => ("objects.library.preview", "COLLECTION_OPERATION_FAILED", "对象预览失败"),
             "objects.library.describe" => ("objects.library.describe", "COLLECTION_OPERATION_FAILED", "宿主不支持对象库"),
@@ -746,6 +747,7 @@ impl HostCallProgress {
             "services.list" => "services.list",
             "services.call" => "services.call",
             "ui.render" => "ui.render",
+            "ui.transient" => "ui.transient",
             "objects.library.get" => "objects.library.get",
             "objects.library.preview" => "objects.library.preview",
             "objects.library.describe" => "objects.library.describe",
@@ -972,6 +974,8 @@ struct Context {
     scene_id: Option<String>,
     region_id: Option<String>,
     scope: String,
+    // Service executing this invocation; transient surfaces are owned by it.
+    service_id: String,
     region: Option<Arc<region::RegionSession>>,
     chat_region: Option<Arc<crate::extension_chat_region::ChatRegionScope>>,
     native_run: Option<(String, String)>,
@@ -1120,6 +1124,7 @@ fn activate(app: &AppHandle, record: &Record) -> Result<(), String> {
         canceled: Arc::new(AtomicBool::new(false)),
         scene_id: None,
         region_id: None,
+        service_id: String::new(),
         scope: "default".into(),
         region: None,
         chat_region: None,
@@ -1277,6 +1282,7 @@ pub async fn invoke_extension(
         canceled,
         scene_id: if detached {None}else{invocation.scene_id},
         region_id: invocation.region_id,
+        service_id: invocation.service_id.clone(),
         scope,
         region: None,
         chat_region: None,
@@ -1473,6 +1479,7 @@ async fn run_context(
     service: String,
     input: Value,
 ) -> Result<Value, String> {
+    context.service_id = service.clone();
     context.check(&app)?;
     let registration = register_run(&app, &context)?;
     let mut cancellation = FutureCancellation {
@@ -1568,6 +1575,7 @@ pub async fn run_bound_service(
         canceled: Arc::new(AtomicBool::new(false)),
         scene_id: Some(scene_id),
         region_id: None,
+        service_id: String::new(),
         scope: agent_id,
         region: None,
         chat_region: None,
@@ -1746,6 +1754,7 @@ pub(crate) async fn invoke_tool_for_run(
             canceled: canceled.clone(),
             scene_id: Some(scene_id.clone()),
             region_id: chat_region.as_ref().map(|s| s.region_id().into()),
+            service_id: String::new(),
             scope: agent_id,
             region: None,
             chat_region,
@@ -1871,6 +1880,7 @@ pub(crate) async fn run_external_agent(
         canceled: authority.canceled.clone(),
         scene_id: Some(scene_id.clone()),
         region_id: chat_region.as_ref().map(|s| s.region_id().to_owned()),
+        service_id: String::new(),
         scope: provider.agent_id,
         region: None,
         chat_region,
@@ -1935,6 +1945,9 @@ fn execute_with_dispatch(
     input: Value,
     dispatch: Option<&ToolDispatch>,
 ) -> Result<Value, String> {
+    // Tool dispatch and delegated calls reach the bridge without run_context;
+    // transient surfaces must be owned by the actual executing service.
+    context.service_id = service_id.to_string();
     if let Some(service) = context.record.services.iter().find(|s| s.id == service_id) {
         if let Some(reason) = service_platform_error(service, mewu_extension::current_plugin_platform()) { return Err(reason.into()); }
     }
@@ -2090,6 +2103,7 @@ fn bridge_impl(
         "region.action" => "region.input",
         "services.list" | "services.call" => "services.call",
         "ui.render" => "ui.render",
+        "ui.transient" => "ui.overlay",
         "objects.library.describe" | "objects.library.get" | "objects.library.preview" | "objects.library.commit" | "objects.library.restore" => "objects.library",
         "process.resolve" | "process.open" | "process.write" | "process.read" | "process.close" => "process.rpc",
         "network.fetch" => "network.fetch",
@@ -2220,6 +2234,7 @@ fn bridge_impl(
                 canceled: context.canceled.clone(),
                 scene_id: context.scene_id.clone(),
                 region_id: None,
+                service_id: service_id.into(),
                 scope: context.scope.clone(),
                 region: None,
                 chat_region: None,
@@ -2338,6 +2353,46 @@ fn bridge_impl(
             )?;
             context.check(app)?;
             Ok(value)
+        }
+        // The plugin worker is blocked inside this invocation, so the document
+        // arrives as a parameter instead of running another mount handler.
+        "ui.transient" => {
+            let scene = context
+                .scene_id
+                .as_deref()
+                .ok_or("此服务没有会话界面授权")?;
+            let document: crate::extension_surfaces::DocumentInput =
+                serde_json::from_value(params.clone()).map_err(|_| "插件瞬态界面参数无效".to_string())?;
+            let owner = crate::extension_surfaces::Owner {
+                plugin: context.record.manifest.id.clone(),
+                revision: context.record.revision,
+                service: context.service_id.clone(),
+                scene: scene.to_string(),
+            };
+            let origin = app.state::<Host>().content_origin.clone();
+            {
+                // Lock order is engine-then-released before the surfaces lock.
+                let host = app.state::<Host>();
+                let engine = host.lock()?;
+                if engine.store.active_scene().map_err(|e| e.to_string())?.id != owner.scene {
+                    return Err("界面所属会话已切换".into());
+                }
+            }
+            let extensions = app.state::<ExtensionHost>();
+            let window = extensions.surfaces.ticket("space").ok_or("插件宿主窗口已关闭")?;
+            let mounted = extensions.surfaces.publish_transient(owner.clone(), document, &origin, &window, |mounted| {
+                // Recheck after mount: revoke/cancel may have raced with the
+                // earlier admission. Failed publication releases its slot.
+                context.check(app)?;
+                extensions.surfaces.check(&mounted.surface_id, &owner)?;
+                app.emit_to("space", "extension-transient-surface", json!({
+                    "surfaceId": mounted.surface_id, "url": mounted.url,
+                    "width": mounted.width, "height": mounted.height,
+                    "pluginId": owner.plugin, "revision": owner.revision,
+                    "serviceId": owner.service, "sceneId": owner.scene
+                })).map_err(|_| "无法显示插件瞬态界面".to_string())
+            })?;
+            Ok(json!({"surfaceId": mounted.surface_id}))
         }
         "events.emit" => {
             let name = string(&params, "name")?;
@@ -3237,6 +3292,7 @@ mod extension_tool_registry_tests {
             "region.action",
             "model.invoke",
             "ui.render",
+            "ui.transient",
             "network.fetch",
             "services.call",
             "events.emit",
@@ -3471,6 +3527,24 @@ mod failure_diagnostic_tests {
                     ..
                 }
             ));
+        }
+    }
+
+    #[test]
+    fn transient_overlay_failures_keep_their_method_and_permission_code() {
+        let failure =
+            HostCallFailure::from_error("ui.transient", "插件未声明权限：ui.overlay", None);
+        assert_eq!(failure.method, "ui.transient");
+        assert_eq!(failure.code, "HOST_PERMISSION_DENIED");
+        let public = failure.public_message();
+        assert!(public.contains("ui.transient"));
+        assert!(public.contains("HOST_PERMISSION_DENIED"));
+        assert!(!public.contains("ui.overlay"));
+        for message in ["插件界面尺寸或内容无效", "界面所属会话已切换", "无法显示插件瞬态界面"] {
+            let failure = HostCallFailure::from_error("ui.transient", message, None);
+            assert_eq!(failure.method, "ui.transient");
+            assert_eq!(failure.code, "TRANSIENT_OPERATION_FAILED");
+            assert!(failure.public_message().contains("瞬态弹层创建失败"));
         }
     }
 

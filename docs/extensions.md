@@ -115,6 +115,16 @@ The descriptor admits modifiers only: `code` names its primary modifier (`'Alt' 
 The invocation input carries phase and geometry, never characters: `{type: 'trigger', phase: 'down' | 'up' | 'cancel', reason?: 'escape' | 'blur' | 'modifiers_changed' | 'scene_changed', pointer: {x, y, buttons}, modifiers: {ctrl, shift, alt}}`. `pointer` is the space window's CSS pixels at the moment of the event; `up` reports the modifiers remaining after the release. `Escape` during a hold and a window blur both end it with `cancel`. Adding a modifier cancels the old exact combination and arms the new matching combination regardless of press order. A hold keeps its original scene; switching scenes cancels it instead of committing into the next scene. Disabled or upgraded registrations receive no release event, and newly enabled registrations wait for a fresh keydown. The host owns typing-conflict protection: auto-repeat and composition (`isComposing`) keydowns are ignored, and because bare modifiers do not type, a hold may arm while an input is focused. Trigger delivery requires the manifest permission `input.trigger` and rechecks the live registry like any invocation. With no characters in the payload, a trigger cannot be used as a keylogger.
 
 The independent [hold-trigger example](../extensions/examples/hold-trigger) renders a small canvas badge for every phase so arrivals are visible without instrumentation.
+## Transient pointer overlays (`ui.overlay`)
+
+`ctx.ui.transient({html, width, height})` pops a transient overlay at the pointer and resolves with `{surfaceId}`. It requires the dedicated `ui.overlay` permission — one method, one permission — and a scene-bound invocation (space commands and scene tools qualify). The document html is passed inline as a parameter because the calling worker is blocked inside the current invocation and cannot run another of its own mount handlers.
+
+The overlay is gesture-scoped: the frame follows the pointer (offset below-right, clamped into the viewport) and is destroyed on the next pointerup — any button — on Escape, or when the window loses focus. Destruction closes the server-side document; the same scene, revision and enabled checks as persistent panels apply while it lives.
+
+The frame is strictly `pointer-events: none` for its whole life, so the gesture underneath continues: selection drags in the space pass through untouched, and the plugin only observes. Pointer samples are forwarded by the host through the isolated client bridge; plugin html receives them with `mewu.on('pointer', ({x, y, buttons}) => ...)`, where `x`/`y` are CSS pixels of the space window and `buttons` is the live button mask. All other client bridge traffic is ignored for transient frames.
+
+Unlike `ctx.ui.render` panels, transient overlays never appear in the persistent panel list, never replace or resurrect a service's durable documents, use one active pointer overlay per space (a new overlay closes the previous one), share the ordinary surface cap (html ≤ 256 KB, width 80–1600, height 40–1200), and are owned by the service that called `ui.transient`. The independent [pointer-overlay example](../extensions/examples/pointer-overlay) shows a self-contained SVG crosshair with a live coordinate readout.
+
 
 ## Region operation example
 

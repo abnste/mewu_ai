@@ -3,3 +3,5 @@
 @media(max-width:1000px){.extension-surface-frame{bottom:210px;max-height:calc(100vh - 234px)}}
 /* The parent owns external pointer drags, including release over a cross-origin document. */
 .extension-surface-frame.receiving-object{pointer-events:none}
+/* A transient overlay never receives pointer input: the gesture underneath it continues. */
+.extension-transient-frame{position:fixed;z-index:95;border:0;background:transparent;pointer-events:none;border-radius:12px;box-shadow:0 6px 24px #14213a2e;will-change:left,top}

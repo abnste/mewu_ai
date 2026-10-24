@@ -117,6 +117,14 @@ export interface RenderedObject {
   width: number;
   height: number;
 }
+/** A pointer-following transient overlay. The html is passed inline because the
+ * calling worker is blocked in this invocation and cannot run another handler. */
+export interface TransientDocument {
+  html: string;
+  width: number;
+  height: number;
+}
+export interface TransientSurface { surfaceId: string }
 export interface ExtensionContext {
   readonly runtime: { describe(): Promise<{ hostApi: 2; capabilities: string[] }> };
   readonly hostApi: 2;
@@ -155,7 +163,12 @@ export interface ExtensionContext {
   readonly models: ServiceRegistry;
   readonly channels: ServiceRegistry;
   readonly renderers: ServiceRegistry;
-  readonly ui: ServiceRegistry & { render(value: RenderedObject): Promise<JsonValue> };
+  readonly ui: ServiceRegistry & {
+    render(value: RenderedObject): Promise<JsonValue>;
+    /** Requires ui.overlay. The overlay follows the pointer, passes pointer
+     * events through, and is destroyed on pointerup, Escape or window blur. */
+    transient(document: TransientDocument): Promise<TransientSurface>;
+  };
   /** Atomic, plugin-owned JSON state and retained native objects. Only a live
    * UI surface has access. captureKey consumes one actual user drop. */
   readonly objects: {

@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 2,
+  "id": "example.pointer-overlay",
+  "version": "0.1.0",
+  "name": "指针跟随十字标",
+  "description": "随指针移动的瞬态半透明十字标尺，抬起指针即消失。",
+  "publisher": "Mewu contributors",
+  "license": "MPL-2.0",
+  "hostApi": 2,
+  "runtime": "javascript",
+  "entry": "index.mjs",
+  "permissions": ["ui.overlay"],
+  "tags": ["ui", "overlay"],
+  "dependencies": {}
+}
