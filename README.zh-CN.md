@@ -246,7 +246,7 @@ Windows 安装包尚无 Authenticode 证书，自动更新签名验证与它分�
 
 ## 开源协议
 
-<a href="https://github.com/abnste"><img src="https://github.com/abnste.png?size=150" width="50px" alt="Abner Stephen"></a><a href="https://github.com/pyxyd"><img src="https://github.com/pyxyd.png?size=150" width="50px" alt="Yandi"></a><a href="https://github.com/shuziyuxingxing-stack"><img src="https://github.com/shuziyuxingxing-stack.png?size=150" width="50px" alt="数字与星星"></a><a href="https://github.com/AndeDrCobb"><img src="https://github.com/AndeDrCobb.png?size=150" width="50px" alt="Cobb"></a>
+<a href="https://github.com/abnste"><img src="https://github.com/abnste.png?size=150" width="50px" alt="Abner Stephen"></a><a href="https://github.com/pyxyd"><img src="https://github.com/pyxyd.png?size=150" width="50px" alt="Yandi"></a><a href="https://github.com/shuziyuxingxing-stack"><img src="https://github.com/shuziyuxingxing-stack.png?size=150" width="50px" alt="数字与星星"></a><a href="https://github.com/AndeDrCobb"><img src="https://github.com/AndeDrCobb.png?size=150" width="50px" alt="Cobb"></a><a href="https://github.com/tljsj"><img src="https://github.com/tljsj.png?size=150" width="50px" alt="tljsj"></a>
 
 项目自有源码继续采用 [MPL-2.0](./LICENSE)，允许遵守协议的商业使用。对外分发时须按协议提供受覆盖源码，保留版权和许可声明。[第三方许可全文](./apps/desktop/THIRD-PARTY-NOTICES)随安装包提供，各发行标签对应当时源码；原[许可与源码说明](https://github.com/abnste/mewu_ai/blob/dotnet/SOURCE.md)保留在 dotnet。
 
