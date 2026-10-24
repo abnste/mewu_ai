@@ -532,3 +532,45 @@ test('independent renderer returns authored interactive HTML with transparent do
   assert.match(reply.result.html, /<svg/);
   await scope.deactivate();
 });
+
+test('hold triggers map modifier descriptors onto the registration contract and receive phase events', async () => {
+  const events = [];
+  const { scope } = harness(async () => null);
+  definePlugin(ctx => {
+    ctx.triggers.register({ id: 'own.alt-hold', code: 'Alt' }, event => { events.push(event); });
+    ctx.triggers.register({ id: 'own.combo-hold', code: 'Control', with: ['Alt', 'Shift'] }, event => { events.push(event); });
+  })(scope.ctx);
+  const registrations = JSON.parse(scope.finishRegistration());
+  assert.deepEqual(registrations.map(r => r.kind), ['trigger', 'trigger']);
+  assert.deepEqual(registrations[0], { kind: 'trigger', id: 'own.alt-hold', title: 'own.alt-hold', metadata: { trigger: { code: 'Alt' } } });
+  assert.deepEqual(registrations[1].metadata, { trigger: { code: 'Control', with: ['Alt', 'Shift'] } });
+  const input = { type: 'trigger', phase: 'down', pointer: { x: 3, y: 4, buttons: 1 }, modifiers: { ctrl: false, shift: false, alt: true } };
+  const reply = await invoke(scope, 'own.alt-hold', input);
+  assert.deepEqual(reply, { ok: true, result: null });
+  assert.deepEqual(events, [input]);
+  await scope.deactivate();
+});
+
+test('independent hold-trigger example renders one badge per phase without any character payload', async () => {
+  const { default: activate } = await import('../../../extensions/examples/hold-trigger/index.mjs');
+  const renders = [];
+  const { scope } = harness(async (method, params) => {
+    assert.equal(method, 'ui.render');
+    renders.push(params);
+    return { assetId: 'badge', sceneId: 'scene-1' };
+  });
+  activate(scope.ctx);
+  assert.deepEqual(JSON.parse(scope.finishRegistration()),
+    [{ kind: 'trigger', id: 'example.hold-trigger.alt', title: 'example.hold-trigger.alt', metadata: { trigger: { code: 'Alt' } } }]);
+  const pointer = { x: 128, y: 64, buttons: 0 };
+  for (const [input, expected] of [
+    [{ type: 'trigger', phase: 'down', pointer, modifiers: { ctrl: false, shift: false, alt: true } }, '按下'],
+    [{ type: 'trigger', phase: 'cancel', reason: 'escape', pointer, modifiers: { ctrl: false, shift: false, alt: true } }, '取消（Esc）'],
+  ]) {
+    assert.equal((await invoke(scope, 'example.hold-trigger.alt', input)).ok, true);
+    assert.equal(renders.at(-1).width, 264);
+    assert.match(renders.at(-1).html, new RegExp(expected));
+  }
+  assert.ok(renders.every(render => !/keypress|character|text:/.test(JSON.stringify(render))));
+  await scope.deactivate();
+});

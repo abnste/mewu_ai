@@ -28,6 +28,11 @@ function fixture(block) {
     stopExitEvents: undefined, stopPinEscape: undefined, stopTranslationEvents: undefined,
     stopPluginEvents: undefined, stopRecordingEvents: undefined, stopScrollEvents: undefined,
     stopEvents: undefined, stopControlEvents: undefined,
+    stopExtensionState: undefined, stopExtensionTriggers: undefined, extensionRecords: [],
+    triggerSceneId: () => 'own-scene', mergeExtensionRecords: (_, value) => value,
+    attachExtensionTriggers: () => { registrations.push('triggers'); return Object.assign(stop('triggers'), {reconcile() {}}); },
+    extensions: { extensionNative: true, subscribeExtensions: () => response('extensions'),
+      getExtensions: async () => block === 'extensionCatalog' ? pending.promise : [], invokeExtension: async () => {} },
     exitPreparation: { prepare() {}, cancel() {} },
     pinBridge: { subscribePinEscape: () => response('pinEscape') },
     translationBridge: { subscribeTranslation: () => response('translation') },
@@ -54,21 +59,39 @@ function fixture(block) {
 }
 
 test('actual App obtains its initial scene and registers control without waiting for unrelated startup IPC', async () => {
-  for (const blocked of ['pins', 'language', 'pinEscape', 'translation', 'plugins', 'recording', 'scroll', 'exit']) {
+  for (const blocked of ['pins', 'language', 'pinEscape', 'translation', 'plugins', 'recording', 'scroll', 'exit', 'extensions', 'extensionCatalog']) {
     const f = fixture(blocked); await tick();
     assert.equal(f.accepted.length, 1, blocked);
     assert.equal(f.accepted[0].activeSceneId, 'own-scene', blocked);
-    assert.equal(f.registrations.length, 1, blocked);
+    assert.equal(f.registrations.filter(value => value === 'registered').length, 1, blocked);
     assert.equal(f.errors.length, 0, blocked);
   }
 });
 
 test('a subscription completed after App disposal is stopped without installing late state', async () => {
-  for (const blocked of ['pins', 'pinEscape', 'translation', 'plugins', 'recording', 'scroll', 'exit', 'snapshot']) {
+  for (const blocked of ['pins', 'pinEscape', 'translation', 'plugins', 'recording', 'scroll', 'exit', 'snapshot', 'extensions']) {
     const f = fixture(blocked); await tick(); f.context.disposed = true;
     const stop = () => f.stops.push(blocked);
     f.pending.resolve(blocked === 'pins' ? { stop } : stop); await Promise.all(f.tasks);
     assert.ok(f.stops.includes(blocked), blocked);
     if (blocked === 'snapshot') assert.equal(f.accepted.length, 0);
   }
+});
+
+test('late extension catalog after disposal neither attaches trigger keys nor retains its subscription', async () => {
+  const f = fixture('extensionCatalog'); await tick(); f.context.disposed = true;
+  f.pending.resolve([]); await Promise.all(f.tasks);
+  assert.deepEqual(f.registrations, ['registered']);
+  assert.equal(f.stops.filter(value => value === 'extensions').length, 1);
+  assert.equal(f.context.stopExtensionState, undefined);
+});
+
+test('failed extension catalog detaches the already registered state listener', async () => {
+  const f = fixture('extensions'); await tick();
+  f.context.extensions.getExtensions = async () => { throw Error('offline'); };
+  f.pending.resolve(() => f.stops.push('extensions')); await Promise.all(f.tasks);
+  assert.equal(f.stops.filter(value => value === 'extensions').length, 1);
+  assert.equal(f.context.stopExtensionState, undefined);
+  assert.equal(f.errors.length, 1);
+  assert.equal(f.registrations.includes('triggers'), false);
 });

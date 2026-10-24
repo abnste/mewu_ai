@@ -1229,6 +1229,12 @@ pub async fn invoke_extension(
     });
     let canceled=Arc::new(AtomicBool::new(false));
     let service=record.services.iter().find(|s|s.id==invocation.service_id).ok_or("插件服务不存在")?;
+    // Trigger events are ordinary invocations; only the input.trigger permission
+    // gates them. There is no separate bridge method or character payload.
+    if service.kind==mewu_extension::ServiceKind::Trigger
+        && !record.manifest.permissions.iter().any(|p|p=="input.trigger") {
+        return Err("插件未声明权限：input.trigger".into());
+    }
     let owner=crate::extension_surfaces::Owner {
         plugin: record.manifest.id.clone(), revision: record.revision,
         service: invocation.service_id.clone(), scene: invocation.scene_id.clone().unwrap_or_default(),

@@ -74,6 +74,44 @@ fn all_nine_service_kinds_execute_third_party_handlers() {
 }
 
 #[test]
+fn hold_triggers_roundtrip_modifier_descriptors_and_receive_phase_events() {
+    let source = "export default ctx=>{ctx.triggers.register({id:'example.hold',code:'Alt'},event=>event);ctx.triggers.register({id:'example.combo',code:'Control',with:['Alt']},event=>event);}";
+    let (mut runtime, _, _) = runtime(source, &[], RuntimeLimits::default());
+    let registrations = initialize(&mut runtime).unwrap();
+    assert_eq!(registrations.len(), 2);
+    let serialized = serde_json::to_value(&registrations).unwrap();
+    assert_eq!(serialized[0]["kind"], json!("trigger"));
+    assert_eq!(serialized[0]["id"], json!("example.hold"));
+    assert_eq!(serialized[0]["title"], json!("example.hold"));
+    assert_eq!(serialized[0]["metadata"], json!({"trigger":{"code":"Alt"}}));
+    assert_eq!(
+        serialized[1]["metadata"],
+        json!({"trigger":{"code":"Control","with":["Alt"]}})
+    );
+    let input = json!({"type":"trigger","phase":"down","pointer":{"x":12.5,"y":40,"buttons":0},"modifiers":{"ctrl":false,"shift":false,"alt":true}});
+    runtime.begin_invoke("example.hold", &input, &json!({})).unwrap();
+    assert_eq!(result(&runtime).unwrap(), input);
+}
+
+#[test]
+fn hold_triggers_reject_every_non_modifier_key_at_registration() {
+    for source in [
+        "export default ctx=>ctx.triggers.register({id:'bad',code:'KeyA'},()=>0);",
+        "export default ctx=>ctx.triggers.register({id:'bad',code:'a'},()=>0);",
+        "export default ctx=>ctx.triggers.register({id:'bad',code:'Enter'},()=>0);",
+        "export default ctx=>ctx.triggers.register({id:'bad'},()=>0);",
+        "export default ctx=>ctx.triggers.register({id:'bad',code:'Alt',with:['Alt']},()=>0);",
+        "export default ctx=>ctx.triggers.register({id:'bad',code:'Control',with:['Ctrl']},()=>0);",
+        "export default ctx=>ctx.triggers.register({id:'bad',code:'Alt',with:['Alt','Shift']},()=>0);",
+        "export default ctx=>ctx.triggers.register({id:'bad',code:'Alt',with:['Meta']},()=>0);",
+        "export default ctx=>ctx.triggers.register({id:'bad',code:'Shift',with:'Alt'},()=>0);",
+    ] {
+        let (mut runtime, _, _) = runtime(source, &[], RuntimeLimits::default());
+        assert!(initialize(&mut runtime).is_err(), "source must be rejected: {source}");
+    }
+}
+
+#[test]
 fn portable_runtime_preserves_feature_platforms_and_rejects_malformed_restrictions() {
     let source = "export default ctx=>{ctx.ui.register({id:'ruler',title:'Ruler'},()=>42);ctx.tools.register({id:'native',title:'Native',metadata:{platforms:['windows-x86_64'],requiresRegion:true}},()=>43);}";
     let (mut instance, _, _) = runtime(source, &[], RuntimeLimits::default());

@@ -21,7 +21,7 @@ export interface ExtensionProject {
   screenshots: ExtensionProjectScreenshot[];
 }
 export type ExtensionSource = { type: 'local'; path: string } | { type: 'github'; entry: ExtensionCatalogEntry };
-export type ExtensionServiceKind = 'command' | 'tool' | 'agent' | 'memory' | 'model' | 'channel' | 'renderer' | 'ui' | 'service';
+export type ExtensionServiceKind = 'command' | 'tool' | 'agent' | 'memory' | 'model' | 'channel' | 'renderer' | 'ui' | 'trigger' | 'service';
 export interface ExtensionService { kind: ExtensionServiceKind; id: string; title: string; description?: string; inputSchema?: unknown; metadata?: unknown }
 export interface ExtensionRecord { manifest: ExtensionManifest; revision: number; state: 'enabled' | 'disabled' | 'removed'; source: ExtensionSource; sha256: string; services: ExtensionService[]; hasRollback: boolean; platformError?: string; unsupportedServices?: Record<string, string> }
 export interface ExtensionProposal { id: string; manifest: ExtensionManifest; sha256: string; source: ExtensionSource; expectedRevision?: number }

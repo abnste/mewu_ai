@@ -87,6 +87,45 @@ pub fn service_platforms(service: &ServiceRegistration) -> Result<Option<Vec<Str
     Ok(Some(platforms))
 }
 
+/// Hold triggers admit bare modifier keys only. Letters, digits and every other
+/// key are rejected at registration, so a trigger can never forward typed
+/// characters and become a keylogger. `code` names the key that starts the hold
+/// (KeyboardEvent names); `with` names the extra modifiers that must be held
+/// together with it. Both map onto the same {ctrl, shift, alt} set, so the
+/// combination must not repeat the primary key.
+pub fn validate_trigger(service: &ServiceRegistration) -> Result<(), ExtensionError> {
+    if service.kind != ServiceKind::Trigger { return Ok(()); }
+    let invalid = ExtensionError::InvalidPackage;
+    let Some(trigger) = service.metadata.as_ref().and_then(|m| m.get("trigger")) else {
+        return Err(invalid("触发器缺少按键描述"));
+    };
+    if !trigger.is_object() { return Err(invalid("触发器按键描述无效")); }
+    let code = trigger.get("code").and_then(|v| v.as_str()).unwrap_or_default();
+    let modifier = match code {
+        "Alt" => "alt",
+        "Control" => "ctrl",
+        "Shift" => "shift",
+        _ => return Err(invalid("触发器按键仅支持 Alt、Control 或 Shift")),
+    };
+    let mut combination = std::collections::BTreeSet::from([modifier]);
+    if let Some(extra) = trigger.get("with") {
+        let extra: Vec<String> = serde_json::from_value(extra.clone())
+            .map_err(|_| invalid("触发器组合无效"))?;
+        for key in extra {
+            let mapped = match key.as_str() {
+                "Ctrl" => "ctrl",
+                "Shift" => "shift",
+                "Alt" => "alt",
+                _ => return Err(invalid("触发器组合仅支持 Ctrl、Shift 或 Alt")),
+            };
+            if !combination.insert(mapped) {
+                return Err(invalid("触发器组合不能重复修饰键"));
+            }
+        }
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ServiceKind {
@@ -99,6 +138,7 @@ pub enum ServiceKind {
     Channel,
     Renderer,
     Ui,
+    Trigger,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
