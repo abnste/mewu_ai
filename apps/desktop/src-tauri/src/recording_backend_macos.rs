@@ -972,6 +972,15 @@ impl AudioClock {
                 bias = bias.checked_add(overlap).ok_or_else(invalid)?;
                 start = self.end;
             }
+            // ScreenCaptureKit PTS and the PCM duration are independently
+            // projected onto 100 ns ticks. Real streams can therefore put
+            // the next packet one tick before the previous rounded endpoint.
+            // Preserve every PCM frame and only join that single-tick seam.
+            // Do not accumulate it in the segment bias: every subsequent
+            // placement must still stay within one tick of its source PTS.
+            if part.segment == previous && start.checked_add(1) == Some(self.end) {
+                start = self.end;
+            }
         }
         if start < self.end || start - self.end > TICKS_PER_SECOND / 10 {
             return Err(invalid());
@@ -1680,8 +1689,9 @@ mod tests {
             active_ticks,
             segment,
         };
-        // Same-segment overlap, even one 100ns tick, is never clamped.
-        assert!(position.place(&part(99_958, 10_000)).is_err());
+        // Only a single 100 ns quantization seam is admitted. Larger
+        // same-segment overlap remains an error, even below one PCM frame.
+        assert!(position.place(&part(99_957, 10_000)).is_err());
         // A real gap beyond the original 100ms allowance is still rejected.
         assert!(position.place(&part(1_099_960, 10_000)).is_err());
         assert!(position.place(&part(99_959, 9999)).is_err());
@@ -1696,6 +1706,39 @@ mod tests {
                 bias: 41
             }
         );
+    }
+    #[test]
+    fn audio_clock_accepts_observed_one_tick_seam_without_accumulating_bias() {
+        // Captured from a real SCK stream under CPU pressure: the previous
+        // endpoint was 1_249_284 and the next 960-frame packet began at
+        // 1_249_283. No actual PCM sample overlaps at 48 kHz.
+        let initial = AudioClock {
+            end: 1_249_284,
+            segment: Some(709_040_402_742),
+            bias: 0,
+        };
+        let mut clock = initial;
+        for index in 0..20_000u64 {
+            let source = initial.end + index * 200_000 - 1;
+            let placement = clock.place(&PacketPart {
+                first: 0,
+                end: 960,
+                active_ticks: source,
+                segment: initial.segment.unwrap(),
+            }).unwrap();
+            assert_eq!(placement.start, source + 1);
+            assert_eq!(placement.after.bias, 0);
+            assert_eq!(placement.after.end, initial.end + (index + 1) * 200_000);
+            clock = placement.after;
+        }
+        // Admission is side-effect free until the writer accepts the buffer.
+        assert_eq!(initial.end, 1_249_284);
+        let catch_up = clock.place(&PacketPart {
+            first: 0, end: 960, active_ticks: clock.end,
+            segment: initial.segment.unwrap(),
+        }).unwrap();
+        assert_eq!(catch_up.start, clock.end);
+        assert_eq!(catch_up.after.bias, 0);
     }
     #[test]
     fn fixed_segment_mapping_uses_absolute_pts_without_per_packet_rounding_drift() {
