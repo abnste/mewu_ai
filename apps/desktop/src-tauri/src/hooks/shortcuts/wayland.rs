@@ -238,13 +238,16 @@ async fn serve(r: Arc<Shared>, epoch: u64, rules: &[Rule]) -> Result<()> {
         while gate(){tokio::select!{biased;
             message=owners.next()=>{if message.is_none_or(|m|m.body().deserialize::<(String,String,String)>().is_ok_and(|(_,old,new)|old==portal.owner&&new!=old)){return Err(ERROR.into())}},
             _=closed.next()=>return Err("系统快捷键会话已结束".into()),
-            message=deactivated.next()=>{let Some(message)=message else{return Err(ERROR.into())};if let Ok((path,id,_,_))=message.body().deserialize::<(OwnedObjectPath,String,u64,Results)>(){if path==portal.path{pressed.remove(&id);}}},
-            message=activated.next()=>{let Some(message)=message else{return Err(ERROR.into())};if let Ok((path,id,_,_))=message.body().deserialize::<(OwnedObjectPath,String,u64,Results)>(){if path==portal.path&&bound.contains(&id)&&pressed.insert(id.clone())&&gate()&&!r.input_active.load(Ordering::Acquire)&&!super::recording(&r,None){if let Some(rule)=rules.iter().find(|rule|rule.id==id){let mut event=Event::new("shortcut.pressed");event.payload=json!({"ruleId":rule.id,"ruleRevision":rule.revision});emit(&r.app,event);}}}},
+            message=deactivated.next()=>{let Some(message)=message else{return Err(ERROR.into())};if let Ok((path,id,_,_))=message.body().deserialize::<(OwnedObjectPath,String,u64,Results)>(){if path==portal.path{pressed.remove(&id);if let Some(rule)=rules.iter().find(|rule|rule.id==id){track_release(&r,rule,false)?;}}}},
+            message=activated.next()=>{let Some(message)=message else{return Err(ERROR.into())};if let Ok((path,id,_,_))=message.body().deserialize::<(OwnedObjectPath,String,u64,Results)>(){if path==portal.path&&bound.contains(&id)&&pressed.insert(id.clone()){if let Some(rule)=rules.iter().find(|rule|rule.id==id){track_release(&r,rule,true)?;if gate()&&!r.input_active.load(Ordering::Acquire)&&!super::recording(&r,None){let mut event=Event::new("shortcut.pressed");event.payload=json!({"ruleId":rule.id,"ruleRevision":rule.revision});emit(&r.app,event);}}}}},
             message=changes.next()=>{let Some(message)=message else{return Err(ERROR.into())};if let Ok((path,actual))=message.body().deserialize::<(OwnedObjectPath,Bindings)>(){if path==portal.path{bound=actual_ids(&actual);publish(&r,epoch,rules,&actual,None);}}},
             _=tokio::time::sleep(Duration::from_millis(25))=>{}
         }}Ok(())
     }.await;
     let cleanup = portal.close().await;
+    if let Ok(mut held) = r.shortcuts.pressed.lock() {
+        held.clear();
+    }
     if cleanup.is_err() {
         // Fail closed; no new session until process restart.
         r.shortcuts.portal_fault.store(true, Ordering::Release);
@@ -264,6 +267,18 @@ async fn serve(r: Arc<Shared>, epoch: u64, rules: &[Rule]) -> Result<()> {
     }
     cleanup?;
     result
+}
+fn track_release(r: &Shared, rule: &Rule, pressed: bool) -> Result<()> {
+    if let Trigger::Shortcut { accelerator } = &rule.trigger {
+        let id = parse(accelerator)?.id();
+        let mut held = lock(&r.shortcuts.pressed)?;
+        if pressed {
+            held.insert(id);
+        } else {
+            held.remove(&id);
+        }
+    }
+    Ok(())
 }
 fn actual_ids(bindings: &[(String, Results)]) -> HashSet<String> {
     bindings

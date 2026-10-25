@@ -25,6 +25,16 @@ pub(super) async fn execute(work: &Execution, steps: Vec<InputStep>) -> Result<(
         return Err("已有键鼠操作正在执行".into());
     }
     let active = Active(work.shared.clone());
+    // A bare function-key trigger may still be physically held. Waiting only
+    // for modifiers lets a simulated release clear the repeat guard too early.
+    let release_deadline = Instant::now() + Duration::from_secs(2);
+    while super::shortcuts::awaiting_release(&work.shared)? {
+        work.check()?;
+        if Instant::now() >= release_deadline {
+            return Err("请松开快捷键后重试".into());
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
     let fence = Fence::new(work);
     #[cfg(target_os = "linux")]
     if crate::capture_shortcut_wayland_host::is_wayland() {

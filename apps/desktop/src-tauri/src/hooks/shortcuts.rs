@@ -293,6 +293,9 @@ pub(super) fn statuses(r: &Shared) -> HashMap<String, Status> {
         .map(|s| s.clone())
         .unwrap_or_default()
 }
+pub(super) fn awaiting_release(r: &Shared) -> Result<bool> {
+    Ok(!lock(&r.shortcuts.pressed)?.is_empty())
+}
 pub(super) fn edit(r: &Shared, id: String, active: bool) -> Result<()> {
     mewu_hooks::valid_uuid(&id)?;
     if active {
