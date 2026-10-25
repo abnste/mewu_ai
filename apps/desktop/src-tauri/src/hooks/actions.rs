@@ -439,6 +439,24 @@ mod tests {
             "MCP must still reject shells"
         );
     }
+    #[cfg(unix)]
+    #[test]
+    fn mcp_admission_checks_selected_name_before_resolving_symlinks() {
+        use std::os::unix::fs::symlink;
+        let folder = tempfile::tempdir().unwrap();
+        let own = std::env::current_exe().unwrap();
+        let launcher = folder.path().join("sh");
+        let fixed = folder.path().join("synthetic-mcp");
+        symlink(&own, &launcher).unwrap();
+        symlink(&own, &fixed).unwrap();
+        let command = |path: &Path| mewu_core::McpCommand {
+            executable: path.to_string_lossy().into(),
+            args: vec![],
+            cwd: Some(folder.path().to_string_lossy().into()),
+        };
+        assert!(crate::mcp_runtime::validate_command(&command(&launcher)).is_err());
+        assert!(crate::mcp_runtime::validate_command(&command(&fixed)).is_ok());
+    }
     #[cfg(windows)]
     #[tokio::test]
     async fn real_cmd_handles_spaces_percent_signs_and_unicode_in_script_path() {

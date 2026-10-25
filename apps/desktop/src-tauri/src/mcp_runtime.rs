@@ -1402,42 +1402,14 @@ pub(crate) fn validate_command(config: &McpCommand) -> Result<(PathBuf, PathBuf)
     if !requested.is_absolute() || !local_path(requested) {
         return Err("MCP 程序必须使用绝对路径".into());
     }
+    validate_mcp_program_kind(requested)?;
     let executable = requested.canonicalize().map_err(|_| "MCP 程序不存在")?;
     if !executable.is_file() || !local_path(&executable) {
         return Err("请选择本机 MCP 可执行文件".into());
     }
-    let extension = executable
-        .extension()
-        .and_then(|s| s.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    if matches!(extension.as_str(), "bat" | "cmd" | "ps1" | "sh") {
-        return Err("请指定已安装的运行程序，并将脚本作为独立参数".into());
-    }
-    let basename = executable
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    if matches!(
-        basename.as_str(),
-        "cmd"
-            | "powershell"
-            | "pwsh"
-            | "sh"
-            | "bash"
-            | "zsh"
-            | "fish"
-            | "npx"
-            | "npm"
-            | "yarn"
-            | "pnpm"
-            | "uvx"
-    ) {
-        return Err("MCP 需要固定程序，不支持通用命令行或自动安装器".into());
-    }
+    validate_mcp_program_kind(&executable)?;
     #[cfg(windows)]
-    if extension != "exe" {
+    if !executable.extension().is_some_and(|x| x.eq_ignore_ascii_case("exe")) {
         return Err("请选择本机 exe 运行程序".into());
     }
     let cwd = if let Some(cwd) = &config.cwd {
@@ -1453,6 +1425,49 @@ pub(crate) fn validate_command(config: &McpCommand) -> Result<(PathBuf, PathBuf)
         return Err("MCP 工作目录必须是本机目录".into());
     }
     Ok((executable, cwd))
+}
+
+// Check both the user-selected name and its canonical target. Unix sh/npm
+// commonly resolve to dash/npm-cli.js; canonicalization must not erase policy.
+fn validate_mcp_program_kind(program: &Path) -> Result<(), String> {
+    let extension = program
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if matches!(extension.as_str(), "bat" | "cmd" | "ps1" | "sh") {
+        return Err("请指定已安装的运行程序，并将脚本作为独立参数".into());
+    }
+    let basename = program
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if matches!(
+        basename.as_str(),
+        "cmd"
+            | "powershell"
+            | "pwsh"
+            | "sh"
+            | "bash"
+            | "dash"
+            | "ash"
+            | "ksh"
+            | "csh"
+            | "tcsh"
+            | "zsh"
+            | "fish"
+            | "npx"
+            | "npm"
+            | "yarn"
+            | "pnpm"
+            | "uvx"
+            | "npx-cli"
+            | "npm-cli"
+    ) {
+        return Err("MCP 需要固定程序，不支持通用命令行或自动安装器".into());
+    }
+    Ok(())
 }
 
 fn validate_user_command(config:&McpCommand)->Result<(PathBuf,PathBuf),String>{
