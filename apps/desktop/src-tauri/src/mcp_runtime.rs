@@ -1025,7 +1025,13 @@ pub(crate) async fn run_user_command(
     let state=process.state.clone();
     let command=async {
         use tokio::io::AsyncWriteExt;
-        let write=async{stdin.write_all(&input).await.map_err(|_|"无法传递事件数据".to_string())?;stdin.flush().await.map_err(|_|"无法传递事件数据".to_string())?;drop(stdin);Ok::<_,String>(())};
+        let write=async{
+            let result=async{stdin.write_all(&input).await?;stdin.flush().await}.await;
+            drop(stdin);
+            // Commands may intentionally ignore stdin. An early closed input
+            // is harmless only alongside the independent successful exit check.
+            match result { Ok(())=>Ok(()), Err(e) if matches!(e.kind(),std::io::ErrorKind::BrokenPipe|std::io::ErrorKind::ConnectionReset)=>Ok(()),Err(_)=>Err("无法传递事件数据".to_string()) }
+        };
         let drain=async {tokio::io::copy(&mut output,&mut tokio::io::sink()).await.map_err(|_|"命令输出超过限制或已停止".to_string())};
         let wait=async {loop{
             state.check()?;

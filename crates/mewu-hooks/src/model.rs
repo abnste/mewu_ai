@@ -426,6 +426,17 @@ impl Rule {
         }
         for a in &self.actions {
             validate_action(a)?;
+            if matches!(self.trigger, Trigger::Prompt { .. })
+                && matches!(a, Action::SendPrompt { .. } | Action::App { .. })
+            {
+                return Err(
+                    "提示词触发在提交前执行：请使用注入提示词；Mewu 界面操作可通过自定义事件触发"
+                        .into(),
+                );
+            }
+            if matches!(a, Action::App { method, .. } if method == "chat.send") {
+                return Err("请使用发送提示词动作，以保留触发来源".into());
+            }
         }
         if self
             .actions

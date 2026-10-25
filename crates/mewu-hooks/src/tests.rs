@@ -26,6 +26,41 @@ fn rule() -> Rule {
     }
 }
 #[test]
+fn pre_submit_rules_cannot_reenter_their_own_ui_submission_lane() {
+    let mut r = rule();
+    for action in [
+        Action::SendPrompt {
+            text: "new task".into(),
+            scene_id: None,
+        },
+        Action::App {
+            method: "capture.open".into(),
+            params: json!({}),
+        },
+    ] {
+        r.actions = vec![action];
+        assert!(r.validate().is_err());
+    }
+    r.actions = vec![Action::Emit {
+        name: "custom.afterQuestion".into(),
+        payload: json!({}),
+    }];
+    r.validate().unwrap();
+    r.trigger = Trigger::Event {
+        name: "custom.afterQuestion".into(),
+    };
+    r.actions = vec![Action::App {
+        method: "capture.open".into(),
+        params: json!({}),
+    }];
+    r.validate().unwrap();
+    r.actions = vec![Action::App {
+        method: "chat.send".into(),
+        params: json!({"text":"bypass"}),
+    }];
+    assert!(r.validate().is_err());
+}
+#[test]
 fn literal_question_marks_are_not_regex_and_input_is_unchanged() {
     let r = rule();
     let mut e = Event::new("prompt.beforeSend");

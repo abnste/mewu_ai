@@ -26,7 +26,7 @@ export default function HookActionEditor(props: { action: HookAction; index: num
     </Show></label>;
   return <section class="hooks-action">
     <div class="hooks-action-heading"><select aria-label={t('动作类型')} value={props.action.kind} onChange={e => {props.onInvalid(false);props.onChange(newHookAction(e.currentTarget.value as HookAction['kind'],props.data?.platform));}}>
-      <For each={kinds.filter(([kind]) => props.prompt || kind !== 'injectPrompt')}>{([kind,title]) => <option value={kind}>{t(title)}</option>}</For>
+      <For each={kinds.filter(([kind]) => props.prompt ? kind !== 'sendPrompt' && kind !== 'app' : kind !== 'injectPrompt')}>{([kind,title]) => <option value={kind}>{t(title)}</option>}</For>
     </select><button class="icon-button compact" title={t('删除动作')} aria-label={t('删除动作')} onClick={props.onRemove}><Trash2 size={14}/></button></div>
     <Switch>
       <Match when={props.action.kind==='injectPrompt'||props.action.kind==='sendPrompt'}>{field('提示词','text',()=>(props.action as {text:string}).text,4)}</Match>

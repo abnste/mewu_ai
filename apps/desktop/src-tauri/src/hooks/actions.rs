@@ -273,6 +273,9 @@ pub(super) fn execute<'a>(
                 Ok(vec![])
             }
             Action::App { method, params } => {
+                if matches!(work.rule.trigger, Trigger::Prompt { .. }) {
+                    return Err("提交前不能等待同一界面队列，请通过自定义事件触发 Mewu 操作".into());
+                }
                 if method == "chat.send" {
                     return Err("请使用发送提示词动作，以保留触发来源并防止递归".into());
                 }
@@ -559,6 +562,32 @@ mod tests {
         .unwrap();
         assert!(std::fs::read(folder.path().join("event.json")).unwrap() == bytes);
         assert!(!folder.path().join("SHOULD_NOT_EXIST").exists());
+    }
+    #[tokio::test]
+    async fn successful_commands_may_close_unused_event_input_without_a_false_failure() {
+        let folder = tempfile::tempdir().unwrap();
+        let shell = if cfg!(windows) {
+            Shell::Powershell
+        } else {
+            Shell::Sh
+        };
+        let (command, _file, environment) = shell_command(
+            &shell,
+            "exit 0",
+            Some(folder.path().to_string_lossy().into()),
+        )
+        .unwrap();
+        let input = serde_json::to_vec(&json!({"padding":"p".repeat(200000)})).unwrap();
+        crate::mcp_runtime::run_user_command(
+            &command,
+            input,
+            Arc::new(AtomicBool::new(false)),
+            Duration::from_secs(15),
+            environment,
+            Box::new(|| Ok(())),
+        )
+        .await
+        .unwrap();
     }
     #[cfg(unix)]
     #[tokio::test]
