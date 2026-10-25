@@ -2694,12 +2694,30 @@ mod tests {
     }
 
     #[test]
+    fn hooks_seed_is_enabled_by_default_but_keeps_user_disable_and_uninstall_choices() {
+        let dir = Directory::new();
+        let mut store = PluginStore::open(&dir.0).unwrap();
+        let hook = store.list().unwrap().into_iter().find(|r| r.manifest.id == "mewu.hooks").unwrap();
+        assert_eq!(hook.source, PluginSource::Official);
+        assert_eq!(hook.state, PluginState::Enabled);
+        assert!(hook.manifest.contributions.iter().any(|c| matches!(c, PluginContribution::Hooks { .. })));
+        store.set_enabled("mewu.hooks", hook.revision, false).unwrap();
+        drop(store);
+        let mut store = PluginStore::open(&dir.0).unwrap();
+        let hook = store.list().unwrap().into_iter().find(|r| r.manifest.id == "mewu.hooks").unwrap();
+        assert_eq!(hook.state, PluginState::Disabled);
+        store.uninstall("mewu.hooks", hook.revision).unwrap();
+        drop(store);
+        let store = PluginStore::open(&dir.0).unwrap();
+        assert!(!store.snapshot().unwrap().plugins.iter().any(|r| r.manifest.id == "mewu.hooks" && r.state == PluginState::Enabled));
+    }
+    #[test]
     fn model_connection_seed_upgrade_only_adds_eighteen_exact_packages_once() {
         let dir=Directory::new(); let mut store=PluginStore::open(&dir.0).unwrap();
         // Recreate the previous eight-package registry in this owned fixture.
         // The retired memory package is historical input, no longer a seed.
         store.install_package(parse_manifest(OFFICIAL_MEMORY).unwrap(), PluginSource::Official, None, true).unwrap();
-        for manifest in bundled_manifests().into_iter().filter(|value|value.id.starts_with("mewu.provider.") || matches!(value.id.as_str(), "mewu.agent" | "mewu.blackboard" | "mewu.cli")) {
+        for manifest in bundled_manifests().into_iter().filter(|value|value.id.starts_with("mewu.provider.") || matches!(value.id.as_str(), "mewu.agent" | "mewu.blackboard" | "mewu.cli" | "mewu.hooks")) {
             store.connection.execute("DELETE FROM registry WHERE id=?1",[&manifest.id]).unwrap();
             fs::remove_file(path(&dir.0,&manifest.id,&manifest.version)).unwrap();
             fs::remove_dir(path(&dir.0,&manifest.id,&manifest.version).parent().unwrap()).unwrap();
