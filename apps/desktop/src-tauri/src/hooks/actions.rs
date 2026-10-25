@@ -12,6 +12,7 @@ pub(super) struct Fence {
     generation: u64,
     cancel: Arc<AtomicBool>,
     deadline: Instant,
+    before_quit: bool,
 }
 impl Fence {
     pub fn new(work: &Execution) -> Self {
@@ -22,6 +23,7 @@ impl Fence {
             generation: work.generation,
             cancel: work.cancel.clone(),
             deadline: work.deadline,
+            before_quit: work.event.name == "app.beforeQuit",
         }
     }
     pub fn check(&self) -> Result<()> {
@@ -29,6 +31,7 @@ impl Fence {
         if self.cancel.load(Ordering::Acquire)
             || self.shared.generation.load(Ordering::Acquire) != self.generation
             || Instant::now() >= self.deadline
+            || (self.shared.quitting.load(Ordering::Acquire) && !self.before_quit)
         {
             return Err("规则已停止、更改或超时".into());
         }

@@ -35,7 +35,7 @@ pub(super) async fn execute(
             }
         }
         let mut held = Vec::new();
-        let result = (|| {
+        let result: Result<()> = (|| {
             for step in steps {
                 fence.check()?;
                 if !session.live() {

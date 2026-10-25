@@ -217,7 +217,7 @@ async fn serve(r: Arc<Shared>, epoch: u64, rules: &[Rule]) -> Result<()> {
         path,
         pending: None,
     };
-    let result=async{
+    let result: Result<()>=async{
         // Pin service/session before Create/Bind, including early activation.
         let bus=checked(Proxy::new_owned(portal.connection.clone(),"org.freedesktop.DBus","/org/freedesktop/DBus","org.freedesktop.DBus"),until,&gate).await?;
         let mut owners=checked(bus.receive_signal_with_args("NameOwnerChanged",&[(0,"org.freedesktop.portal.Desktop")]),until,&gate).await?;
@@ -265,7 +265,7 @@ async fn serve(r: Arc<Shared>, epoch: u64, rules: &[Rule]) -> Result<()> {
     cleanup?;
     result
 }
-fn actual_ids(bindings: &Bindings) -> HashSet<String> {
+fn actual_ids(bindings: &[(String, Results)]) -> HashSet<String> {
     bindings
         .iter()
         .filter(|(_, properties)| label(properties).is_some())
@@ -279,7 +279,13 @@ fn label(properties: &Results) -> Option<String> {
         .filter(|s| !s.trim().is_empty() && s.len() <= 512 && !s.chars().any(char::is_control))
         .map(str::to_owned)
 }
-fn publish(r: &Shared, epoch: u64, rules: &[Rule], bindings: &Bindings, error: Option<&str>) {
+fn publish(
+    r: &Shared,
+    epoch: u64,
+    rules: &[Rule],
+    bindings: &[(String, Results)],
+    error: Option<&str>,
+) {
     if !allowed(r, epoch) {
         return;
     }

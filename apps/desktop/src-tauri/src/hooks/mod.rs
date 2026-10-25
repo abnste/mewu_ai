@@ -260,6 +260,7 @@ pub(crate) async fn before_quit(app: &AppHandle) {
     let Ok(r) = runtime(app) else { return };
     pause(app);
     let event = Event::new("app.beforeQuit");
+    let generation = r.generation.load(Ordering::Acquire);
     let rules = lock(&r.store).and_then(|s| s.rules()).unwrap_or_default();
     // A user command cannot hold the host's exit/installer indefinitely.
     let until = Instant::now() + Duration::from_secs(3);
@@ -267,7 +268,7 @@ pub(crate) async fn before_quit(app: &AppHandle) {
         if rule.matches(&event).unwrap_or(false) {
             if tokio::time::timeout(
                 until.saturating_duration_since(Instant::now()),
-                execute(r.clone(), rule, event.clone(), false),
+                execute(r.clone(), rule, event.clone(), false, generation),
             )
             .await
             .is_err()
@@ -408,6 +409,7 @@ pub(crate) async fn before_prompt(
         return Err("软件正在退出".into());
     }
     let r = runtime(app)?;
+    let generation = r.generation.load(Ordering::Acquire);
     let mut e = Event::new("prompt.beforeSend");
     e.scene_id = Some(scene.into());
     e.text = text.into();
@@ -418,10 +420,9 @@ pub(crate) async fn before_prompt(
     let until = Instant::now() + Duration::from_secs(60);
     for rule in rules {
         if rule.matches(&e)? {
-            let generation = r.generation.load(Ordering::Acquire);
             let (injected, did_run) = tokio::time::timeout(
                 until.saturating_duration_since(Instant::now()),
-                execute(r.clone(), rule.clone(), e.clone(), false),
+                execute(r.clone(), rule.clone(), e.clone(), false, generation),
             )
             .await
             .map_err(|_| "提示词触发超时，未自动重试")??;
@@ -642,6 +643,7 @@ impl Execution {
         require(&self.shared)?;
         if self.cancel.load(Ordering::Acquire)
             || self.shared.generation.load(Ordering::Acquire) != self.generation
+            || (self.shared.quitting.load(Ordering::Acquire) && self.event.name != "app.beforeQuit")
         {
             return Err("规则已停用、更改或停止".into());
         }
@@ -670,8 +672,10 @@ async fn execute(
     rule: Rule,
     event: Event,
     manual: bool,
+    generation: u64,
 ) -> Result<(Vec<String>, bool)> {
     require(&r)?;
+    check_admission(&r, &event, generation)?;
     let pool = if event.name == "prompt.beforeSend" && !manual {
         r.prompt_slot.clone()
     } else {
@@ -681,7 +685,7 @@ async fn execute(
         .await
         .map_err(|_| "事件触发器等待超时")?
         .map_err(|_| "事件触发器已停止")?;
-    let generation = r.generation.load(Ordering::Acquire);
+    check_admission(&r, &event, generation)?;
     let cancel = Arc::new(AtomicBool::new(false));
     let run =
         { lock(&r.store)?.claim(&rule, &event, chrono::Utc::now().timestamp_millis(), manual)? };
@@ -778,6 +782,22 @@ async fn execute(
     changed(&r);
     result
 }
+fn check_admission(r: &Shared, event: &Event, generation: u64) -> Result<()> {
+    require(r)?;
+    admit_generation(
+        generation,
+        r.generation.load(Ordering::Acquire),
+        r.quitting.load(Ordering::Acquire),
+        &event.name,
+    )
+}
+fn admit_generation(expected: u64, current: u64, quitting: bool, event: &str) -> Result<()> {
+    if expected != current || (quitting && event != "app.beforeQuit") {
+        Err("事件授权已撤销或软件正在退出".into())
+    } else {
+        Ok(())
+    }
+}
 async fn event_worker(r: Arc<Shared>, mut receiver: mpsc::Receiver<QueuedEvent>) {
     loop {
         if r.stop.load(Ordering::Acquire) {
@@ -787,8 +807,12 @@ async fn event_worker(r: Arc<Shared>, mut receiver: mpsc::Receiver<QueuedEvent>)
         if require(&r).is_ok() && item.generation == r.generation.load(Ordering::Acquire) {
             let rules = lock(&r.store).and_then(|s| s.rules()).unwrap_or_default();
             for rule in rules {
+                if check_admission(&r, &item.event, item.generation).is_err() {
+                    break;
+                }
                 if rule.matches(&item.event).unwrap_or(false) {
-                    let _ = execute(r.clone(), rule, item.event.clone(), false).await;
+                    let _ =
+                        execute(r.clone(), rule, item.event.clone(), false, item.generation).await;
                 }
             }
         }
@@ -998,8 +1022,9 @@ pub(crate) async fn run_hook(
         return Err("测试内容未匹配规则".into());
     }
     let id = event.id.clone();
+    let generation = r.generation.load(Ordering::Acquire);
     tauri::async_runtime::spawn(async move {
-        let _ = execute(r, rule, event, true).await;
+        let _ = execute(r, rule, event, true, generation).await;
     });
     Ok(id)
 }
@@ -1020,6 +1045,18 @@ pub(crate) fn edit_hook_shortcut(
 ) -> Result<()> {
     let r = settings(&app, &window)?;
     shortcuts::edit(&r, lease_id, active)
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn a_queued_event_cannot_inherit_authority_after_disable_and_reenable() {
+        assert!(admit_generation(4, 4, false, "app.started").is_ok());
+        assert!(admit_generation(4, 6, false, "app.started").is_err());
+        assert!(admit_generation(4, 4, true, "shortcut.pressed").is_err());
+        assert!(admit_generation(4, 4, true, "app.beforeQuit").is_ok());
+        assert!(admit_generation(4, 6, true, "app.beforeQuit").is_err());
+    }
 }
 pub(crate) fn route_shortcut(
     app: &AppHandle,

@@ -220,9 +220,13 @@ pub(super) fn key(text: &str) -> Result<Key> {
         "F18" => Key::F18,
         "F19" => Key::F19,
         "F20" => Key::F20,
+        #[cfg(not(target_os = "macos"))]
         "F21" => Key::F21,
+        #[cfg(not(target_os = "macos"))]
         "F22" => Key::F22,
+        #[cfg(not(target_os = "macos"))]
         "F23" => Key::F23,
+        #[cfg(not(target_os = "macos"))]
         "F24" => Key::F24,
         s if s.chars().count() == 1 => Key::Unicode(s.chars().next().unwrap()),
         s if s.starts_with("Key") && s.len() == 4 && s.as_bytes()[3].is_ascii_uppercase() => {
