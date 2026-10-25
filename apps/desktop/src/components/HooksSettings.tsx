@@ -57,7 +57,9 @@ export default function HooksSettings(props:{active:boolean}) {
   }
   onMount(async()=>{try{stops=await bridge.subscribeHooks(()=>{if(props.active)void refresh();else dirty=true;},received);if(disposed){stops();return;}stopShortcuts=await shortcut.subscribeCaptureShortcut({state:acceptCapture,recorded:value=>received(value.leaseId,formatShortcut(value.shortcut).replace(/Ctrl/g,'Control')),ended:recordingEnded});if(disposed){stopShortcuts();return;}await refresh();if(!disposed)acceptCapture(await shortcut.getCaptureShortcut());}catch(e){if(!disposed)setError(e instanceof Error?e.message:String(e));}});
   const blur=()=>void disarm();onMount(()=>window.addEventListener('blur',blur));
-  createEffect(()=>{if(!props.active)void disarm();else if(dirty)void refresh();});
+  // MCP discovery/enablement changes outside the Hooks rule revision. Reload
+  // metadata on each entry while preserving unsaved rule drafts.
+  createEffect(()=>{if(!props.active)void disarm();else void refresh();});
   onCleanup(()=>{disposed=true;void disarm();stops?.();stopShortcuts?.();window.removeEventListener('blur',blur);});
   function add(){const next=newHookRule(tab(),data()?.platform);setDrafts(v=>({...v,[next.id]:next}));setBases(v=>({...v,[next.id]:data()?.revision||0}));setExpanded(next.id);setError('');}
   async function save(id:string,override?:HookRule){const r=override||drafts()[id];if(!r||pending())return;setPending(id);setError('');try{await disarm();const value=await bridge.saveHook(bases()[id]??data()?.revision??0,r);if(!disposed){setData(value);discard(id);}}catch(e){if(!disposed)setError(e instanceof Error?e.message:String(e));}finally{if(!disposed)setPending('');}}

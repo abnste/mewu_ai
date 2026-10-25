@@ -113,3 +113,17 @@ test('saving preserves the rule identity and an older refresh cannot replace a n
     await f.api.refresh(); assert.equal(f.api.data().revision, 8);
   } finally { await f.stop(); }
 });
+
+test('reentering Hooks reloads changed MCP metadata without losing an unsaved rule', async () => {
+  const f = await fixture();
+  try {
+    f.api.setTab('event'); f.api.add(); const [id] = f.api.ids();
+    f.api.edit(id, { name: 'Unsaved local rule' });
+    f.activate(false); await tick();
+    const servers = [{ id: 'test-mcp', name: 'Newly enabled MCP', tools: [{ name: 'echo' }] }];
+    f.setView({ revision: 3, rules: [], runs: [], enabled: true, platform: 'windows', mcpServers: servers });
+    f.activate(true); await tick(); await tick();
+    assert.deepEqual(plain(f.api.data().mcpServers), servers);
+    assert.equal(f.api.rule(id).name, 'Unsaved local rule');
+  } finally { await f.stop(); }
+});
