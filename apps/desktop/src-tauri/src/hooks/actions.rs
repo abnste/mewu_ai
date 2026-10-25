@@ -532,4 +532,66 @@ mod tests {
         assert!(result.is_err());
         assert!(!folder.path().join("late").exists());
     }
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn real_unix_command_drains_output_and_keeps_utf8_event_separate_from_code() {
+        let folder = tempfile::tempdir().unwrap();
+        let code = "head -c 200000 /dev/zero; cat > event.json";
+        let (command, _file, environment) = shell_command(
+            &Shell::Sh,
+            code,
+            Some(folder.path().to_string_lossy().into()),
+        )
+        .unwrap();
+        let bytes = serde_json::to_vec(
+            &json!({"text":"$(touch SHOULD_NOT_EXIST) & 中文🙂", "padding":"p".repeat(128000)}),
+        )
+        .unwrap();
+        crate::mcp_runtime::run_user_command(
+            &command,
+            bytes.clone(),
+            Arc::new(AtomicBool::new(false)),
+            Duration::from_secs(15),
+            environment,
+            Box::new(|| Ok(())),
+        )
+        .await
+        .unwrap();
+        assert!(std::fs::read(folder.path().join("event.json")).unwrap() == bytes);
+        assert!(!folder.path().join("SHOULD_NOT_EXIST").exists());
+    }
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn real_unix_command_cancellation_stops_its_delayed_process_group() {
+        let folder = tempfile::tempdir().unwrap();
+        let (command, _file, environment) = shell_command(
+            &Shell::Sh,
+            "cat >/dev/null; printf 1 > started; sleep 10; printf 1 > late",
+            Some(folder.path().to_string_lossy().into()),
+        )
+        .unwrap();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let flag = cancel.clone();
+        let marker = folder.path().join("started");
+        let stop = tokio::spawn(async move {
+            let until = Instant::now() + Duration::from_secs(10);
+            while !marker.exists() {
+                assert!(Instant::now() < until);
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            flag.store(true, Ordering::Release);
+        });
+        let result = crate::mcp_runtime::run_user_command(
+            &command,
+            b"{}".to_vec(),
+            cancel,
+            Duration::from_secs(15),
+            environment,
+            Box::new(|| Ok(())),
+        )
+        .await;
+        stop.await.unwrap();
+        assert!(result.is_err());
+        assert!(!folder.path().join("late").exists());
+    }
 }

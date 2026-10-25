@@ -182,7 +182,7 @@ fn keys(value: &str) -> Result<Vec<i32>> {
 }
 fn chord(session: &PortalSession, fence: &Fence, keys: &[i32]) -> Result<()> {
     let mut held = vec![];
-    let result = (|| {
+    let result: Result<()> = (|| {
         for key in keys {
             fence.check()?;
             session.keysym(*key, true, &mut || fence.check().is_ok())?;
