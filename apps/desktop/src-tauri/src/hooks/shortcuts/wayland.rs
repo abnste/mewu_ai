@@ -15,6 +15,59 @@ const IFACE: &str = "org.freedesktop.portal.GlobalShortcuts";
 const SESSION: &str = "org.freedesktop.portal.Session";
 const REQUEST: &str = "org.freedesktop.portal.Request";
 const ERROR: &str = "系统全局快捷键不可用";
+
+/// A release immediately followed by an activation with the same compositor
+/// timestamp is keyboard autorepeat (also produced by remote desktops).
+/// Keep the key held until the ordered signal stream rules that pair out.
+#[derive(Default)]
+struct Presses {
+    held: HashSet<String>,
+    releases: HashMap<String, (u64, Instant)>,
+}
+impl Presses {
+    fn activate(&mut self, id: &str, timestamp: u64) -> bool {
+        if let Some((released_at, _)) = self.releases.remove(id) {
+            if released_at == timestamp {
+                return false;
+            }
+            self.held.remove(id);
+        }
+        self.held.insert(id.to_owned())
+    }
+    fn deactivate(&mut self, id: &str, timestamp: u64, now: Instant) {
+        if self.held.contains(id) {
+            self.releases.insert(id.to_owned(), (timestamp, now));
+        }
+    }
+    fn released(&mut self, now: Instant) -> Vec<String> {
+        let ids = self
+            .releases
+            .iter()
+            .filter_map(|(id, (_, at))| {
+                (now.saturating_duration_since(*at) >= Duration::from_millis(25))
+                    .then(|| id.clone())
+            })
+            .collect::<Vec<_>>();
+        for id in &ids {
+            self.releases.remove(id);
+            self.held.remove(id);
+        }
+        ids
+    }
+    fn retain(&mut self, bound: &HashSet<String>) -> Vec<String> {
+        let removed = self
+            .held
+            .iter()
+            .filter(|id| !bound.contains(*id))
+            .cloned()
+            .collect::<Vec<_>>();
+        for id in &removed {
+            self.held.remove(id);
+            self.releases.remove(id);
+        }
+        removed
+    }
+}
 fn token() -> String {
     format!("mewu_{}", uuid::Uuid::new_v4().simple())
 }
@@ -222,9 +275,9 @@ async fn serve(r: Arc<Shared>, epoch: u64, rules: &[Rule]) -> Result<()> {
         let bus=checked(Proxy::new_owned(portal.connection.clone(),"org.freedesktop.DBus","/org/freedesktop/DBus","org.freedesktop.DBus"),until,&gate).await?;
         let mut owners=checked(bus.receive_signal_with_args("NameOwnerChanged",&[(0,"org.freedesktop.portal.Desktop")]),until,&gate).await?;
         let globals=checked(Proxy::new_owned(portal.connection.clone(),portal.owner.clone(),PATH,IFACE),until,&gate).await?;
-        let mut activated=checked(globals.receive_signal("Activated"),until,&gate).await?;
-        let mut deactivated=checked(globals.receive_signal("Deactivated"),until,&gate).await?;
-        let mut changes=checked(globals.receive_signal("ShortcutsChanged"),until,&gate).await?;
+        // One ordered subscription: separate biased streams can process a
+        // release before an older queued activation and leave a key stuck.
+        let mut signals=checked(globals.receive_all_signals(),until,&gate).await?;
         let session=checked(Proxy::new_owned(portal.connection.clone(),portal.owner.clone(),portal.path.clone(),SESSION),until,&gate).await?;
         let mut closed=checked(session.receive_signal("Closed"),until,&gate).await?;
         let handle=token();let mut options=Options::new();options.insert("handle_token",Variant::from(handle.as_str()));options.insert("session_handle_token",Variant::from(session_token.as_str()));
@@ -234,14 +287,35 @@ async fn serve(r: Arc<Shared>, epoch: u64, rules: &[Rule]) -> Result<()> {
         let mut bindings=vec![];for rule in rules{let mut properties=Options::new();properties.insert("description",Variant::from(rule.name.as_str()));let Trigger::Shortcut{accelerator}=&rule.trigger else{unreachable!()};properties.insert("preferred_trigger",Variant::from(preferred(accelerator)?));bindings.push((rule.id.as_str(),properties));}
         let path=portal.path.clone();let mut response=portal.request("BindShortcuts",&handle,&(path,bindings,parent.as_ref().map(|p|p.identifier()).unwrap_or(""),options),until,&configuring).await?;
         let actual:Bindings=response.remove("shortcuts").ok_or(ERROR)?.try_into().map_err(|_|ERROR)?;
-        publish(&r,epoch,rules,&actual,None);let mut bound=actual_ids(&actual);let mut pressed=HashSet::new();
+        publish(&r,epoch,rules,&actual,None);let mut bound=actual_ids(&actual);let mut pressed=Presses::default();
+        let mut release_tick=tokio::time::interval(Duration::from_millis(25));
+        release_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         while gate(){tokio::select!{biased;
             message=owners.next()=>{if message.is_none_or(|m|m.body().deserialize::<(String,String,String)>().is_ok_and(|(_,old,new)|old==portal.owner&&new!=old)){return Err(ERROR.into())}},
             _=closed.next()=>return Err("系统快捷键会话已结束".into()),
-            message=deactivated.next()=>{let Some(message)=message else{return Err(ERROR.into())};if let Ok((path,id,_,_))=message.body().deserialize::<(OwnedObjectPath,String,u64,Results)>(){if path==portal.path{pressed.remove(&id);if let Some(rule)=rules.iter().find(|rule|rule.id==id){track_release(&r,rule,false)?;}}}},
-            message=activated.next()=>{let Some(message)=message else{return Err(ERROR.into())};if let Ok((path,id,_,_))=message.body().deserialize::<(OwnedObjectPath,String,u64,Results)>(){if path==portal.path&&bound.contains(&id)&&pressed.insert(id.clone()){if let Some(rule)=rules.iter().find(|rule|rule.id==id){track_release(&r,rule,true)?;if gate()&&!r.input_active.load(Ordering::Acquire)&&!super::recording(&r,None){let mut event=Event::new("shortcut.pressed");event.payload=json!({"ruleId":rule.id,"ruleRevision":rule.revision});emit(&r.app,event);}}}}},
-            message=changes.next()=>{let Some(message)=message else{return Err(ERROR.into())};if let Ok((path,actual))=message.body().deserialize::<(OwnedObjectPath,Bindings)>(){if path==portal.path{bound=actual_ids(&actual);publish(&r,epoch,rules,&actual,None);}}},
-            _=tokio::time::sleep(Duration::from_millis(25))=>{}
+            message=signals.next()=>{
+                let Some(message)=message else{return Err(ERROR.into())};
+                let header=message.header();
+                match header.member().map(|name|name.as_str()) {
+                    Some("Activated"|"Deactivated")=>{
+                        if let Ok((path,id,timestamp,_))=message.body().deserialize::<(OwnedObjectPath,String,u64,Results)>() {
+                            if path==portal.path&&bound.contains(&id) {
+                                if header.member().is_some_and(|name|name.as_str()=="Deactivated") {pressed.deactivate(&id,timestamp,Instant::now());}
+                                else if pressed.activate(&id,timestamp) {
+                                    if let Some(rule)=rules.iter().find(|rule|rule.id==id) {
+                                        track_release(&r,rule,true)?;
+                                        if gate()&&!r.input_active.load(Ordering::Acquire)&&!super::recording(&r,None){let mut event=Event::new("shortcut.pressed");event.payload=json!({"ruleId":rule.id,"ruleRevision":rule.revision});emit(&r.app,event);}
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    Some("ShortcutsChanged")=>{if let Ok((path,actual))=message.body().deserialize::<(OwnedObjectPath,Bindings)>(){if path==portal.path{bound=actual_ids(&actual);for id in pressed.retain(&bound){if let Some(rule)=rules.iter().find(|rule|rule.id==id){track_release(&r,rule,false)?;}}publish(&r,epoch,rules,&actual,None);}}},
+                    _=>{}
+                }
+            },
+            // Queued signals are processed first, before committing a release.
+            _=release_tick.tick()=>{for id in pressed.released(Instant::now()){if let Some(rule)=rules.iter().find(|rule|rule.id==id){track_release(&r,rule,false)?;}}}
         }}Ok(())
     }.await;
     let cleanup = portal.close().await;
@@ -372,6 +446,36 @@ fn preferred(accelerator: &str) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn real_gnome_autorepeat_sequence_keeps_one_press_until_final_release() {
+        let mut keys = Presses::default();
+        let now = Instant::now();
+        assert!(keys.activate("f8", 423557011));
+        assert!(!keys.activate("f8", 423557511));
+        for time in [423557572, 423557613, 423557863, 423558013] {
+            keys.deactivate("f8", time, now);
+            assert!(!keys.activate("f8", time));
+            assert!(keys.released(now + Duration::from_secs(1)).is_empty());
+            assert!(keys.held.contains("f8"));
+        }
+        keys.deactivate("f8", 423558025, now);
+        assert!(keys.released(now + Duration::from_millis(24)).is_empty());
+        assert_eq!(keys.released(now + Duration::from_millis(25)), ["f8"]);
+        assert!(keys.activate("f8", 423559100));
+    }
+    #[test]
+    fn distinct_physical_presses_are_not_debounced_and_keys_remain_independent() {
+        let mut keys = Presses::default();
+        let now = Instant::now();
+        assert!(keys.activate("f8", 100));
+        assert!(keys.activate("f9", 100));
+        keys.deactivate("f8", 120, now);
+        assert!(keys.activate("f8", 130));
+        assert!(keys.released(now + Duration::from_secs(1)).is_empty());
+        let bound = HashSet::from(["f9".to_owned()]);
+        assert_eq!(keys.retain(&bound), ["f8"]);
+        assert!(keys.held.contains("f9"));
+    }
     #[test]
     fn preferred_is_only_an_xdg_hint_and_actual_label_is_required() {
         assert_eq!(preferred("Control+Shift+KeyK").unwrap(), "CTRL+SHIFT+K");
