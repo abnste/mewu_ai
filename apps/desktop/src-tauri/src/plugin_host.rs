@@ -24,6 +24,8 @@ fn lock(host: &Host) -> Result<std::sync::MutexGuard<'_, PluginRuntime>, String>
         .map_err(|_| "插件存储需要重新启动".into())
 }
 fn publish(app: &AppHandle, snapshot: &PluginSnapshot) {
+    crate::hooks::reconcile(app, snapshot);
+    crate::hooks::lifecycle(app, "plugin.changed", None, serde_json::json!({"revision": snapshot.revision}));
     crate::video_host::revoke_plugins(app, snapshot);
     crate::recording::revoke_plugins(app, snapshot);
     crate::recording_audio_host::reconcile(app, snapshot);
@@ -116,6 +118,7 @@ fn settle_engine(engine: &mut crate::Engine, snapshot: &PluginSnapshot) -> Resul
 }
 /// All plugin mutations and starts use plugin -> Engine lock order.
 fn settle_runs(app: &AppHandle, host: &Host, snapshot: &PluginSnapshot) -> Result<(), String> {
+    crate::hooks::reconcile(app, snapshot);
     crate::app_control_host::reconcile(app, snapshot);
     let next_agent = crate::optional_capabilities::Authorizations::from_snapshot(snapshot).agent;
     if host.lock()?.optional.agent != next_agent {

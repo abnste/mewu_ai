@@ -577,10 +577,6 @@ pub fn initialize(app: &AppHandle, root: &Path) -> Result<(), String> {
     if app.try_state::<HostRuntime>().is_some() {
         return Err("快捷键状态已初始化".into());
     }
-    #[cfg(target_os = "linux")]
-    if crate::capture_shortcut_wayland_host::is_wayland() {
-        return crate::capture_shortcut_portal_linux::Runtime::initialize(app, root);
-    }
     let (preferences, loaded) = match PreferencesFile::open(root) {
         Ok(file) => {
             let value = file.load();
@@ -602,6 +598,12 @@ pub fn initialize(app: &AppHandle, root: &Path) -> Result<(), String> {
         preferences,
     }));
     app.manage(runtime.clone());
+    // The recording lease is backend-independent. On Wayland, only the portal
+    // owns capture preferences/registration; this model never starts or writes.
+    #[cfg(target_os = "linux")]
+    if crate::capture_shortcut_wayland_host::is_wayland() {
+        return crate::capture_shortcut_portal_linux::Runtime::initialize(app, root);
+    }
     {
         let mut work = runtime.claim()?;
         let mut backend = NativeBackend {
@@ -707,10 +709,6 @@ pub fn begin_capture_shortcut_edit(
     if window.label() != "settings" {
         return Err("请在设置中编辑截图快捷键".into());
     }
-    #[cfg(target_os = "linux")]
-    if app.try_state::<crate::capture_shortcut_portal_linux::Runtime>().is_some() {
-        return Err("请通过系统授权设置截图快捷键".into());
-    }
     let runtime = app.state::<HostRuntime>().inner().clone();
     crate::recording::ensure_idle(&app)?;
     let owner = settings_owner(&app, &runtime.0, &window)?;
@@ -772,8 +770,9 @@ pub fn end_capture_shortcut_edit(
     if window.label() != "settings" {
         return Err("请在设置中结束快捷键编辑".into());
     }
-    #[cfg(target_os = "linux")]
-    if app.try_state::<crate::capture_shortcut_portal_linux::Runtime>().is_some() { return Ok(()); }
+    end_editor(&app,&lease_id)
+}
+pub(crate) fn end_editor(app:&AppHandle,lease_id:&str)->Result<(),String>{
     // Cleanup must remain legal in PREPARING/DRAINING and after focus loss.
     let runtime = app.state::<HostRuntime>();
     let now = Instant::now();
@@ -785,7 +784,7 @@ pub fn end_capture_shortcut_edit(
             .map_err(|_| "快捷键编辑状态不可用")?;
         let expired = editors.prune(now);
         sync_system_editor(&app, &editors);
-        let ended = editors.end("settings", &lease_id, now)?;
+        let ended = editors.end("settings", lease_id, now)?;
         sync_system_editor(&app, &editors);
         (expired, ended)
     };
@@ -801,6 +800,9 @@ pub fn active_display(app: &AppHandle) -> String {
         .and_then(|runtime| runtime.view().active.as_ref().map(display))
         .unwrap_or_default()
 }
+/// Shared settings recorder admission, also used by other registered actions.
+/// No UI/DB calls or feature-specific IDs on the native shortcut callback.
+pub(crate) fn editor_active(app:&AppHandle)->bool{app.try_state::<HostRuntime>().is_some_and(|r|r.0.editors.lock().is_ok_and(|editors|editors.active.as_ref().is_some_and(|e|Instant::now()<e.until)))}
 /// Call only for ShortcutState::Pressed. Other feature handlers remain untouched.
 /// True means root should call its existing start_capture; false is consumed/ignored.
 pub fn route_pressed(app: &AppHandle, key: &Shortcut) -> bool {

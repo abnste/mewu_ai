@@ -686,8 +686,9 @@ pub(crate) async fn present_recording(window: &WebviewWindow, allowed: capture::
 }
 
 pub(crate) async fn capture(app: AppHandle, window: WebviewWindow, work: Arc<Work>, transition: Arc<SpaceTransition>, preferences: crate::capture_preferences::CapturePreferences, mut timing: crate::interaction_performance::Trace) -> Result<HostSnapshot,String> {
-    let result = capture_inner(app, window, work, transition, preferences, &mut timing).await;
+    let result = capture_inner(app.clone(), window, work, transition, preferences, &mut timing).await;
     timing.finish(result.is_ok());
+    if let Ok(published)=&result{crate::hooks::capture_opened(&app,&published.snapshot);}
     result
 }
 

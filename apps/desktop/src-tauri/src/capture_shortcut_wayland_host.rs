@@ -107,6 +107,9 @@ async fn parent(window:&WebviewWindow,owner:usize,label:&'static str)->Result<Ex
     guard.check_mapped()?;Ok(guard)
 }
 /// Host-only entry: renderer cannot provide a parent handle or another label.
+pub(crate) async fn settings_parent(window:&WebviewWindow)->Result<ExportedParent,String>{
+    let owner=settings(window)?;parent(window,owner,"settings").await
+}
 pub(crate) async fn recording_parent(window:&WebviewWindow)->Result<ExportedParent,String>{
     if window.label()!="space"{return Err("此窗口不能开始录屏".into())}
     let owner=crate::window_actions_linux::window_handle(window)?;

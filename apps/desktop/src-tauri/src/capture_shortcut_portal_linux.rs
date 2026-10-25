@@ -80,6 +80,7 @@ impl Shared {
         !self.stop.load(Ordering::Acquire) && self.app.try_state::<Host>().is_some_and(|h|
             h.exit.accepts_new_operations() && h.storage.is_ready() && !h.capturing.load(Ordering::Acquire))
             && crate::recording::ensure_idle(&self.app).is_ok()
+            && !crate::capture_shortcut_host::editor_active(&self.app)
             && owner.is_none_or(|v|crate::window_actions_linux::current_for(v,"settings"))
     }
     fn config_allowed(&self, id: &str, owner: usize) -> bool {
@@ -170,7 +171,7 @@ async fn checked<T,E>(future:impl Future<Output=Result<T,E>>, until:tokio::time:
 }
 async fn transport<T,E>(future:impl Future<Output=Result<T,E>>, until:tokio::time::Instant, allowed:&impl Fn()->bool)->Result<T,String>{checked(future,until.min(tokio::time::Instant::now()+METHOD),allowed).await}
 
-async fn registered_connection(address:zbus::Address,until:tokio::time::Instant,allowed:&impl Fn()->bool)->Result<(Connection,String),String>{
+pub(crate) async fn registered_connection(address:zbus::Address,until:tokio::time::Instant,allowed:&impl Fn()->bool)->Result<(Connection,String),String>{
         if !matches!(address.transport(),zbus::address::transport::Transport::Unix(_)){return Err(UNAVAILABLE.into())}
         let builder=zbus::connection::Builder::address(address).map_err(|_|UNAVAILABLE)?.max_queued(16).method_timeout(METHOD);
         let connection=transport(builder.build(),until,allowed).await?;

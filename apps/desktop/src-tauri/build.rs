@@ -10,7 +10,15 @@ fn main() {
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
         tauri_build::AppManifest::new().commands(&[
             "get_snapshot",
+            "get_hooks",
+            "save_hook",
+            "remove_hook",
+            "check_hook",
+            "run_hook",
+            "cancel_hook",
+            "edit_hook_shortcut",
             "register_control_renderer",
+            "confirm_control_renderer",
             "claim_control_request",
             "complete_control_request",
             "get_optional_capabilities",

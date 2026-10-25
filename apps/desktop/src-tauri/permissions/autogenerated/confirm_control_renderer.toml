@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-confirm-control-renderer"
+description = "Enables the confirm_control_renderer command without any pre-configured scope."
+commands.allow = ["confirm_control_renderer"]
+
+[[permission]]
+identifier = "deny-confirm-control-renderer"
+description = "Denies the confirm_control_renderer command without any pre-configured scope."
+commands.deny = ["confirm_control_renderer"]

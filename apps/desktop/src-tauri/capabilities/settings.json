@@ -71,6 +71,13 @@
     "allow-get-extension-bindings",
     "allow-set-extension-binding",
     "allow-get-official-plugins",
-    "allow-control-official-plugin"
+    "allow-control-official-plugin",
+    "allow-get-hooks",
+    "allow-save-hook",
+    "allow-remove-hook",
+    "allow-check-hook",
+    "allow-run-hook",
+    "allow-cancel-hook",
+    "allow-edit-hook-shortcut"
   ]
 }

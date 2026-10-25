@@ -7,7 +7,7 @@ use objc2_app_kit::NSWorkspace;
 use objc2_foundation::{NSString, NSURL};
 
 /// The caller must supply a canonical HTTP(S), recipient-only mailto, or global
-/// tel address produced by code_open's existing validation. This is not an IPC
+/// tel address, or the canonical local .app file URL from open_application produced by code_open's existing validation. This is not an IPC
 /// command and must not receive an arbitrary user-supplied scheme or arguments.
 /// The caller retains its action permit until this returns.
 pub(crate) fn dispatch(

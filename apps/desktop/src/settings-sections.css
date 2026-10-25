@@ -41,6 +41,7 @@
 .settings-dialog .settings-content .segmented button { height:var(--settings-control-height);padding:0 14px;font-size:var(--settings-control-font);line-height:16px;gap:6px;justify-content:center;white-space:nowrap; }
 .settings-dialog .settings-content .segmented button>svg { width:14px;height:14px; }
 .settings-section-heading { display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:var(--settings-control-height);margin:0 0 12px;font-size:12px;font-weight:600; }
+.settings-section-heading>h3 { margin:0;font:inherit; }
 .settings-dialog .settings-content .settings-add-button {
   box-sizing:border-box;width:var(--settings-add-width);min-width:var(--settings-add-width);max-width:var(--settings-add-width);
   height:var(--settings-control-height);min-height:var(--settings-control-height);max-height:var(--settings-control-height);

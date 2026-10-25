@@ -26,6 +26,35 @@ pub fn http_url(text: &str) -> Option<Url> {
     Some(parsed)
 }
 
+/// Explicit, saved local automation action, distinct from opening decoded URLs.
+/// File paths never come from a website/QR value or an event interpolation.
+pub(crate) fn open_application(path:&std::path::Path,allowed:impl FnOnce()->Result<(),String>+Send+'static)->Result<(),String>{
+    if !path.is_absolute(){return Err("应用须使用绝对路径".into())}
+    let path=path.canonicalize().map_err(|_|"应用路径不存在")?;
+    #[cfg(target_os="linux")]
+    {
+        use gtk::gio::prelude::AppInfoExt;
+        if path.extension().is_some_and(|x|x=="desktop"){
+            let app=gtk::gio::DesktopAppInfo::from_filename(&path).ok_or("桌面应用文件无效")?;allowed()?;
+            return app.launch(&[],None::<&gtk::gio::AppLaunchContext>).map_err(|_|"无法打开应用".into());
+        }
+        use std::os::unix::fs::PermissionsExt;
+        if !path.is_file()||path.metadata().map_err(|_|"应用路径不可用")?.permissions().mode()&0o111==0{return Err("请选择可执行应用或 desktop 文件".into())}
+        allowed()?;let mut child=std::process::Command::new(&path).spawn().map_err(|_|"无法打开应用")?;
+        // An opened GUI app intentionally has its own lifetime. It is not a
+        // supervised script and must survive stopping its originating hook.
+        std::thread::Builder::new().name("mewu-opened-app".into()).spawn(move||{let _=child.wait();}).map_err(|_|"应用已打开，无法跟踪退出")?;return Ok(());
+    }
+    #[cfg(not(target_os="linux"))]
+    {
+        #[cfg(windows)]
+        if !path.is_file()||!path.extension().is_some_and(|x|x.eq_ignore_ascii_case("exe")||x.eq_ignore_ascii_case("lnk")){return Err("请选择 exe 应用或快捷方式".into())}
+        #[cfg(target_os="macos")]
+        if !path.is_dir()||!path.extension().is_some_and(|x|x=="app"){return Err("请选择 app 应用".into())}
+        let url=Url::from_file_path(path).map_err(|_|"应用路径无效")?;dispatch(url.to_string(),allowed)
+    }
+}
+
 /// Runs only after an explicit registered-code action. The caller must retain
 /// its action permit until this returns and provide a final source/exit fence.
 pub fn open(

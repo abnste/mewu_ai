@@ -1,0 +1,32 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+.hooks-settings .connection-list { display: grid; gap: 10px; }
+.hooks-settings .connection-summary { display:flex; align-items:center; gap:12px; }
+.hooks-settings .connection-expand { display:flex; align-items:center; gap:8px; flex:1; min-width:0; text-align:left; }
+.hooks-settings .connection-expand>span { display:grid; gap:4px; min-width:0; }
+.hooks-settings .connection-expand strong { font-size:12px; font-weight:500; }
+.hooks-settings .connection-expand small { font-size:10px; }
+.hooks-settings .connection-expand small { color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.hooks-settings fieldset { margin:0; border:0; min-width:0; }
+.hooks-settings .connection-editor { display:grid; gap:12px; }
+.hooks-settings .field-label { display:grid; gap:6px; }
+.hooks-settings textarea { width:100%; resize:vertical; }
+.hooks-settings .hooks-code { font-family:ui-monospace,monospace; tab-size:2; }
+.hooks-action { display:grid; gap:10px; padding:12px; background:var(--panel-subtle,rgba(127,127,127,.04)); border-radius:8px; }
+.hooks-action-heading { display:flex; align-items:center; gap:8px; }
+.hooks-action-heading select { flex:1; min-width:0; }
+.hooks-input-steps { display:grid; gap:12px; }
+.hooks-input-step { display:grid; gap:10px; padding-block:10px; border-bottom:1px solid var(--border); }
+.hooks-input-steps>.secondary-button { justify-self:start; }
+.hooks-actions-spacer { flex:1; }
+.hooks-settings summary { cursor:pointer; color:var(--muted); font-size:11px; padding-block:6px; }
+.hooks-test { display:flex; gap:8px; padding:0 16px 12px; }
+.hooks-test input { min-width:0; flex:1; }
+.hooks-runs { padding:0 16px 12px; }
+.hooks-run { display:grid; grid-template-columns:auto 1fr auto; align-items:center; gap:8px; padding-block:6px; font-size:11px; }
+.hooks-run p { grid-column:1/-1; margin:0; }
+
+.hooks-settings .connection-card { margin:0; }
+.hooks-settings .connection-editor { padding-block:14px; }
+.hooks-settings .connection-editor .field-label { margin:0; }
+.hooks-settings .connection-editor .settings-section-heading { margin-bottom:0; }
+.hooks-settings .connection-list+.setting-row { margin-block:12px; }

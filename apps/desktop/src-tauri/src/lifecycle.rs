@@ -492,6 +492,7 @@ pub fn finish_exit_preparation(
 fn abort(app: &AppHandle, id: &str, error: &str) {
     let host = app.state::<Host>();
     if host.exit.abort_with_error(id, error, || {
+        crate::hooks::resume(app);
         crate::formula_layout::resume_after_failed_exit();
         host.memory.resume();
     }) {
@@ -538,6 +539,22 @@ fn start_shutdown(
     completion: Option<oneshot::Sender<Result<(), String>>>,
     update: Option<crate::app_update::PreparedInstall>,
 ) -> Result<(), String> {
+    static HOOK_PREFLIGHT:std::sync::atomic::AtomicBool=std::sync::atomic::AtomicBool::new(false);
+    if !crate::hooks::enabled(app){return start_shutdown_after_hooks(app,migration,completion,update);}
+    if !app.state::<Host>().exit.accepts_new_operations()||HOOK_PREFLIGHT.swap(true,Ordering::AcqRel){return Err(EXIT_BUSY.into())}
+    let app=app.clone();
+    tauri::async_runtime::spawn(async move{
+        crate::hooks::before_quit(&app).await;
+        if let Err(error)=start_shutdown_after_hooks(&app,migration,completion,update){crate::hooks::resume(&app);let _=app.emit_to("settings","host-error",&error);let _=app.emit_to("space","host-error",&error);}
+        HOOK_PREFLIGHT.store(false,Ordering::Release);
+    });Ok(())
+}
+fn start_shutdown_after_hooks(
+    app: &AppHandle,
+    migration: Option<std::sync::Arc<crate::storage_host::MigrationTask>>,
+    completion: Option<oneshot::Sender<Result<(), String>>>,
+    update: Option<crate::app_update::PreparedInstall>,
+) -> Result<(), String> {
     let Some(host) = app.try_state::<Host>() else {
         return Err("应用尚未启动".into());
     };
@@ -552,6 +569,7 @@ fn start_shutdown(
     let Some(((id, receive), recording)) = begun else {
         return Err(EXIT_BUSY.into());
     };
+    crate::hooks::pause(app);
     let ticket = match crate::mcp_runtime::begin_quiesce() {
         Ok(ticket) => ticket,
         Err(error) => {
@@ -631,6 +649,7 @@ fn start_shutdown(
             abort(&app, &id, &error);
             return;
         }
+        if let Err(error)=crate::hooks::drain(&app,Duration::from_secs(5)).await{abort(&app,&id,&error);return;}
         if let Err(error) = app
             .state::<Host>()
             .memory
@@ -799,6 +818,7 @@ fn start_shutdown(
                 crate::shared_capture_windows::abandon_for_process_exit(&app.state::<Host>().exit);
             crate::pin_host::shutdown(&app);
             crate::app_control_host::shutdown(&app);
+            crate::hooks::shutdown(&app);
             if let Some(update) = update {
                 // Windows installer launch exits the process. Do this only once
                 // drafts, media, native workers and durable cancellations settled.

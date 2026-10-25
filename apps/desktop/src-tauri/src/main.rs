@@ -37,6 +37,7 @@ mod capture_visibility;
 #[cfg(windows)]
 mod shared_capture_windows;
 mod capture_shortcut;
+mod hooks;
 mod capture_shortcut_host;
 #[cfg(target_os = "linux")]
 mod capture_shortcut_desktop_linux;
@@ -395,6 +396,7 @@ fn publish(app: &AppHandle, snapshot: &Snapshot) -> HostSnapshot {
 fn publish_owned(app: &AppHandle, owned: Snapshot) -> HostSnapshot {
     let mut timing = interaction_performance::Trace::start(interaction_performance::Kind::Publish);
     let snapshot = &owned;
+    hooks::observe_scene(app,&snapshot.active_scene_id);
     #[cfg(target_os="linux")]
     recording_wayland_host::reconcile(snapshot);
     app.state::<Host>().session_titles.reconcile(snapshot);
@@ -559,7 +561,12 @@ async fn apply_scene_command(
         SceneCommand::DeleteAgent { agent_id, .. } => Some(agent_id.clone()),
         _ => None,
     };
+    let hook_event = match &command {
+        SceneCommand::NewScene | SceneCommand::NewConversation { .. } => Some("scene.created"),
+        _ => None,
+    };
     let snapshot = engine.store.apply(command).map_err(|e| e.to_string())?;
+    if let Some(event)=hook_event { hooks::lifecycle(&app,event,Some(&snapshot.active_scene_id),serde_json::Value::Null); }
     if let Some(agent_id) = disabled_memory {
         host.memory.cancel_where(|task| {
             engine
@@ -922,6 +929,7 @@ fn hide_frozen_widget(app: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 async fn close_scene_window(app: AppHandle, scene_id: String) -> Result<HostSnapshot, String> {
+    let closed_scene_id=scene_id.clone();
     let host = app.state::<Host>();
     let _transition = begin_explicit_space_transition(&app, &host).await?;
     recording::ensure_idle(&app)?;
@@ -956,6 +964,7 @@ async fn close_scene_window(app: AppHandle, scene_id: String) -> Result<HostSnap
         frozen::hide(&app)?;
     }
     // Closing is persisted even if a subsequent native window operation fails.
+    hooks::lifecycle(&app,"scene.closed",Some(&closed_scene_id),serde_json::Value::Null);
     Ok(published)
 }
 
@@ -1909,6 +1918,7 @@ async fn capture_screen(app: AppHandle) -> Result<HostSnapshot, String> {
         }
     }
     timing.finish(result.is_ok());
+    if let Ok(published)=&result { hooks::capture_opened(&app,&published.snapshot); }
     result
 }
 
@@ -2007,6 +2017,7 @@ async fn send_message(
     scene_id: String,
     visual_annotations: Option<mewu_core::VisualAnnotationGrant>,
     region_id: Option<String>,
+    automation_origin: Option<String>,
 ) -> Result<HostSnapshot, String> {
     host.exit.ensure_new_operation()?;
     recording::ensure_idle(&app)?;
@@ -2019,8 +2030,12 @@ async fn send_message(
         let scene = engine.store.scene(&scene_id).map_err(|e| e.to_string())?;
         extension_chat_region::PreparedChatRegion::capture(scene, &engine.store.snapshot().active_scene_id, region_id.as_deref())?
     };
+    let hook_draft={let engine=host.lock()?;let scene=engine.store.scene(&scene_id).map_err(|e|e.to_string())?;ai::validate_scene_for_send(scene)?;scene.draft.clone()};
+    let hook_parent=hooks::take_prompt_origin(&app,automation_origin.as_deref(),&scene_id,&hook_draft)?;
+    let hook_context=hooks::before_prompt(&app,&scene_id,&hook_draft,hook_parent).await?;
+    if host.lock()?.store.scene(&scene_id).map_err(|e|e.to_string())?.draft!=hook_draft{return Err("会话内容已变化，请重新发送".into())}
     if let Some(provider)=extension_host::external_agent_for_scene(&app,&scene_id)?{
-        return extension_agent::start_external_run(app.clone(),scene_id,provider,prepared_region).await;
+        return extension_agent::start_external_run(app.clone(),scene_id,provider,prepared_region,hook_context).await;
     }
     let extension_catalog = extension_host::tool_catalog(&app,&scene_id)?;
     if let Some(grant) = &visual_annotations {
@@ -2146,7 +2161,8 @@ async fn send_message(
     }
     host.exit.ensure_new_operation()?;
     optional_capabilities::require_agent_current(&engine, &preflight.agent_grant)?;
-    let context = if let Some(prepared) = video_prepared.as_mut() {
+    hook_context.check()?;
+    let mut context = if let Some(prepared) = video_prepared.as_mut() {
         prepared.ensure_current()?;
         let input = mewu_core::VerifiedVideoRunInput::new(
             visual_annotations.ok_or("视频理解与批注缺少授权")?,
@@ -2166,6 +2182,8 @@ async fn send_message(
             .begin_run_with_memory(&scene_id, memory_grant)
             .map_err(|e| e.to_string())?
     };
+    if !hook_context.instructions.is_empty(){context.agent.instructions.push_str("\n\n");context.agent.instructions.push_str(&hook_context.instructions.join("\n\n"));}
+    hooks::begin_run(&app,&scene_id,&context.run_id,&hook_context);
     let chat_region = prepared_region.map(|prepared| prepared.bind(context.run_id.clone(), Arc::new(AtomicBool::new(false))));
     start_run_with_extensions(
         &app, &mut engine, context, preflight, attachments, visual, video,
@@ -2562,11 +2580,14 @@ fn start_run_with_extensions(
                         let run_id = run_id.clone();
                         let tools = run_tools.clone();
                         async move {
-                            if agent_tools::label(&call.name).is_some() {
-                                journal_tool_host::execute(app, scene_id, run_id, call, lease).await
+                            let tool_name=call.name.clone();
+                            let result=if agent_tools::label(&call.name).is_some() {
+                                journal_tool_host::execute(app.clone(), scene_id.clone(), run_id.clone(), call, lease).await
                             } else {
                                 tools.execute_recorded(&app, &scene_id, &run_id, call, lease).await
-                            }
+                            };
+                            hooks::tool_settled(&app,&scene_id,&run_id,&tool_name,&result);
+                            result
                         }
                     },
                 ).await?;
@@ -2580,6 +2601,7 @@ fn start_run_with_extensions(
             tokio::select! {biased; _=receiver=>None, _=extension_chat_region::canceled(&app2, chat_region.as_ref())=>None, result=work=>Some(result)}
         };
         let Some(result) = result else {
+            hooks::forget_run(&app2,&run_id);
             run_tools.abort().await;
             let host = app2.state::<Host>();
             if let Ok(mut engine) = host.lock() {
@@ -2622,6 +2644,7 @@ fn start_run_with_extensions(
                 Err(error) => engine.store.fail_run(&scene_id, &run_id, error),
             };
             if let Ok(snapshot) = updated {
+                hooks::run_finished(&app2,&scene_id,&run_id,&snapshot);
                 publish(&app2, &snapshot);
                 host.memory.wake.notify_one();
                 if plugin_origin.is_none() {
@@ -2974,6 +2997,9 @@ fn main() {
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, shortcut, event| {
+                    if hooks::route_shortcut(app, shortcut, event.state() == ShortcutState::Pressed) {
+                        return;
+                    }
                     if event.state() == ShortcutState::Pressed
                         && capture_shortcut_host::route_pressed(app, shortcut)
                     {
@@ -3016,7 +3042,15 @@ fn main() {
             let handlers: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![
                 recording_wayland_host_prepare,
                 get_snapshot,
+                hooks::get_hooks,
+                hooks::save_hook,
+                hooks::remove_hook,
+                hooks::check_hook,
+                hooks::run_hook,
+                hooks::cancel_hook,
+                hooks::edit_hook_shortcut,
                 app_control_host::register_control_renderer,
+                app_control_host::confirm_control_renderer,
                 app_control_host::claim_control_request,
                 app_control_host::complete_control_request,
                 capture_shortcut_host::get_capture_shortcut,
@@ -3232,6 +3266,7 @@ fn main() {
                 }
             }
             if window.label() == "settings" && matches!(event, tauri::WindowEvent::Destroyed) {
+                hooks::window_closed(window.app_handle(), window.label());
                 storage_host::invalidate_owner(window.app_handle());
             }
             let wayland_shortcut = {
@@ -3478,6 +3513,11 @@ fn main() {
                 });
             }
             recording_audio_host::initialize(app.handle(), &app.state::<Host>().root)?;
+            {
+                let host = app.state::<Host>();
+                let snapshot = host.plugins.lock().map_err(|_| "插件状态不可用")?.store.snapshot()?;
+                hooks::Runtime::initialize(app.handle(), &host.root, &snapshot)?;
+            }
             use tauri::{
                 menu::{Menu, MenuItem},
                 tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
@@ -3604,6 +3644,7 @@ fn main() {
     }
     if let Ok(application) = application {
         application.run(move |app, event| {
+            if matches!(event,tauri::RunEvent::Ready){hooks::ready(app);}
             #[cfg(target_os = "linux")]
             if matches!(event, tauri::RunEvent::Ready) {
                 if startup_capture.take_ready(&event) { start_capture(app); }

@@ -233,10 +233,18 @@ impl PortalSession {
         self.input("NotifyPointerMotionAbsolute",&(&self.path,Options::new(),self.node,x,y),allowed)
     }
     pub(crate) fn button(&self,pressed:bool,allowed:&mut impl FnMut()->bool)->Result<(),String>{
-        self.input("NotifyPointerButton",&(&self.path,Options::new(),272i32,u32::from(pressed)),allowed)
+        self.button_code(272,pressed,allowed)
+    }
+    pub(crate) fn button_code(&self,code:i32,pressed:bool,allowed:&mut impl FnMut()->bool)->Result<(),String>{
+        if !(272..=274).contains(&code){return Err("鼠标按键无效".into())}
+        self.input("NotifyPointerButton",&(&self.path,Options::new(),code,u32::from(pressed)),allowed)
     }
     pub(crate) fn scroll(&self,steps:i32,allowed:&mut impl FnMut()->bool)->Result<(),String>{
-        self.input("NotifyPointerAxisDiscrete",&(&self.path,Options::new(),0u32,steps),allowed)
+        self.scroll_axis(0,steps,allowed)
+    }
+    pub(crate) fn scroll_axis(&self,axis:u32,steps:i32,allowed:&mut impl FnMut()->bool)->Result<(),String>{
+        if axis>1{return Err("滚动轴无效".into())}
+        self.input("NotifyPointerAxisDiscrete",&(&self.path,Options::new(),axis,steps),allowed)
     }
     pub(crate) fn keysym(&self,key:i32,pressed:bool,allowed:&mut impl FnMut()->bool)->Result<(),String>{
         self.input("NotifyKeyboardKeysym",&(&self.path,Options::new(),key,u32::from(pressed)),allowed)

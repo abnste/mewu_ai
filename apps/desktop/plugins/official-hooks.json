@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "mewu.hooks",
+  "version": "1.0.0",
+  "name": "事件触发器",
+  "description": "定时、提示词、回复、快捷键与事件触发",
+  "publisher": "Mewu",
+  "license": "MPL-2.0",
+  "hostApi": 1,
+  "tags": ["automation", "system"],
+  "contributions": [
+    { "id": "hooks", "title": "Hooks", "kind": "app.hooks" }
+  ]
+}

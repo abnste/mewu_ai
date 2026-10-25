@@ -231,7 +231,7 @@ const normalize = value => JSON.parse(JSON.stringify(value));
   const dialog = await raw('./components/SettingsDialog.tsx'), capture = await raw('./components/CaptureSettings.tsx'), facts = await raw('./components/SettingsFacts.tsx');
   const parsed = parse(dialog, { sourceType: 'module', plugins: ['typescript', 'jsx'] });
   const labels = []; function visit(value) { if (!value || typeof value !== 'object') return; if (value.type === 'ObjectExpression') { const id = value.properties.find(p => p.key?.name === 'id')?.value; const label = value.properties.find(p => p.key?.name === 'label')?.value; const literal = label?.type === 'CallExpression' && label.callee?.name === 't' ? label.arguments[0] : label; if (literal?.type === 'StringLiteral' && id) labels.push(literal.value); } for (const child of Object.values(value)) { if (Array.isArray(child)) child.forEach(visit); else if (child && typeof child === 'object') visit(child); } } visit(parsed);
-  assert.deepEqual(labels, ['通用', '截图与录屏', 'Agent 与连接', '插件', '数据']);
+  assert.deepEqual(labels, ['通用', '截图与录屏', 'Agent 与连接', 'Hooks', '插件', '数据']);
   assert.ok(dialog.includes('class="settings-nav-about"'));
   assert.ok(dialog.includes("onClick={() => setTab('about')}"));
   assert.ok(dialog.includes("t('检测到新版本')"));
@@ -245,10 +245,11 @@ const normalize = value => JSON.parse(JSON.stringify(value));
   let handler;
   function visit(node) { if (!node || typeof node !== 'object') return; if (node.type === 'VariableDeclarator' && node.id?.name === 'keyboard') handler = node.init; for (const value of Object.values(node)) Array.isArray(value) ? value.forEach(visit) : visit(value); }
   visit(ast); assert.ok(handler);
-  class Element { constructor(selector) { this.selector = selector; } closest(selector) { return selector === this.selector ? this : null; } }
+  class Element { constructor(selector) { this.selector = selector; } closest(selector) { return selector.split(',').includes(this.selector) ? this : null; } }
   let closes = 0;
   const keyboard = new Function('Element', 'props', 'nativeSelectOwnsEscape', `${ts(`const keyboard = ${source.slice(handler.start, handler.end)};`)};return keyboard;`)(Element, { onClose: () => closes++ }, nativeSelectOwnsEscape);
-  for (const target of [new Element('[data-settings-inner-dialog]'), new Element('.capture-shortcut-field input')]) keyboard({ key: 'Escape', target });
+  for (const target of [new Element('[data-settings-inner-dialog]'), new Element('.capture-shortcut-field input'), new Element('[data-hook-shortcut]')]) keyboard({ key: 'Escape', target });
+  keyboard({ key: 'Escape', isComposing: true }); assert.equal(closes, 0);
   keyboard({ key: 'Escape', defaultPrevented: true }); assert.equal(closes, 0);
   keyboard({ key: 'Escape', target: new Element(''), stopPropagation() {} }); assert.equal(closes, 1);
   const facts = await raw('./components/SettingsFacts.tsx');

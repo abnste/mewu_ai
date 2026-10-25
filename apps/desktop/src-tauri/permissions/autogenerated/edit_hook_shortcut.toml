@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-edit-hook-shortcut"
+description = "Enables the edit_hook_shortcut command without any pre-configured scope."
+commands.allow = ["edit_hook_shortcut"]
+
+[[permission]]
+identifier = "deny-edit-hook-shortcut"
+description = "Denies the edit_hook_shortcut command without any pre-configured scope."
+commands.deny = ["edit_hook_shortcut"]

@@ -5,19 +5,19 @@
   
   <p>开源桌面应用，让截图、对话、标注与可交互的 AI 结果共处同一空间。</p>
   <p>
-    <a href="https://github.com/abnste/mewu_ai/releases/tag/v1.0.5"><img src="https://img.shields.io/badge/正式版-1.0.5-7C6CF0?style=flat-square" alt="1.0.5 正式版" /></a>
+    <a href="https://github.com/abnste/mewu_ai/releases/tag/v1.0.7"><img src="https://img.shields.io/badge/正式版-1.0.7-7C6CF0?style=flat-square" alt="1.0.7 正式版" /></a>
     <img src="https://img.shields.io/badge/Windows-x64-0078D4?style=flat-square" alt="Windows x64" />
     <img src="https://img.shields.io/badge/macOS-ARM64-555555?style=flat-square" alt="macOS ARM64" />
     <img src="https://img.shields.io/badge/Linux-x64-E95420?style=flat-square" alt="Linux x64" />
     <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MPL--2.0-blue?style=flat-square" alt="MPL-2.0" /></a>
   </p>
   <p>
-    <a href="https://github.com/abnste/mewu_ai/releases/download/v1.0.5/MewuAI-Setup-1.0.5-win-x64.exe"><strong>Windows 安装版</strong></a>
-    &nbsp;·&nbsp; <a href="https://github.com/abnste/mewu_ai/releases/download/v1.0.5/MewuAI-Portable-1.0.5-win-x64.zip">Windows 便携版</a>
-    &nbsp;·&nbsp; <a href="https://github.com/abnste/mewu_ai/releases/download/v1.0.5/MewuAI-1.0.5-mac-arm64.dmg">macOS ARM64</a>
-    &nbsp;·&nbsp; <a href="https://github.com/abnste/mewu_ai/releases/download/v1.0.5/MewuAI-1.0.5-linux-x64.AppImage">Linux x64</a>
+    <a href="https://github.com/abnste/mewu_ai/releases/download/v1.0.7/MewuAI-Setup-1.0.7-win-x64.exe"><strong>Windows 安装版</strong></a>
+    &nbsp;·&nbsp; <a href="https://github.com/abnste/mewu_ai/releases/download/v1.0.7/MewuAI-Portable-1.0.7-win-x64.zip">Windows 便携版</a>
+    &nbsp;·&nbsp; <a href="https://github.com/abnste/mewu_ai/releases/download/v1.0.7/MewuAI-1.0.7-mac-arm64.dmg">macOS ARM64</a>
+    &nbsp;·&nbsp; <a href="https://github.com/abnste/mewu_ai/releases/download/v1.0.7/MewuAI-1.0.7-linux-x64.AppImage">Linux x64</a>
   </p>
-  <p><strong>简体中文</strong> · <a href="./README.md">English</a> · <a href="./docs/release-notes-1.0.5.md">更新说明</a> · <a href="https://github.com/abnste/mewu_ai/issues">问题反馈</a></p>
+  <p><strong>简体中文</strong> · <a href="./README.md">English</a> · <a href="./docs/release-notes-1.0.7.md">更新说明</a> · <a href="https://github.com/abnste/mewu_ai/issues">问题反馈</a></p>
 </div>
 
 **喵呜AI（MewuAI）是一款跨 Windows、macOS 和 Linux 的开源截图与 AI 空间应用**。快捷键唤起的截图界面本身就是空间：框选、绘制、贴图、添加文件，再通过对话条提问。截图、视频与生成的 HTML/SVG/Canvas 交互结果可以作为对象放在同一界面中使用。
@@ -28,10 +28,10 @@
 | 核心操作 | 截图 → 标注、复制、保存；或引用内容 → 向 AI 提问 → 使用生成结果 |
 | 未配置 AI | 仍可截图、使用内置绘制和录屏；配置模型或显式绑定独立 Agent 提供方后才出现对话条 |
 | AI 与插件 | 自有模型连接、经权限控制的可执行插件、可独立选择的 Agent 和记忆提供方 |
-| 官方来源 | [1.0.5 正式版](https://github.com/abnste/mewu_ai/releases/tag/v1.0.5) · [GitHub 社区插件市场](https://github.com/abnste/mewu-plugins) |
+| 官方来源 | [1.0.7 正式版](https://github.com/abnste/mewu_ai/releases/tag/v1.0.7) · [GitHub 社区插件市场](https://github.com/abnste/mewu-plugins) |
 | 开源协议 | [MPL-2.0](./LICENSE)；[第三方许可全文](./apps/desktop/THIRD-PARTY-NOTICES) |
 
-**MewuAI 1.0.5** 为独立区域操作插件补齐 macOS 与 GNOME Wayland 后端，将 Hindsight 完整迁入独立插件，并改进选区确认、工具包拖入、视频重播与翻译进度。详见[更新说明](./docs/release-notes-1.0.5.md)。
+**MewuAI 1.0.7** 为独立区域操作插件补齐 macOS 与 GNOME Wayland 后端，将 Hindsight 完整迁入独立插件，并改进选区确认、工具包拖入、视频重播与翻译进度。详见[更新说明](./docs/release-notes-1.0.7.md)。
 
 MewuAI 维护于 **[master](https://github.com/abnste/mewu_ai/tree/master)**；原 Windows **.NET/WPF 0.7.x** 源码与文档保留在 **[dotnet](https://github.com/abnste/mewu_ai/tree/dotnet)**。新版使用 **Rust + Tauri 2 + Solid/TypeScript + SQLite** 及系统 WebView，不使用 Electron。
 
@@ -40,6 +40,8 @@ MewuAI 维护于 **[master](https://github.com/abnste/mewu_ai/tree/master)**；�
   <br /><sub>旧版使用的 AI 生成概念封面；下方图库为 .NET 旧版历史演示，不代表 1.0 的当前界面。</sub>
 </p>
 
+
+默认启用的原生 **[Hooks 事件触发器](./docs/hooks.md)** 支持 Cron、提示词、AI 回复、全局快捷键及生命周期/自定义事件，可串联提示词注入、MCP、命令和键鼠操作；每条规则独立管理。
 
 ## 功能
 

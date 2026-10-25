@@ -14,6 +14,7 @@ import ToolsPanel, { type McpSettingsCommand } from './ToolsPanel';
 import PluginsPanel from './PluginsPanel';
 import ConnectionsPanel from './ConnectionsPanel';
 import CaptureSettings from './CaptureSettings';
+import HooksSettings from './HooksSettings';
 import GeneralSettings from './GeneralSettings';
 import { AboutSettings, createSettingsInformation, DataSettings } from './SettingsFacts';
 import { createAppUpdateSettings } from './AppUpdateSettings';
@@ -23,7 +24,7 @@ import { t } from '../i18n';
 import { nativeSelectOwnsEscape } from '../native-select-escape';
 import '../settings-sections.css';
 
-export type SettingsTab = 'general' | 'capture' | 'agent' | 'plugins' | 'data' | 'about' | `extension:${string}`;
+export type SettingsTab = 'general' | 'capture' | 'agent' | 'hooks' | 'plugins' | 'data' | 'about' | `extension:${string}`;
 interface Props {
   snapshot: Snapshot;
   initialTab: SettingsTab;
@@ -62,6 +63,7 @@ export default function SettingsDialog(props: Props) {
   // This page belongs to the native Agent plugin. Independent engines retain
   // their own contributed pages, but cannot revive a disabled native page.
   const agentEnabled = hostAgentVisible;
+  const hooksEnabled = createMemo(() => optional.installed().plugins.some(plugin => plugin.state === 'enabled' && !plugin.error && plugin.manifest.contributions.some(c => c.kind === 'app.hooks') && plugin.source.type === 'official'));
   const anyAgentEnabled = () => hostAgentVisible() || externalAgentVisible();
   let extensionDisposed = false, extensionEvents = 0, stopExtensions: (() => void) | undefined;
   onMount(async () => {
@@ -79,6 +81,8 @@ export default function SettingsDialog(props: Props) {
   });
   onCleanup(() => { extensionDisposed = true; stopExtensions?.(); });
   const [tab, setTab] = createSignal(props.initialTab);
+  const [hooksVisited, setHooksVisited] = createSignal(props.initialTab === 'hooks');
+  createEffect(() => { if (tab() === 'hooks') setHooksVisited(true); if (tab() === 'hooks' && optional.installed().revision >= 0 && !hooksEnabled()) setTab('plugins'); });
   const activePluginPage = createMemo(() => pluginPages().find(choice => tab() === `extension:${extensionServiceKey(choice)}`));
   createEffect(() => { if (extensionDiscoveryReady() && tab().startsWith('extension:') && !activePluginPage()) setTab('plugins'); });
   const facts = createSettingsInformation(() => tab() === 'general' || tab() === 'capture' || tab() === 'data' || tab() === 'about');
@@ -98,15 +102,16 @@ export default function SettingsDialog(props: Props) {
     { id: 'general' as const, label: '通用', icon: Settings2 },
     { id: 'capture' as const, label: '截图与录屏', icon: ScanLine },
     { id: 'agent' as const, label: 'Agent 与连接', icon: UserRound },
+    { id: 'hooks' as const, label: 'Hooks', icon: Wrench },
     { id: 'plugins' as const, label: '插件', icon: Puzzle },
     { id: 'data' as const, label: '数据', icon: Database },
   ];
   onMount(() => closeButton.focus());
   const keyboard = (event: KeyboardEvent) => {
-    if (event.defaultPrevented || event.target instanceof Element && event.target.closest('[data-settings-inner-dialog]')) return;
+    if (event.defaultPrevented || event.isComposing || event.target instanceof Element && event.target.closest('[data-settings-inner-dialog]')) return;
     // The recorder owns Escape, including IME and lease admission. Do not let
     // the dialog's document listener race Solid's delegated field events.
-    if (event.key === 'Escape' && event.target instanceof Element && event.target.closest('.capture-shortcut-field input')) return;
+    if (event.key === 'Escape' && event.target instanceof Element && event.target.closest('.capture-shortcut-field input,[data-hook-shortcut]')) return;
     if (nativeSelectOwnsEscape(event)) return;
     if (event.key === 'Escape') { event.stopPropagation(); props.onClose(); }
     if (event.key !== 'Tab') return;
@@ -120,7 +125,7 @@ export default function SettingsDialog(props: Props) {
     <section ref={dialog} class="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title">
       <header class="settings-header" data-tauri-drag-region={props.draggable ? true : undefined}><h1 id="settings-title" data-tauri-drag-region={props.draggable ? true : undefined}>{t("设置")}</h1><button ref={closeButton} class="icon-button" title={t("关闭")} aria-label={t("关闭设置")} onClick={props.onClose}><X size={18} /></button></header>
       <div class="settings-body">
-        <nav class="settings-nav" aria-label={t("设置分类")}><div class="settings-nav-pages"><For each={nav.filter(entry => entry.id !== 'agent' || agentEnabled())}>{entry => <button classList={{ selected: tab() === entry.id }} onClick={() => setTab(entry.id)}><entry.icon size={16} /><span>{t(entry.label)}</span></button>}</For><For each={pluginPages()}>{choice => <button classList={{ selected: tab() === `extension:${extensionServiceKey(choice)}` }} onClick={() => setTab(`extension:${extensionServiceKey(choice)}`)}><PluginIcon plugin={choice.record.manifest} size={16}/><span>{choice.service.title}</span></button>}</For></div><button class="settings-nav-about" classList={{ selected: tab() === 'about' }} onClick={() => setTab('about')}><Info size={16}/><span>{t('关于')}</span><Show when={updater.status()?.availableVersion}><small class="settings-update-badge">{t('检测到新版本')}</small></Show></button></nav>
+        <nav class="settings-nav" aria-label={t("设置分类")}><div class="settings-nav-pages"><For each={nav.filter(entry => (entry.id !== 'agent' || agentEnabled()) && (entry.id !== 'hooks' || hooksEnabled()))}>{entry => <button classList={{ selected: tab() === entry.id }} onClick={() => setTab(entry.id)}><entry.icon size={16} /><span>{t(entry.label)}</span></button>}</For><For each={pluginPages()}>{choice => <button classList={{ selected: tab() === `extension:${extensionServiceKey(choice)}` }} onClick={() => setTab(`extension:${extensionServiceKey(choice)}`)}><PluginIcon plugin={choice.record.manifest} size={16}/><span>{choice.service.title}</span></button>}</For></div><button class="settings-nav-about" classList={{ selected: tab() === 'about' }} onClick={() => setTab('about')}><Info size={16}/><span>{t('关于')}</span><Show when={updater.status()?.availableVersion}><small class="settings-update-badge">{t('检测到新版本')}</small></Show></button></nav>
         <div class="settings-content">
           <div hidden={tab() !== 'general'}><GeneralSettings active={tab() === 'general'} agentEnabled={anyAgentEnabled()} preferences={props.preferences} onPreferences={props.onPreferences} platform={facts.info()?.platform} /></div>
           <div hidden={tab() !== 'capture'}><CaptureSettings active={tab() === 'capture'} preferences={props.preferences} onPreferences={props.onPreferences} platform={facts.info()?.platform} /></div>
@@ -133,6 +138,7 @@ export default function SettingsDialog(props: Props) {
             <div hidden={agentPane() !== 'tools'}><Show when={agentEnabled()}><ToolsPanel snapshot={props.snapshot} agentId={agentId()} onAgent={setAgentId} onDiscover={props.onDiscoverMcpServer} onCommand={props.onMcpCommand} /></Show></div>
           </div></Show>
           <div hidden={tab() !== 'plugins'}><PluginsPanel active={tab() === 'plugins'} /></div>
+          <Show when={hooksEnabled() && hooksVisited()}><div hidden={tab() !== 'hooks'}><HooksSettings active={tab() === 'hooks'} /></div></Show>
           <div hidden={tab() !== 'data'}><DataSettings data={facts} active={tab() === 'data'} /></div>
           <div hidden={tab() !== 'about'}><AboutSettings data={facts} active={tab() === 'about'} updater={updater} /></div>
           <Show when={activePluginPage()} keyed>{choice => <ExtensionSettings choice={choice} onEscape={props.onClose}/>}</Show>

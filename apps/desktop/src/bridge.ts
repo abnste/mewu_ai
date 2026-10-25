@@ -24,6 +24,7 @@ export async function registerControlRenderer(): Promise<{ rendererId: string }>
   if (!native) throw new Error('此操作需要桌面应用');
   return invoke('register_control_renderer');
 }
+export async function confirmControlRenderer(rendererId:string):Promise<void>{if(!native)throw new Error('此操作需要桌面应用');await invoke('confirm_control_renderer',{rendererId});}
 export async function claimControlRequest(rendererId: string, id: string, nonce: string): Promise<void> {
   if (!native) throw new Error('此操作需要桌面应用');
   await invoke('claim_control_request', { rendererId, id, nonce });
@@ -801,8 +802,8 @@ export async function deleteConnectionProfile(id: string, expectedRevision: numb
   return publish();
 }
 
-export async function sendMessage(sceneId: string, visualAnnotations?: VisualAnnotationGrant, regionId?: string): Promise<Snapshot> {
-  if (native) return invokeSnapshot('send_message', { sceneId, visualAnnotations: visualAnnotations ?? null, regionId: regionId ?? null });
+export async function sendMessage(sceneId: string, visualAnnotations?: VisualAnnotationGrant, regionId?: string, automationOrigin?: string): Promise<Snapshot> {
+  if (native) return invokeSnapshot('send_message', { sceneId, visualAnnotations: visualAnnotations ?? null, regionId: regionId ?? null, ...(automationOrigin===undefined?{}:{automationOrigin}) });
   throw new Error('浏览器预览不连接模型，请在桌面应用发送');
 }
 export async function cancelRun(sceneId: string, expectedRunId: string): Promise<Snapshot> {

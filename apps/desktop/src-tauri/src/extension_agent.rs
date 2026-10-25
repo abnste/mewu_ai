@@ -9,6 +9,7 @@ pub(crate) async fn start_external_run(
     scene_id: String,
     provider: crate::extension_host::ExternalAgentProvider,
     prepared_region: Option<crate::extension_chat_region::PreparedChatRegion>,
+    hook_context: crate::hooks::PromptContext,
 ) -> Result<crate::HostSnapshot, String> {
     let host = app.state::<crate::Host>();
     let scene = {
@@ -51,7 +52,8 @@ pub(crate) async fn start_external_run(
         } else {
             None
         };
-        let context = engine
+        hook_context.check()?;
+        let mut context = engine
             .store
             .begin_external_run(
                 &scene_id,
@@ -63,6 +65,8 @@ pub(crate) async fn start_external_run(
                 },
             )
             .map_err(|e| e.to_string())?;
+        if !hook_context.instructions.is_empty(){context.agent.instructions.push_str("\n\n");context.agent.instructions.push_str(&hook_context.instructions.join("\n\n"));}
+        crate::hooks::begin_run(&app,&scene_id,&context.run_id,&hook_context);
         crate::app_control_host::begin_run_stream(&app, &scene_id, &context.run_id);
         let (cancel, receiver) = tokio::sync::oneshot::channel();
         engine.runs.insert(context.run_id.clone(), cancel);
@@ -160,6 +164,7 @@ pub(crate) async fn start_external_run(
             engine.runs.remove(&run_id);
             engine.agent_runs.remove(&run_id);
             if !authorized || result.is_none() {
+                crate::hooks::forget_run(&app2,&run_id);
                 if engine.store.run_is_active(&scene_id, &run_id) {
                     if let Ok(snapshot) = engine.store.cancel_run(&scene_id) {
                         crate::publish(&app2, &snapshot);
@@ -181,6 +186,7 @@ pub(crate) async fn start_external_run(
                     Err(error) => engine.store.fail_run(&scene_id, &run_id, error),
                 };
                 if let Ok(snapshot) = updated {
+                    crate::hooks::run_finished(&app2,&scene_id,&run_id,&snapshot);
                     crate::publish(&app2, &snapshot);
                     answer
                 } else {

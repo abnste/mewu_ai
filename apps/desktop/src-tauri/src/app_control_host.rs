@@ -42,9 +42,15 @@ struct Operation {
     fingerprint: [u8; 32], nonce: String, renderer_id: String,
     plugin_revision: u64, phase: Phase, since: Instant,
     result: Option<Result<Value, ControlError>>,
+    native_authority: Option<NativeAuthority>,
 }
+/// An in-process capability, never deserializable from CLI, IPC or plugin data.
+/// Native automation uses the same renderer flush/claim/receipt lane as CLI,
+/// while retaining its own revocation authority and no dependency on CLI state.
+#[derive(Clone)]
+struct NativeAuthority(Arc<dyn Fn()->Result<(),String>+Send+Sync>);
 #[derive(Default)]
-struct Inner { renderer_id: Option<String>, operations: HashMap<String, Operation> }
+struct Inner { renderer_id: Option<String>, ready:bool, operations: HashMap<String, Operation> }
 #[derive(Default)]
 pub(crate) struct Runtime {
     revision: AtomicU64, stopped: AtomicBool,
@@ -152,7 +158,7 @@ pub(crate) fn reconcile(app: &AppHandle, snapshot: &crate::plugins::PluginSnapsh
     if previous != revision {
         if let Ok(mut streams) = runtime.streams.lock() { streams.clear(); }
         if let Ok(mut inner) = runtime.inner.lock() {
-            for operation in inner.operations.values_mut().filter(|op| op.phase == Phase::Queued) {
+            for operation in inner.operations.values_mut().filter(|op| op.phase == Phase::Queued && op.native_authority.is_none()) {
                 operation.phase = Phase::Complete;
                 operation.result = Some(Err(error(ErrorCode::Disabled, "命令行插件已变更，操作未执行")));
             }
@@ -228,6 +234,7 @@ pub(crate) fn renderer_invalidated(app: &AppHandle) {
     if let Some(runtime) = app.try_state::<Runtime>() {
         if let Ok(mut inner) = runtime.inner.lock() {
             inner.renderer_id = None;
+            inner.ready = false;
             for operation in inner.operations.values_mut().filter(|op| op.phase != Phase::Complete) {
                 let failure = if operation.phase == Phase::Queued { error(ErrorCode::Unavailable, "空间已重载，操作未执行") }
                     else { ControlError::unknown(ErrorCode::Unavailable, "空间已重载，请检查操作结果") };
@@ -247,15 +254,19 @@ pub(crate) fn register_control_renderer(app: AppHandle, window: WebviewWindow) -
     app.state::<Runtime>().inner.lock().map_err(|_| "控制状态不可用")?.renderer_id = Some(id.clone());
     Ok(json!({"rendererId":id}))
 }
+pub(crate) fn renderer_ready(app:&AppHandle)->bool{app.try_state::<Runtime>().is_some_and(|r|r.inner.lock().is_ok_and(|inner|inner.renderer_id.is_some()&&inner.ready))}
+#[tauri::command]
+pub(crate) fn confirm_control_renderer(app:AppHandle,window:WebviewWindow,renderer_id:String)->Result<(),String>{space(&window)?;{let runtime=app.state::<Runtime>();let mut inner=runtime.inner.lock().map_err(|_|"控制状态不可用")?;if inner.renderer_id.as_deref()!=Some(&renderer_id){return Err("空间已变化".into())}inner.ready=true;}crate::hooks::ready(&app);Ok(())}
 #[tauri::command]
 pub(crate) fn claim_control_request(app: AppHandle, window: WebviewWindow, renderer_id: String, id: String, nonce: String) -> Result<(), String> {
     space(&window)?;
-    let revision = current_revision(&app).map_err(|_| "命令行插件不可用")?;
+    let revision = current_revision(&app).ok();
     let runtime = app.state::<Runtime>();
     let mut inner = runtime.inner.lock().map_err(|_| "控制状态不可用")?;
     if inner.renderer_id.as_deref() != Some(&renderer_id) { return Err("空间已变化".into()); }
     let op = inner.operations.get_mut(&id).ok_or("控制请求已结束")?;
-    if op.phase != Phase::Queued || op.nonce != nonce || op.renderer_id != renderer_id || op.plugin_revision != revision || op.since.elapsed() >= Duration::from_secs(30) {
+    let authorized=if let Some(authority)=&op.native_authority{(authority.0)().is_ok()}else{revision==Some(op.plugin_revision)};
+    if op.phase != Phase::Queued || op.nonce != nonce || op.renderer_id != renderer_id || !authorized || op.since.elapsed() >= Duration::from_secs(30) {
         return Err("控制请求已过期或撤销".into());
     }
     op.phase = Phase::Claimed;
@@ -377,6 +388,9 @@ fn expire(operation: &mut Operation) {
     }
 }
 fn enqueue(app: &AppHandle, mut request: Request, revision: u64) -> Result<Value, ControlError> {
+    enqueue_authorized(app,request,revision,None)
+}
+fn enqueue_authorized(app:&AppHandle,mut request:Request,revision:u64,native_authority:Option<NativeAuthority>)->Result<Value,ControlError>{
     let fingerprint: [u8;32] = Sha256::digest(serde_json::to_vec(&request).map_err(|_|error(ErrorCode::InvalidRequest,"请求无效"))?).into();
     let context: Context = match request.params.as_object_mut().and_then(|params|params.remove("context")) { Some(context)=>params(context)?,None=>Context::default() };
     let capacity = MAX_PENDING + if urgent(&request.method, &request.params) { MAX_URGENT } else { 0 };
@@ -396,7 +410,7 @@ fn enqueue(app: &AppHandle, mut request: Request, revision: u64) -> Result<Value
         }
         let renderer_id = inner.renderer_id.clone().ok_or_else(||error(ErrorCode::Unavailable,"Mewu 界面尚未就绪"))?;
         let nonce = uuid::Uuid::new_v4().to_string();
-        inner.operations.insert(request.id.clone(),Operation{fingerprint,nonce:nonce.clone(),renderer_id,plugin_revision:revision,phase:Phase::Queued,since:Instant::now(),result:None});
+        inner.operations.insert(request.id.clone(),Operation{fingerprint,nonce:nonce.clone(),renderer_id,plugin_revision:revision,phase:Phase::Queued,since:Instant::now(),result:None,native_authority});
         Event{id:request.id.clone(),nonce,method:request.method,params:request.params,scene_id:context.scene_id,revision:context.revision}
     };
     if app.emit_to("space","mewu-control-request",event).is_err() {
@@ -404,6 +418,23 @@ fn enqueue(app: &AppHandle, mut request: Request, revision: u64) -> Result<Value
         return Err(error(ErrorCode::Unavailable,"空间未接收请求"));
     }
     Ok(json!({"operationId":request.id,"status":"queued"}))
+}
+pub(crate) async fn execute_native(app:&AppHandle,method:&str,params:Value,authority:Arc<dyn Fn()->Result<(),String>+Send+Sync>,deadline:Instant)->Result<Value,String>{
+    (authority)()?;
+    if !METHODS.contains(&method){return Err("不支持此 Mewu 操作".into())}
+    let id=format!("native-{}",uuid::Uuid::new_v4());let request=Request::new(&id,method,params);request.validate().map_err(|_|"操作参数无效")?;
+    enqueue_authorized(app,request,0,Some(NativeAuthority(authority.clone()))).map_err(|e|e.message)?;
+    loop {
+        let stopped=(authority)().err().or_else(||(Instant::now()>=deadline).then(||"操作等待超时".to_string()));
+        let terminal={let runtime=app.state::<Runtime>();let mut inner=runtime.inner.lock().map_err(|_|"操作状态不可用")?;let op=inner.operations.get_mut(&id).ok_or("操作记录已过期")?;expire(op);
+            if op.phase==Phase::Complete{op.result.clone()}
+            else if let Some(reason)=stopped{
+                let failure=if op.phase==Phase::Queued{ControlError::not_sent(ErrorCode::Disabled,reason)}else{ControlError::unknown(ErrorCode::Unavailable,"操作已开始，结果未确认，请检查当前状态")};
+                op.result=Some(Err(failure));op.phase=Phase::Complete;op.result.clone()
+            }else{None}};
+        if let Some(result)=terminal{return result.map_err(|e|e.message)}
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
 }
 fn urgent(method: &str, params: &Value) -> bool {
     let Some(fields) = params.as_object() else { return false; };
@@ -447,7 +478,7 @@ mod tests {
     #[test]
     fn pending_timeout_is_not_sent_but_claimed_timeout_is_unknown_and_never_requeued() {
         let mut op = Operation { fingerprint: [0;32], nonce: "n".into(), renderer_id: "r".into(), plugin_revision: 1,
-            phase: Phase::Queued, since: Instant::now() - Duration::from_secs(31), result: None };
+            phase: Phase::Queued, since: Instant::now() - Duration::from_secs(31), result: None, native_authority:None };
         expire(&mut op);
         assert!(op.phase == Phase::Complete);
         assert_eq!(op.result.as_ref().unwrap().as_ref().unwrap_err().outcome, ExecutionOutcome::NotSent);

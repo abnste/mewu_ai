@@ -7,7 +7,7 @@ import { cachedExtensionIcon, displayIcon, ensureExtensionIcons } from '../exten
 import './plugin-icon.css';
 
 type Identity = Pick<ExtensionManifest, 'id' | 'name' | 'tags' | 'icon'> & Partial<Pick<ExtensionCatalogEntry, 'version' | 'sha256'>>;
-const builtins = { 'app.cli': TerminalSquare, 'agent.runtime': Bot, 'space.blackboard': Presentation, 'selection.drawing-tools': Brush,
+const builtins = { 'app.hooks': Workflow, 'app.cli': TerminalSquare, 'agent.runtime': Bot, 'space.blackboard': Presentation, 'selection.drawing-tools': Brush,
   'selection.ocr': ScanText, 'selection.scroll': GalleryVerticalEnd, 'selection.translation': Languages, 'selection.pin': Pin,
   'selection.recording': Video, 'agent.visual-annotations': Captions, 'input.speech-to-text': Mic, 'memory.provider': BrainCircuit };
 export default function PluginIcon(props: { plugin: Identity; kind?: PluginContribution['kind']; size?: number; sha256?: string; source?: ExtensionSource }) {

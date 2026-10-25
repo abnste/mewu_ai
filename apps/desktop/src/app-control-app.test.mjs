@@ -278,13 +278,14 @@ test('actual mount installs the space listener before native registration and bi
   Object.assign(scope.bridge, {
     native: true,
     registerControlRenderer: async () => { f.calls.push(['register']); return { rendererId: 'renderer' }; },
+    confirmControlRenderer: async id => { f.calls.push(['ready', id]); },
     claimControlRequest: async (...args) => { f.calls.push(['claim', ...args]); },
     completeControlRequest: async (...args) => { f.calls.push(['complete', ...args]); },
   });
   vm.runInContext(controlMount(), scope); await scope.connectControl();
-  assert.deepEqual(plain(f.calls), [['listen'], ['register']]);
+  assert.deepEqual(plain(f.calls), [['listen'], ['register'], ['ready', 'renderer']]);
   await actions.claim({ id: 'op', nonce: 'secret' }); await actions.complete({ id: 'op', nonce: 'secret', result: {} });
-  assert.deepEqual(plain(f.calls.slice(2)), [['claim', 'renderer', 'op', 'secret'], ['complete', 'renderer', { id: 'op', nonce: 'secret', result: {} }]]);
+  assert.deepEqual(plain(f.calls.slice(3)), [['claim', 'renderer', 'op', 'secret'], ['complete', 'renderer', { id: 'op', nonce: 'secret', result: {} }]]);
   scope.stopControlEvents(); assert.equal(stops, 1);
 });
 

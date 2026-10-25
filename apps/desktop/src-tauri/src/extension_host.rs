@@ -2445,6 +2445,10 @@ fn bridge_impl(
                 }] = Value::String(text.into());
                 crate::emit_run_event(app, event).map_err(|_| "无法发送 Agent 流事件")?;
             }
+            if !matches!(name,"agent.text"|"agent.reasoning"){
+                context.check(app)?;
+                crate::hooks::plugin_event(app,&context.record.manifest.id,context.record.revision,name,context.scene_id.as_deref(),&context.run_id,params.get("data").cloned().unwrap_or(Value::Null));
+            }
             app.emit("extension-event",json!({"pluginId":context.record.manifest.id,"runId":context.run_id,"name":string(&params,"name")?,"data":params.get("data")})).map_err(|_|"无法发送插件事件")?;
             Ok(Value::Null)
         }

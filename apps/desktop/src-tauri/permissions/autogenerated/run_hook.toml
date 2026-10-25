@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-run-hook"
+description = "Enables the run_hook command without any pre-configured scope."
+commands.allow = ["run_hook"]
+
+[[permission]]
+identifier = "deny-run-hook"
+description = "Denies the run_hook command without any pre-configured scope."
+commands.deny = ["run_hook"]

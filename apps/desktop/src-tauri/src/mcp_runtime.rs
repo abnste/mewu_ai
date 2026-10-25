@@ -864,7 +864,10 @@ pub struct McpSession {
 
 // Shared transport only: no Agent or MCP wire messages are interpreted here.
 async fn start_stdio(config: &McpCommand, environment: Option<&std::collections::BTreeMap<String,String>>) -> Result<(ProcessGuard, BoundedRead<PipeReader>, PipeWriter), String> {
-    let (executable, cwd) = validate_command(config)?;
+    let (executable,cwd)=validate_command(config)?;
+    start_stdio_prepared(executable, &config.args, cwd, environment, None, false).await
+}
+async fn start_stdio_prepared(executable:PathBuf, arguments:&[String], cwd:PathBuf, environment: Option<&std::collections::BTreeMap<String,String>>, gate: Option<Box<dyn FnOnce() -> Result<(),String> + Send>>, clear_environment:bool) -> Result<(ProcessGuard, BoundedRead<PipeReader>, PipeWriter), String> {
     let epoch = registry()
         .lock()
         .map_err(|_| "MCP 状态不可用")?
@@ -875,7 +878,7 @@ async fn start_stdio(config: &McpCommand, environment: Option<&std::collections:
         .await
         .map_err(|_| "MCP 已停止")?;
     let mut command = Command::new(&executable);
-    command.args(&config.args).current_dir(cwd);
+    command.args(arguments).current_dir(cwd);
     // External program permission grants a normal local CLI invocation,
     // including its configured login/runtime environment. MCP keeps its
     // original reduced environment and fixed descendant PATH policy.
@@ -908,7 +911,7 @@ async fn start_stdio(config: &McpCommand, environment: Option<&std::collections:
         "PATH",
         std::env::join_paths(paths).map_err(|_| "MCP 程序目录无效")?,
     );
-    } else {command.envs(environment.unwrap());}
+    } else {if clear_environment{command.env_clear();}command.envs(environment.unwrap());}
     command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -937,6 +940,7 @@ async fn start_stdio(config: &McpCommand, environment: Option<&std::collections:
         }
         registry.children.retain(|entry| entry.strong_count() > 0);
         registry.children.push(Arc::downgrade(&state));
+        if let Some(gate)=gate { gate()?; }
         let child = command
             .spawn()
             .map_err(|_| "无法启动 MCP 程序，请检查路径和运行权限")?;
@@ -997,6 +1001,47 @@ pub async fn connect(config: &McpCommand) -> Result<McpSession, String> {
     })
     .await
     .map_err(|_| "MCP 启动超时")?
+}
+
+/// User-configured one-shot commands share the same real Job/process-group,
+/// bounded pipes and reaper as external protocol clients. Event JSON is stdin;
+/// it is never expanded into a shell source or argv. No stdout/stderr is logged.
+pub(crate) async fn run_user_command(
+    config:&McpCommand, input:Vec<u8>, cancel:Arc<AtomicBool>, timeout:Duration,
+    extra_env:std::collections::BTreeMap<String,String>,
+    gate:Box<dyn FnOnce()->Result<(),String>+Send>,
+)->Result<(),String>{
+    if input.len()>256*1024 || timeout.is_zero(){return Err("命令输入或时间限制无效".into())}
+    if extra_env.len()>16||extra_env.iter().any(|(k,v)|k.is_empty()||!k.bytes().all(|b|b.is_ascii_alphanumeric()||b==b'_')||v.len()>16384||v.contains('\0')){return Err("命令环境参数无效".into())}
+    let mut environment:std::collections::BTreeMap<_,_>=std::env::vars().filter(|(name,_)|{let name=name.to_ascii_uppercase();!name.starts_with("TAURI_SIGNING_")&&!name.starts_with("MEWU_TEST_")}).collect();
+    environment.extend(extra_env);
+    let until=tokio::time::Instant::now()+timeout;
+    let started=async {
+        if cancel.load(Ordering::Acquire){return Err("命令已停止".to_string())}
+        let (executable,cwd)=validate_user_command(config)?;
+        start_stdio_prepared(executable,&config.args,cwd,Some(&environment),Some(gate),true).await
+    };
+    let (process,mut output,mut stdin)=tokio::time::timeout_at(until,started).await.map_err(|_|"命令启动超时")??;
+    let state=process.state.clone();
+    let command=async {
+        use tokio::io::AsyncWriteExt;
+        let write=async{stdin.write_all(&input).await.map_err(|_|"无法传递事件数据".to_string())?;stdin.flush().await.map_err(|_|"无法传递事件数据".to_string())?;drop(stdin);Ok::<_,String>(())};
+        let drain=async {tokio::io::copy(&mut output,&mut tokio::io::sink()).await.map_err(|_|"命令输出超过限制或已停止".to_string())};
+        let wait=async {loop{
+            state.check()?;
+            let exited=state.child.lock().map_err(|_|"命令状态不可用")?.as_mut().ok_or("命令已停止")?.try_wait().map_err(|_|"无法读取命令退出状态")?;
+            if let Some(status)=exited{return if status.success(){Ok(())}else{Err(format!("命令退出失败（{}）",status.code().map(|n|n.to_string()).unwrap_or_else(||"signal".into())))}};
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }};
+        tokio::try_join!(write,drain,wait).map(|_|())
+    };
+    let stopped=async{loop{if cancel.load(Ordering::Acquire){break;}tokio::time::sleep(Duration::from_millis(20)).await;}};
+    let result=tokio::select!{r=tokio::time::timeout_at(until,command)=>r.unwrap_or_else(|_|Err("命令执行超时，未自动重试".into())),_=stopped=>Err("命令已停止，未自动重试".into())};
+    state.kill();drop(process);
+    // The existing reaper alone releases this slot after real process-tree and
+    // pipe drain. Do not infer that a canceled future means its child exited.
+    let drained=tokio::time::timeout(Duration::from_secs(10),async{loop{if state.slot.lock().is_ok_and(|slot|slot.is_none()){break;}tokio::time::sleep(Duration::from_millis(20)).await;}}).await.is_ok();
+    if !drained{return Err("命令正在清理，执行结果不确定，未自动重试".into())}result
 }
 
 /// Invocation-owned JSON lines for independently implemented protocols. Uses
@@ -1404,6 +1449,17 @@ pub(crate) fn validate_command(config: &McpCommand) -> Result<(PathBuf, PathBuf)
     Ok((executable, cwd))
 }
 
+fn validate_user_command(config:&McpCommand)->Result<(PathBuf,PathBuf),String>{
+    // Distinct from MCP admission: only a locally saved Hooks rule reaches this
+    // native function. The MCP validator above still refuses all shell hosts.
+    if config.executable.len()>4096||config.executable.chars().any(char::is_control)||config.args.len()>128||config.args.iter().any(|s|s.contains('\0'))||config.args.iter().map(String::len).sum::<usize>()>128*1024{return Err("命令参数无效或过长".into())}
+    let requested=Path::new(&config.executable);if !requested.is_absolute()||!local_path(requested){return Err("程序须使用本机绝对路径".into())}
+    let executable=requested.canonicalize().map_err(|_|"程序路径不存在")?;if !executable.is_file()||!local_path(&executable){return Err("程序路径无效".into())}
+    #[cfg(windows)]
+    if !executable.extension().is_some_and(|x|x.eq_ignore_ascii_case("exe")){return Err("请选择 exe 程序；脚本请使用命令动作".into())}
+    let cwd=if let Some(cwd)=&config.cwd{let p=Path::new(cwd);if !p.is_absolute()||!local_path(p){return Err("工作目录须使用本机绝对路径".into())}p.canonicalize().map_err(|_|"工作目录不存在")?}else{executable.parent().ok_or("程序目录无效")?.to_path_buf()};
+    if !cwd.is_dir()||!local_path(&cwd){return Err("工作目录无效".into())}Ok((executable,cwd))
+}
 fn local_path(path: &Path) -> bool {
     #[cfg(windows)]
     {

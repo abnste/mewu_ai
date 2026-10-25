@@ -542,6 +542,7 @@ export default function App() {
         const registration = await bridge.registerControlRenderer();
         if (disposed) { stopControlEvents(); stopControlEvents = undefined; return; }
         rendererId = registration.rendererId;
+        await bridge.confirmControlRenderer(rendererId);
       } catch { stopControlEvents?.(); stopControlEvents = undefined; }
     }
   });
@@ -1247,7 +1248,7 @@ export default function App() {
       // this payload's draft/refs and the native read that creates its message.
       const submission = commands.then(() => submitSceneDraft({ sceneId: id, draft: submittedDraft, refs: submittedRefs }, {
         save: async value => { check(submittedDraft, submittedRefs); accept(await bridge.applyCommand(value)); },
-        send: sceneId => { check(submittedDraft, submittedRefs); return bridge.sendMessage(sceneId, grant, regionId); },
+        send: sceneId => { check(submittedDraft, submittedRefs); return bridge.sendMessage(sceneId, grant, regionId, controlInput?.automationOrigin); },
       }));
       commands = submission.then(() => {}, error => { if (exitPreparing()) exitFailure ??= error; });
       const next = await submission;

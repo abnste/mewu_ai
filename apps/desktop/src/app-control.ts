@@ -10,7 +10,7 @@ export interface AppControlParameters {
   'capture.open': Record<string, never>;
   'region.add': { region: Region; backgroundId: string };
   'chat.setDraft': { text: string; expectedDraft?: string };
-  'chat.send': { text?: string; refs?: Reference[]; expectedDraft?: string; expectedRefs?: Reference[]; regionId?: string };
+  'chat.send': { text?: string; refs?: Reference[]; expectedDraft?: string; expectedRefs?: Reference[]; regionId?: string; automationOrigin?: string };
   'chat.cancel': { expectedRunId: string };
   'blackboard.create': Record<string, never>;
   'blackboard.finish': Record<string, never>;
@@ -68,7 +68,7 @@ const MAX_BYTES = 1024 * 1024, MAX_DEPTH = 32, MAX_NODES = 100_000;
 const requestFields = new Set(['id', 'nonce', 'sceneId', 'revision', 'method', 'params']);
 const fields: Record<AppControlMethod, readonly string[]> = {
   'capture.open': [], 'region.add': ['region', 'backgroundId'],
-  'chat.setDraft': ['text', 'expectedDraft'], 'chat.send': ['text', 'refs', 'expectedDraft', 'expectedRefs', 'regionId'],
+  'chat.setDraft': ['text', 'expectedDraft'], 'chat.send': ['text', 'refs', 'expectedDraft', 'expectedRefs', 'regionId', 'automationOrigin'],
   'chat.cancel': ['expectedRunId'], 'blackboard.create': [], 'blackboard.finish': [], 'blackboard.open': ['itemId'],
   'drawing.apply': ['command'], 'recording.start': ['regionId', 'backgroundId'], 'recording.control': ['id', 'action'],
   'scroll.start': ['pluginId', 'revision', 'contributionId', 'target', 'snapshotNodeId'], 'scroll.control': ['id', 'action'],
@@ -166,7 +166,8 @@ function validateParams(method: AppControlMethod, params: Record<string, unknown
     case 'chat.send':
       for (const key of ['text', 'expectedDraft']) if (params[key] !== undefined && typeof params[key] !== 'string') invalid();
       for (const key of ['refs', 'expectedRefs']) if (params[key] !== undefined && !references(params[key])) invalid();
-      if (params.regionId !== undefined && !identifier(params.regionId)) invalid(); break;
+      if (params.regionId !== undefined && !identifier(params.regionId)) invalid();
+      if (params.automationOrigin !== undefined && (typeof params.automationOrigin !== 'string' || !/^[0-9a-f]{8}-[0-9a-f-]{27}$/.test(params.automationOrigin))) invalid(); break;
     case 'chat.cancel': if (!identifier(params.expectedRunId)) invalid(); break;
     case 'blackboard.open': if (!identifier(params.itemId)) invalid(); break;
     case 'drawing.apply': drawing(params.command); break;

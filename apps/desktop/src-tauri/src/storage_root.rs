@@ -669,8 +669,8 @@ fn profile(db: &Connection) -> Result<Profile, StorageError> {
     let required_dbs: Vec<String> = serde_json::from_str(&row.6).map_err(json)?;
     if required_dbs
         .iter()
-        .any(|s| !matches!(s.as_str(), "spaces.db" | "plugins/plugins.db" | "extensions.db"))
-        || required_dbs.len() > 3
+        .any(|s| !matches!(s.as_str(), "spaces.db" | "plugins/plugins.db" | "extensions.db" | "hooks.db"))
+        || required_dbs.len() > 4
         || required_dbs.iter().enumerate().any(|(index,path)|required_dbs[index+1..].contains(path))
         || !required_dbs.is_empty() && !required_dbs.iter().any(|s| s == "spaces.db")
     {
@@ -1135,6 +1135,7 @@ fn initialize(paths: &StoragePaths) -> Result<(), StorageError> {
         if root.join("extensions.db").exists() {
             required.push("extensions.db".to_owned());
         }
+        if root.join("hooks.db").exists() { required.push("hooks.db".to_owned()); }
     }
     let _db_pins = required_db_pins(&root, &required)?;
     create_root(&paths.bootstrap)?;
@@ -1310,6 +1311,7 @@ pub fn mark_initialized(
     }
     let mut required = vec!["spaces.db".to_owned(), "plugins/plugins.db".to_owned()];
     if p.root.join("extensions.db").exists() { required.push("extensions.db".to_owned()); }
+    if p.root.join("hooks.db").exists() { required.push("hooks.db".to_owned()); }
     let _db_pins = required_db_pins(&p.root, &required)?;
     tx.execute(
         "UPDATE profile SET required_dbs=?1 WHERE id=1",
@@ -1405,6 +1407,7 @@ fn finish_trial(
     if commit {
         let mut required = vec!["spaces.db".to_owned(), "plugins/plugins.db".to_owned()];
         if t.target.join("extensions.db").exists() { required.push("extensions.db".to_owned()); }
+        if t.target.join("hooks.db").exists() { required.push("hooks.db".to_owned()); }
         let _pins = required_db_pins(&t.target, &required)?;
         phase(&tx, &trial.id, StoragePhase::Committed)?;
         tx.execute(
@@ -2210,6 +2213,38 @@ mod tests {
                 Ok(())
             }
         }
+    }
+    #[test]
+    fn hook_rules_and_execution_ledger_move_with_data_without_replaying_work() {
+        let f = Fixture::new();
+        let source = f.paths.legacy_root.join("hooks.db");
+        let mut hooks = mewu_hooks::Store::open(&source).unwrap();
+        let rule: mewu_hooks::Rule = serde_json::from_value(serde_json::json!({
+            "id": Uuid::new_v4().to_string(), "revision": 0, "name": "Synthetic retained hook",
+            "enabled": true, "trigger": { "kind": "event", "name": "app.started" },
+            "condition": "", "actions": [{ "kind": "delay", "milliseconds": 0 }],
+            "cooldownMs": 500, "timeoutMs": 1000, "stopOnError": true
+        })).unwrap();
+        let saved = hooks.save(0, rule).unwrap().rules.remove(0);
+        let run = hooks.claim(&saved, &mewu_hooks::Event::new("app.started"), 1000, true).unwrap().unwrap();
+        hooks.finish(&run.id, "completed", None).unwrap();
+        drop(hooks);
+        let initialized = f.initial();
+        mark_initialized(&f.paths, &initialized).unwrap();
+        f.request();
+        let trial = resolve_startup(&f.paths).unwrap();
+        commit_startup(&f.paths, trial.trial.as_ref().unwrap()).unwrap();
+        let hooks = mewu_hooks::Store::open(&f.target.join("hooks.db")).unwrap();
+        let snapshot = hooks.snapshot().unwrap();
+        assert_eq!(snapshot.rules[0].id, saved.id);
+        assert_eq!(snapshot.runs[0].id, run.id);
+        assert_eq!(snapshot.runs[0].status, "completed");
+        drop(hooks);
+        drop(trial);
+        drop(initialized);
+        assert_eq!(resolve_startup(&f.paths).unwrap().root, f.target);
+        fs::remove_file(f.target.join("hooks.db")).unwrap();
+        assert!(resolve_startup(&f.paths).is_err(), "an existing Hooks database cannot silently become an empty rule list");
     }
     #[test]
     fn executable_extension_database_moves_with_data_and_cannot_silently_disappear() {

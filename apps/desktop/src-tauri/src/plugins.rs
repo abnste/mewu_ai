@@ -51,7 +51,8 @@ const OFFICIAL_ANNOTATIONS: &[u8] =
     include_bytes!("../../plugins/migrations/official-annotations-1.0.0.json");
 const RECORDING_MIGRATION_KEY: &str = "migration.recording-bundle.v1";
 const LEGACY_RECORDING_IDS: [&str; 3] = ["mewu.video-trim", "mewu.recording-audio", "mewu.gif"];
-const BUNDLED: [&[u8]; 28] = [
+const BUNDLED: [&[u8]; 29] = [
+    include_bytes!("../../plugins/official-hooks.json"),
     include_bytes!("../../plugins/official-cli.json"),
     include_bytes!("../../plugins/official-agent.json"),
     include_bytes!("../../plugins/official-blackboard.json"),
@@ -155,6 +156,8 @@ pub enum PluginTag {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", deny_unknown_fields)]
 pub enum PluginContribution {
+    #[serde(rename = "app.hooks")]
+    Hooks { id: String, title: String },
     #[serde(rename = "app.cli")]
     Cli { id: String, title: String },
     #[serde(rename = "agent.runtime")]
@@ -912,7 +915,8 @@ fn validate_manifest(manifest: &PluginManifest) -> Result<(), String> {
                 }
                 (id, title)
             }
-            PluginContribution::Cli { id, title }
+            PluginContribution::Hooks { id, title }
+            | PluginContribution::Cli { id, title }
             | PluginContribution::AgentRuntime { id, title, .. }
             | PluginContribution::Blackboard { id, title, .. }
             | PluginContribution::SelectionRecording { id, title, .. }
