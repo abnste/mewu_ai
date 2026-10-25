@@ -119,7 +119,7 @@ test('installed community list excludes native, local and removed packages while
     {manifest:manifest('local.zip'),source:{type:'local',path:'fixture.zip'},state:'enabled'},
   ];
   const before=structuredClone(records), catalog=[{...manifest('market.entry'),repository:'author/market'}];
-  const scope=run(`${community.slice(community.variable('entries'))}\nglobalThis.list=entries;`,{
+  const scope=run(`${community.slice(community.variable('record'))}\n${community.slice(community.variable('entries'))}\nglobalThis.list=entries;`,{
     createMemo:callback=>callback,props:{get pane(){return scope.paneValue},query:'',filter:''},paneValue:'installed',records:()=>records,catalog:()=>catalog,tagText:value=>value,
   });
   assert.deepEqual(Array.from(scope.list(),value=>value.id),['github.enabled','github.disabled']);

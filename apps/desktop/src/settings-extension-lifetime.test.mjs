@@ -20,11 +20,12 @@ const capability = patch => ({ pluginRevision: 1, connectionRevisions: {}, agent
 const extension = patch => ({ manifest: { id: 'author.external', name: 'External' }, revision: 1, state: 'enabled', services: [{ id: 'engine', kind: 'agent', title: 'External Agent' }, { id: 'memory', kind: 'memory', title: 'Journal' }], ...patch });
 const memoryBinding = patch => ({ agentId: 'agent', kind: 'memory', pluginId: 'author.external', serviceId: 'memory', revision: 1, ...patch });
 
-async function fixture({ initialTab = 'agent', initialExtensions = [], initialBindings = [], delayedBindings = false, delayedExtensionRead = false, onDeleteAgent = async () => {}, realMemory = false, memoryState = { selection: { revision: 0, bindingId: null }, bindings: [], nextCursor: null } } = {}) {
+async function fixture({ initialTab = 'agent', initialExtensions = [], initialBindings = [], delayedBindings = false, delayedExtensionRead = false, onDeleteAgent = async () => {}, realMemory = false, realPlugins = false, memoryState = { selection: { revision: 0, bindingId: null }, bindings: [], nextCursor: null } } = {}) {
   const reads = [], extensionListeners = new Set(), bindingListeners = new Set(), pluginListeners = new Set(), domListeners = new Set();
   const bindingRead = deferred(), extensionsRead = deferred();
   let pluginValues = plugins;
   const memoryCalls = [];
+  const [updateStatus, setUpdateStatus] = solid.createSignal(); const updaterOptions = [];
   let extensionValues = initialExtensions, bindingValues = initialBindings, delayedExtensions = delayedExtensionRead, observedOptional, extensionReads = 0;
   const document = { addEventListener: (name, callback) => domListeners.add(callback), removeEventListener: (name, callback) => domListeners.delete(callback), activeElement: null, getElementById: () => undefined };
   const context = createContext({ console, Error, URL, document, queueMicrotask, crypto: globalThis.crypto });
@@ -66,21 +67,23 @@ async function fixture({ initialTab = 'agent', initialExtensions = [], initialBi
   const memoryStateModule = new SourceTextModule(ts(await raw('./memory-provider-state.ts')), { context });
   await memoryStateModule.link(() => { throw Error('Unexpected memory helper import'); }); await memoryStateModule.evaluate();
   const memoryApi = synthetic({ memoryProviderNative: true, getMemoryProviderState: async () => memoryState, subscribeMemoryProvider: async () => () => {}, cancelMemoryRequest: async id => memoryCalls.push(['cancel', id]), selectMemoryProvider: async value => { memoryCalls.push(['select', value]); memoryState = { ...memoryState, selection: { bindingId: value.bindingId, revision: value.expectedProviderRevision + 1 } }; return memoryState; } });
-  const rendererModule = synthetic(renderer), icons = synthetic(Object.fromEntries(['ChevronLeft', 'RefreshCw', 'Trash2', 'Check', 'ChevronDown', 'ChevronRight', 'LoaderCircle', 'Plus', 'Database', 'Info', 'Link2', 'Puzzle', 'ScanLine', 'Settings2', 'UserRound', 'Wrench', 'X'].map(name => [name, () => renderer.createElement('svg')])));
-  const placeholder = name => () => { const node = renderer.createElement(name); return node; };
+  const rendererModule = synthetic(renderer), icons = synthetic(Object.fromEntries(['ChevronLeft', 'RefreshCw', 'Trash2', 'Check', 'ChevronDown', 'ChevronRight', 'LoaderCircle', 'Plus', 'Database', 'Info', 'Link2', 'Puzzle', 'ScanLine', 'Search', 'Settings2', 'UserRound', 'Wrench', 'X'].map(name => [name, () => renderer.createElement('svg')])));
+  const placeholder = name => props => { const node = renderer.createElement(name); node.props.received = props; return node; };
   const facts = synthetic({ createSettingsInformation: () => ({ info: () => undefined }), AboutSettings: placeholder('about'), DataSettings: placeholder('data') });
   async function component(file) {
     if (modules.has(file)) return modules.get(file);
     const source = await raw(`./components/${file}.tsx`);
     const compiled = ts(transformSync(source, { filename: `${file}.tsx`, babelrc: false, configFile: false, parserOpts: { plugins: ['typescript', 'jsx'] }, presets: [[solidPreset, { generate: 'universal', moduleName: 'test-renderer' }]] }).code);
     const module = new SourceTextModule(compiled, { context }); modules.set(file, module);
-    await module.link(name => {
+    await module.link(async name => {
       if (name === 'solid-js') return core;
       if (name === 'test-renderer') return rendererModule;
       if (name === 'lucide-solid') return icons;
       if (name === '../optional-feature-state') return watchedHook;
       if (name === '../extension-bridge') return nativeModule;
       if (name === '../extension-state') return state;
+      if (name === '../bridge') return synthetic({ runtimeInfo: async () => ({ platform: 'windows' }) });
+      if (name === '../plugin-categories') { const m = new SourceTextModule(ts(await raw('./plugin-categories.ts')), { context }); await m.link(() => { throw Error('Unexpected taxonomy dependency'); }); await m.evaluate(); return m; }
       if (name === '../memory-provider-bridge') return memoryApi;
       if (name === '../memory-provider-state') return memoryStateModule;
       if (name === '../plugin-bridge') return pluginBridge;
@@ -88,7 +91,9 @@ async function fixture({ initialTab = 'agent', initialExtensions = [], initialBi
       if (name === '../i18n') return synthetic({ t: value => value });
       if (name === '../native-select-escape') return synthetic({ nativeSelectOwnsEscape: () => false });
       if (name === './SettingsFacts') return facts;
+      if (name === './AppUpdateSettings') return synthetic({ createAppUpdateSettings: (_active, _api, options) => { updaterOptions.push(options); return { status: updateStatus }; } });
       if (name.endsWith('.css')) return synthetic({});
+      if (realPlugins && name === './PluginsPanel') return component('PluginsPanel');
       if (['./AgentsPanel', './ExtensionProviders', './SettingControls'].includes(name)) return component(name.slice(2));
       return synthetic({ default: placeholder(name.slice(2)) });
     });
@@ -109,7 +114,7 @@ async function fixture({ initialTab = 'agent', initialExtensions = [], initialBi
   const changed = () => { for (const callback of bindingListeners) callback(bindingValues); };
   const changeExtensions = values => { extensionValues = values; for (const callback of extensionListeners) callback(values); };
   await tick();
-  return { root, reads, panel, editor, legacy, clickTab, openAgent, all, find, text, changed, changeExtensions, get optional() { return observedOptional(); }, dispose,
+  return { root, reads, panel, editor, legacy, clickTab, openAgent, all, find, text, changed, changeExtensions, get optional() { return observedOptional(); }, dispose, updaterOptions, setUpdateStatus,
     memoryCalls, plugins: value => { pluginValues = value; for (const callback of pluginListeners) callback(value); },
     bindings: values => { bindingValues = values; for (const callback of bindingListeners) callback(values); },
     resolveBindings: value => bindingRead.resolve(value), setSnapshot, snapshot,
@@ -117,6 +122,44 @@ async function fixture({ initialTab = 'agent', initialExtensions = [], initialBi
     get extensionReads() { return extensionReads; }, delayExtensions: () => { delayedExtensions = true; }, resolveExtensions: values => extensionsRead.resolve(values), delayBindings: () => { delayedBindings = true; },
     mountProvider: props => renderer.render(() => provider.namespace.default(props), renderer.createElement('provider-root')) };
 }
+
+test('About remains the sidebar footer with contributed pages and shows the shared update receipt', async () => {
+  const f = await fixture({ initialTab: 'general' });
+  try {
+    const nav = f.find(node => node.type === 'nav');
+    const footer = () => nav.children.filter(node => node.type === 'button').at(-1);
+    assert.equal(f.text(footer()), '关于');
+    assert.deepEqual(JSON.parse(JSON.stringify(f.updaterOptions)), [{ checkOnOpen: true }]);
+    f.changeExtensions([extension({ manifest: { id: 'author.page', name: 'Page', permissions: ['ui.render'] }, services: [{ id: 'settings', kind: 'ui', title: 'Plugin settings', metadata: { surface: 'settings' } }] })]);
+    await tick(); assert.equal(f.text(footer()), '关于');
+    f.setUpdateStatus({ phase: 'available', availableVersion: '1.0.7' });
+    assert.equal(f.text(footer()), '关于检测到新版本');
+    f.setUpdateStatus({ phase: 'current', availableVersion: null });
+    assert.equal(f.text(footer()), '关于');
+  } finally { f.dispose(); }
+});
+
+test('plugin categories are visible text buttons and filter all three panes without a dropdown', async () => {
+  const f = await fixture({ initialTab: 'plugins', realPlugins: true });
+  try {
+    const group = f.find(node => node.props?.class === 'plugins-category-tags');
+    assert.ok(group);
+    const buttons = group.children.filter(node => node.type === 'button');
+    assert.ok(buttons.length > 10);
+    assert.equal(f.text(buttons[0]), '全部');
+    const panel = f.find(node => node.props?.class === 'plugins-panel');
+    const descendants = node => [node, ...node.children.flatMap(descendants)];
+    assert.equal(descendants(panel).filter(node => node.type === 'select').length, 0);
+    buttons[1].props.onClick();
+    assert.equal(f.find(node => node.type === 'CommunityExtensions').props.received.filter, 'agi');
+    assert.equal(buttons[1].props['aria-pressed'], true);
+    f.find(node => node.type === 'button' && f.text(node) === '已安装').props.onClick();
+    assert.equal(f.find(node => node.type === 'CommunityExtensions').props.received.filter, 'agi');
+    f.find(node => node.type === 'button' && f.text(node) === '原生').props.onClick();
+    assert.equal(f.find(node => node.type === 'BuiltinPlugins').props.received.filter, 'agi');
+    buttons[0].props.onClick(); assert.equal(f.find(node => node.type === 'BuiltinPlugins').props.received.filter, '');
+  } finally { f.dispose(); }
+});
 
 test('settings plugin contributes its own navigation page and disable revokes it without replacing native settings',async()=>{
   const record=extension({manifest:{id:'independent.connector',name:'Connector',permissions:['ui.render']},services:[{id:'settings',kind:'ui',title:'外部 Agent',metadata:{surface:'settings'}}]});

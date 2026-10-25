@@ -1138,5 +1138,18 @@
   "使用本地记忆": "Use local memory",
   "空白会话改用": "Empty conversations use",
   "至少保留一个 Agent": "Keep at least one Agent",
-  "当前系统暂不支持区域操作": "Region operation is not yet available on this system"
+  "当前系统暂不支持区域操作": "Region operation is not yet available on this system",
+  "全部": "All",
+  "更新": "Update",
+  "迁移来源": "Migrate source",
+  "确认迁移": "Confirm migration",
+  "来源迁移": "Source migration",
+  "原来源": "Previous source",
+  "新来源": "New source",
+  "检测到新版本": "Update available",
+  "插件迁移协议版本不受支持": "Unsupported plugin migration protocol version",
+  "迁移并安装": "Migrate and install",
+  "保留配置、凭据和数据，启停状态不变。": "Configuration, credentials, data, and enabled state are retained. ",
+  "保留配置、凭据和数据，从新来源重新安装。": "Reinstall from the new source, retaining configuration, credentials, and data. ",
+  "新来源将接管后续更新及此插件的数据访问。": "The new source takes over future updates and access to this plugin’s data."
 }

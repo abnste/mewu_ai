@@ -102,6 +102,17 @@ const normalize = value => JSON.parse(JSON.stringify(value));
   reactive.createRoot(cleanup => { stop = cleanup; late = mod.namespace.createAppUpdateSettings(() => true, { native: () => true, info: () => pending.promise, status: async () => { reads++; return status(); }, perform: async () => { throw Error('Unexpected install'); } }); });
   await tick(); stop(); pending.resolve(info({ updateSupport: 'signed_installer' })); await tick();
   assert.equal(reads, 0); assert.equal(late.mode(), 'loading');
+  for (const receipt of [info({ updateSupport: 'signed_installer' }), info({ platform: 'macos', updateSupport: 'signed_bundle' }), info({ platform: 'linux', updateSupport: 'signed_appimage' })]) {
+    const calls = []; let data, dispose, activate; let next = status();
+    reactive.createRoot(cleanup => {
+      dispose = cleanup; const [active, setActive] = reactive.createSignal(true); activate = setActive;
+      data = mod.namespace.createAppUpdateSettings(active, { native: () => true, info: async () => receipt,
+        status: async () => next, perform: async name => { calls.push(name); next = status({ phase: 'available', availableVersion: '1.0.7' }); } }, { checkOnOpen: true });
+    });
+    await tick(); await tick(); assert.deepEqual(calls, ['check_app_update']);
+    assert.equal(data.status().availableVersion, '1.0.7');
+    activate(false); activate(true); await tick(); assert.deepEqual(calls, ['check_app_update']); dispose();
+  }
   checks.push('Actual update effects admit Windows installers, Mac bundles and Linux AppImages, refuse manual or unknown platforms, and fence a receipt after disposal');
 }
 {
@@ -220,7 +231,10 @@ const normalize = value => JSON.parse(JSON.stringify(value));
   const dialog = await raw('./components/SettingsDialog.tsx'), capture = await raw('./components/CaptureSettings.tsx'), facts = await raw('./components/SettingsFacts.tsx');
   const parsed = parse(dialog, { sourceType: 'module', plugins: ['typescript', 'jsx'] });
   const labels = []; function visit(value) { if (!value || typeof value !== 'object') return; if (value.type === 'ObjectExpression') { const id = value.properties.find(p => p.key?.name === 'id')?.value; const label = value.properties.find(p => p.key?.name === 'label')?.value; const literal = label?.type === 'CallExpression' && label.callee?.name === 't' ? label.arguments[0] : label; if (literal?.type === 'StringLiteral' && id) labels.push(literal.value); } for (const child of Object.values(value)) { if (Array.isArray(child)) child.forEach(visit); else if (child && typeof child === 'object') visit(child); } } visit(parsed);
-  assert.deepEqual(labels, ['通用', '截图与录屏', 'Agent 与连接', '插件', '数据', '关于']);
+  assert.deepEqual(labels, ['通用', '截图与录屏', 'Agent 与连接', '插件', '数据']);
+  assert.ok(dialog.includes('class="settings-nav-about"'));
+  assert.ok(dialog.includes("onClick={() => setTab('about')}"));
+  assert.ok(dialog.includes("t('检测到新版本')"));
   assert.equal(dialog.includes('CaptureShortcutField'), false); assert.ok(capture.includes("CaptureShortcutField visible={props.active && pane() === 'screenshot'}")); assert.ok(capture.includes('选区外暗度')); assert.equal(dialog.includes('选区外暗度'), false);
   for (const forbidden of ['exportSnapshot', '导出会话', '导出 Agent', '本机</span>', 'Mewu 1.0</span>']) assert.equal(dialog.includes(forbidden), false);
   assert.equal(facts.includes('innerHTML'), false); assert.equal(facts.includes('检查更新'), false); assert.equal(facts.includes('更改目录'), false);

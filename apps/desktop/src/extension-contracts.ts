@@ -24,7 +24,7 @@ export type ExtensionSource = { type: 'local'; path: string } | { type: 'github'
 export type ExtensionServiceKind = 'command' | 'tool' | 'agent' | 'memory' | 'model' | 'channel' | 'renderer' | 'ui' | 'trigger' | 'service';
 export interface ExtensionService { kind: ExtensionServiceKind; id: string; title: string; description?: string; inputSchema?: unknown; metadata?: unknown }
 export interface ExtensionRecord { manifest: ExtensionManifest; revision: number; state: 'enabled' | 'disabled' | 'removed'; source: ExtensionSource; sha256: string; services: ExtensionService[]; hasRollback: boolean; platformError?: string; unsupportedServices?: Record<string, string> }
-export interface ExtensionProposal { id: string; manifest: ExtensionManifest; sha256: string; source: ExtensionSource; expectedRevision?: number }
+export interface ExtensionProposal { id: string; manifest: ExtensionManifest; sha256: string; source: ExtensionSource; expectedRevision?: number; sourceMigration?: { schemaVersion: 1; operation: 'migrate' | 'migrate-and-install'; id: string; from: ExtensionSource } }
 export interface ExtensionInvocation { pluginId: string; revision: number; serviceId: string; input: unknown; sceneId?: string; regionId?: string; surface?: {action:'mount'} | {action:'call'|'close';id:string}; objectSource?: import('./extension-object-drag').ObjectSource }
 export interface ExtensionBinding { agentId: string; kind: 'agent' | 'memory'; pluginId: string | null; serviceId: string | null; revision: number }
 export type ExtensionControl = 'enable' | 'disable' | 'remove' | 'rollback';

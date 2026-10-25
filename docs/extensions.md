@@ -174,3 +174,17 @@ Workers have no ambient file, network, process or native-module API. Host calls 
 `network.fetch` permits HTTPS and HTTP on literal loopback addresses or `localhost`, including an operator's local Agent or memory service. It does not grant unrestricted HTTP, redirects, shell execution or a host credential export. Package authors must implement their service's protocol in JavaScript or delegate to another declared plugin service.
 
 Activations and invocations run off the UI thread. Unload cancels requests, disposes registrations and waits for the worker to exit. The registry, package bytes, rollback version, provider bindings and plugin-owned storage live in `extensions.db` under the user's configured Mewu data directory. They move with that directory; existing conversations, built-in module choices and retired declaration records are preserved. Retired third-party declarations do not grant capabilities or execute.
+
+
+## Reviewed source migration (MewuAI 1.0.6)
+
+A plugin ID remains the identity of its configuration, credentials, provider bindings, memory and object library. Changing the install repository does not create another ID or copy user data. Ordinary installs continue to refuse an origin change, including an uninstalled record that retains data.
+
+The existing native installation protocol supports an explicit migration review:
+
+1. `prepare_extension` verifies the requested package and snapshots the current installed revision. A different origin returns `sourceMigration: { schemaVersion: 1, operation, id, from }` in the proposal, alongside the target `source`, manifest, SHA-256 and `expectedRevision`. `operation` is `migrate` for an installed plugin, or `migrate-and-install` when the user is reinstalling an uninstalled identity.
+2. The trusted settings UI displays both sources, package permissions and retained-data access. The user selects **Confirm migration**. It sends `install_extension` the original `proposalId` and that review's `sourceMigrationId`; no client-supplied source, digest or retained data is accepted at commit.
+3. The native proposal is one-use and expires after ten minutes. Confirmation is bound to both full source records, the installed revision and old package hash, and the candidate package hash. A stale revision, missing/wrong confirmation, invalid retained archive, downgrade or changed bytes at the same version fails without rebinding the identity.
+4. The same registry update stores the new source/package and retains the old archive/source/hash for explicit rollback. Configuration, credentials, provider bindings, memory and object-library records keep their original plugin ID and are not rewritten. Enabled and disabled states are preserved. An uninstalled identity is enabled only after the explicit **Migrate and install** review; discovering a new source never reinstalls it. Activation failures retain the existing fail-closed disable/rollback behavior, and rollback retains platform checks.
+
+This protocol applies to any plugin and both local and GitHub sources, without plugin IDs, repository names or platform exceptions in the migration implementation. The market's relocation metadata documents maintainer decisions; merely refreshing an index never grants migration consent. Rollback uses the retained, independently reverified archive and works even when the old remote release no longer exists.

@@ -1,5 +1,11 @@
 /* SPDX-License-Identifier: MPL-2.0 */
-.settings-surface .settings-dialog .settings-nav { overflow-y:auto;min-height:0; }
+.settings-surface .settings-dialog .settings-nav { overflow:visible;min-height:0; }
+.settings-dialog .settings-nav-pages { flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:5px; }
+.settings-dialog .settings-nav-pages>button,.settings-dialog .settings-nav-about { display:flex;align-items:center;gap:10px;text-align:left;font-size:11px;color:var(--secondary);border-radius:9px;padding:11px 10px;white-space:nowrap;flex-shrink:0; }
+.settings-dialog .settings-nav-pages>button:hover,.settings-dialog .settings-nav-about:hover { background:var(--surface-subtle);color:var(--text); }
+.settings-dialog .settings-nav-pages>button.selected,.settings-dialog .settings-nav-about.selected { background:var(--accent-soft);color:var(--accent); }
+.settings-dialog .settings-nav-about { margin-top:auto;flex-shrink:0;min-width:0; }
+.settings-dialog .settings-update-badge { margin-left:auto;font-size:9px;font-weight:400;color:var(--accent);white-space:normal;line-height:1.3; }
 .settings-dialog {
   --settings-control-height:32px;
   --settings-field-height:36px;

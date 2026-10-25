@@ -3,7 +3,7 @@ import { t } from "../i18n";
 import { createEffect, createSignal, on, onCleanup, onMount, Show, type Accessor } from 'solid-js';
 import { LoaderCircle, X } from 'lucide-solid';
 import type { DataDirectoryProposal, DataDirectoryState, LicenseDocument, LicenseDocumentKind, SettingsInfo } from '../settings-contracts';
-import { AppUpdateSettings } from './AppUpdateSettings';
+import { AppUpdateSettings, type AppUpdateController } from './AppUpdateSettings';
 import { settingsApi } from '../settings-bridge';
 import type { SettingsClient } from '../settings-client';
 import { Row } from './SettingControls';
@@ -100,7 +100,7 @@ function LicenseDialog(props: { value: LicenseDocument; onClose: () => void }) {
     <header><h2>{props.value.title}</h2><button ref={button} class="icon-button" aria-label={t("关闭文档")} onClick={props.onClose}><X size={16} /></button></header><pre tabIndex={0}>{props.value.text.slice(0, limit())}</pre><Show when={props.value.text.length > limit()}><button class="secondary-button" onClick={() => setLimit(value => value + 65536)}>{t("显示更多")}</button></Show>
   </section></div>;
 }
-export function AboutSettings(props: { data: SettingsInformation; active: boolean }) {
+export function AboutSettings(props: { data: SettingsInformation; active: boolean; updater?: AppUpdateController }) {
   const [documentValue, setDocument] = createSignal<LicenseDocument>(), [error, setError] = createSignal(''), [pending, setPending] = createSignal(false);
   let disposed = false, generation = 0;
   async function read(kind: LicenseDocumentKind) {
@@ -115,7 +115,7 @@ export function AboutSettings(props: { data: SettingsInformation; active: boolea
   onCleanup(() => { disposed = true; generation++; });
   return <><header class="settings-page-heading"><h2>{t("关于")}</h2></header><InformationState data={props.data} /><Show when={props.data.info()}>{info => <>
     <Row title={info().application}><span class="settings-value">{info().version}</span></Row>
-    <AppUpdateSettings active={props.active} />
+    <AppUpdateSettings active={props.active} controller={props.updater} />
     <Row title={t("开源许可")}><button class="quiet-button" disabled={pending()} onClick={() => void read('license')}>{info().license}</button></Row>
     <Show when={info().noticesAvailable}><Row title={t("第三方许可")}><button class="quiet-button" disabled={pending()} onClick={() => void read('notices')}>{t("查看")}</button></Row></Show>
   </>}</Show><Show when={error()}><p class="settings-error" role="alert">{error()}</p></Show><Show when={documentValue()}>{value => <LicenseDialog value={value()} onClose={() => setDocument(undefined)} />}</Show></>;

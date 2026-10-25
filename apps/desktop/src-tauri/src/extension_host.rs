@@ -4,7 +4,7 @@
 //! programs under the user's normal OS identity; it is not an OS sandbox.
 use crate::{
     extension_market as market, extension_region as region,
-    extension_store::{service_platform_error, Binding, Record, Source, Store},
+    extension_store::{service_platform_error, Binding, Record, Source, SourceMigration, Store},
     Host,
 };
 use base64::Engine as _;
@@ -48,6 +48,7 @@ struct Pending {
     bytes: Vec<u8>,
     source: Source,
     expected: Option<u64>,
+    source_migration: Option<SourceMigration>,
     created: Instant,
 }
 struct ActiveRun {
@@ -68,6 +69,8 @@ pub struct Proposal {
     sha256: String,
     source: Source,
     expected_revision: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source_migration: Option<SourceMigration>,
 }
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -316,16 +319,19 @@ pub async fn prepare_extension(
     if !mewu_extension::plugin_platform_supported(package.manifest.platforms.as_deref(), mewu_extension::current_plugin_platform()) {
         return Err("此插件不支持当前系统".into());
     }
-    let expected = state
+    let previous = state
         .store()?
-        .get_optional(&package.manifest.id)?
-        .map(|p| p.revision);
+        .get_optional(&package.manifest.id)?;
+    let expected = previous.as_ref().map(|p| p.revision);
+    let digest = format!("{:x}", Sha256::digest(&bytes));
+    let source_migration = previous.as_ref().and_then(|old| SourceMigration::preview(old, &source, &digest));
     let proposal = Proposal {
         id: uuid::Uuid::new_v4().to_string(),
         manifest: package.manifest.clone(),
-        sha256: format!("{:x}", Sha256::digest(&bytes)),
+        sha256: digest,
         source: source.clone(),
         expected_revision: expected,
+        source_migration: source_migration.clone(),
     };
     let mut pending = state.pending.lock().map_err(|_| "扩展预览不可用")?;
     pending.retain(|_, p| p.created.elapsed() < Duration::from_secs(600));
@@ -339,6 +345,7 @@ pub async fn prepare_extension(
             bytes,
             source,
             expected,
+            source_migration,
             created: Instant::now(),
         },
     );
@@ -349,6 +356,7 @@ pub async fn install_extension(
     app: AppHandle,
     window: tauri::WebviewWindow,
     proposal_id: String,
+    source_migration_id: Option<String>,
 ) -> Result<Vec<Record>, String> {
     trusted(&window)?;
     app.state::<Host>().exit.ensure_new_operation()?;
@@ -363,14 +371,17 @@ pub async fn install_extension(
         if pending.created.elapsed() > Duration::from_secs(600) {
             return Err("安装预览已失效".into());
         }
-        state.cancel_plugin(&pending.package.manifest.id);
+        SourceMigration::confirm(pending.source_migration.as_ref(), source_migration_id.as_deref())?;
         let mut store = state.store()?;
-        let result = store.install(
-            &pending.package,
-            &pending.bytes,
-            &pending.source,
-            pending.expected,
-        )?;
+        if !store.validate_reviewed_install(&pending.package, &pending.bytes, &pending.source, pending.expected, pending.source_migration.as_ref())? {
+            return store.list();
+        }
+        state.cancel_plugin(&pending.package.manifest.id);
+        let result = if let Some(migration) = &pending.source_migration {
+            store.install_migrating(&pending.package, &pending.bytes, &pending.source, pending.expected, migration)?
+        } else {
+            store.install(&pending.package, &pending.bytes, &pending.source, pending.expected)?
+        };
         state.cancel_plugin(&pending.package.manifest.id);
         result
     };

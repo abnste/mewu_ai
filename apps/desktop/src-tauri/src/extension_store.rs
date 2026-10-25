@@ -8,7 +8,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, path::Path, time::Duration};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase", deny_unknown_fields)]
 pub enum Source {
     Local { path: String },
@@ -29,6 +29,59 @@ impl Source {
             Self::Local { .. } => extension_market::decode_package(bytes),
             Self::Github { entry } => extension_market::verify_package(entry, bytes),
         }
+    }
+}
+/// A native-only, short-lived review snapshot. Not deserializable from a plugin
+/// or renderer: confirmation names this exact proposal, source pair and bytes.
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "kebab-case")]
+enum SourceMigrationOperation {
+    Migrate,
+    MigrateAndInstall,
+}
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SourceMigration {
+    schema_version: u32,
+    operation: SourceMigrationOperation,
+    pub id: String,
+    pub from: Source,
+    #[serde(skip)]
+    plugin_id: String,
+    #[serde(skip)]
+    revision: u64,
+    #[serde(skip)]
+    from_sha256: String,
+    #[serde(skip)]
+    to: Source,
+    #[serde(skip)]
+    to_sha256: String,
+}
+impl SourceMigration {
+    pub(crate) fn confirm(review: Option<&Self>, id: Option<&str>) -> Result<(), String> {
+        match (review, id) {
+            (Some(review), Some(id)) if review.id == id => Ok(()),
+            (None, None) => Ok(()),
+            _ => Err("请重新审核并确认插件来源迁移".into()),
+        }
+    }
+    pub(crate) fn preview(old: &Record, target: &Source, digest: &str) -> Option<Self> {
+        (!old.source.same_origin(target)).then(|| Self {
+            schema_version: 1,
+            operation: if old.state == "removed" { SourceMigrationOperation::MigrateAndInstall } else { SourceMigrationOperation::Migrate },
+            id: uuid::Uuid::new_v4().to_string(),
+            from: old.source.clone(),
+            plugin_id: old.manifest.id.clone(),
+            revision: old.revision,
+            from_sha256: old.sha256.clone(),
+            to: target.clone(),
+            to_sha256: digest.to_owned(),
+        })
+    }
+    fn permits(&self, old: &Record, target: &Source, digest: &str) -> bool {
+        self.plugin_id == old.manifest.id && self.revision == old.revision
+            && self.from == old.source && self.from_sha256 == old.sha256
+            && self.to == *target && self.to_sha256 == digest
     }
 }
 #[derive(Debug, Clone, Serialize)]
@@ -83,6 +136,11 @@ pub struct Binding {
 }
 pub struct Store {
     db: Connection,
+}
+struct InstallCheck {
+    previous: Option<Record>,
+    digest: String,
+    changes: bool,
 }
 impl Store {
     pub fn open(root: &Path) -> Result<Self, String> {
@@ -208,16 +266,39 @@ impl Store {
         source: &Source,
         expected: Option<u64>,
     ) -> Result<Record, String> {
-        self.install_internal(package, bytes, source, expected, false)
+        self.install_internal(package, bytes, source, expected, false, None)
     }
-    fn install_internal(
+    pub(crate) fn install_migrating(
         &mut self,
         package: &ExtensionPackage,
         bytes: &[u8],
         source: &Source,
         expected: Option<u64>,
-        rollback: bool,
+        migration: &SourceMigration,
     ) -> Result<Record, String> {
+        self.install_internal(package, bytes, source, expected, false, Some(migration))
+    }
+    /// Preflight before revoking any running generation. Commit independently
+    /// revalidates the same rules while the native caller retains the Store lock.
+    pub(crate) fn validate_reviewed_install(
+        &self,
+        package: &ExtensionPackage,
+        bytes: &[u8],
+        source: &Source,
+        expected: Option<u64>,
+        migration: Option<&SourceMigration>,
+    ) -> Result<bool, String> {
+        self.check_install(package, bytes, source, expected, false, migration).map(|check| check.changes)
+    }
+    fn check_install(
+        &self,
+        package: &ExtensionPackage,
+        bytes: &[u8],
+        source: &Source,
+        expected: Option<u64>,
+        rollback: bool,
+        migration: Option<&SourceMigration>,
+    ) -> Result<InstallCheck, String> {
         if source.verify(bytes)? != *package {
             return Err("预览内容与安装包不一致".into());
         }
@@ -227,25 +308,55 @@ impl Store {
             return Err("扩展安装状态已变化，请重新预览".into());
         }
         let digest = format!("{:x}", Sha256::digest(bytes));
+        let changing_origin = old.as_ref().is_some_and(|old| !old.source.same_origin(source));
         if let Some(old) = &old {
             // Removal cannot transfer a stable identity or its retained data.
-            if !old.source.same_origin(source) {
-                return Err("插件标识已绑定原仓库，更换来源请使用不同标识".into());
+            // A rollback is allowed only through the verified retained archive
+            // read by rollback(); ordinary installs never bypass this guard.
+            if changing_origin && !rollback {
+                if !migration.is_some_and(|m| m.permits(old, source, &digest)) {
+                    return Err("插件标识已绑定原来源，请先审核并确认来源迁移".into());
+                }
+                let size: i64 = self.db.query_row("SELECT length(archive) FROM extensions WHERE id=?1", [&old.manifest.id], |r| r.get(0))
+                    .map_err(|_| "无法核验原插件安装包")?;
+                if size <= 0 || size > extension_market::MAX_ARCHIVE as i64 {
+                    return Err("原插件安装包体积无效".into());
+                }
+                let retained: Vec<u8> = self.db.query_row("SELECT archive FROM extensions WHERE id=?1", [&old.manifest.id], |r| r.get(0))
+                    .map_err(|_| "无法核验原插件安装包")?;
+                if format!("{:x}", Sha256::digest(&retained)) != old.sha256
+                    || old.source.verify(&retained)?.manifest != old.manifest {
+                    return Err("原插件安装包完整性核验失败".into());
+                }
             }
             let previous =
                 semver::Version::parse(&old.manifest.version).map_err(|_| "已安装版本损坏")?;
             let next =
                 semver::Version::parse(&package.manifest.version).map_err(|_| "插件版本无效")?;
-            if next == previous && old.sha256 != digest {
+            let precedence = next.cmp_precedence(&previous);
+            if !rollback && precedence.is_eq() && old.sha256 != digest {
                 return Err("同一版本的插件内容不能改变".into());
             }
-            if next < previous && !rollback {
+            if precedence.is_lt() && !rollback {
                 return Err("请使用回滚操作安装旧版本".into());
             }
-            if next == previous && old.sha256 == digest && old.state != "removed" {
-                return Ok(old.clone());
+            if precedence.is_eq() && old.sha256 == digest && old.state != "removed" && !changing_origin {
+                return Ok(InstallCheck { previous: Some(old.clone()), digest, changes: false });
             }
         }
+        Ok(InstallCheck { previous: old, digest, changes: true })
+    }
+    fn install_internal(
+        &mut self,
+        package: &ExtensionPackage,
+        bytes: &[u8],
+        source: &Source,
+        expected: Option<u64>,
+        rollback: bool,
+        migration: Option<&SourceMigration>,
+    ) -> Result<Record, String> {
+        let InstallCheck { previous: old, digest, changes } = self.check_install(package, bytes, source, expected, rollback, migration)?;
+        if !changes { return old.ok_or_else(|| "安装状态无效".into()); }
         let revision = old
             .as_ref()
             .map_or(Some(1), |r| r.revision.checked_add(1))
@@ -351,7 +462,7 @@ impl Store {
         if package.manifest.id != id {
             return Err("回滚包身份不一致".into());
         }
-        self.install_internal(&package, &bytes, &source, Some(revision), true)
+        self.install_internal(&package, &bytes, &source, Some(revision), true, None)
     }
     pub fn value(&self, plugin: &str, scope: &str, key: &str) -> Result<Value, String> {
         validate_key(key, false)?;
@@ -559,6 +670,130 @@ mod tests {
             },
         };
         (package, bytes, source)
+    }
+    #[test]
+    fn migration_confirmation_is_explicit_and_bound_to_one_review() {
+        with_store(|store, _| {
+            let (first, bytes, source) = package("1.0.0", "first/origin");
+            let old = store.install(&first, &bytes, &source, None).unwrap();
+            let mut target = source.clone();
+            if let Source::Github { entry } = &mut target { entry.repository = "second/origin".into(); }
+            let a = SourceMigration::preview(&old, &target, &old.sha256).unwrap();
+            let b = SourceMigration::preview(&old, &target, &old.sha256).unwrap();
+            assert!(SourceMigration::confirm(Some(&a), Some(&a.id)).is_ok());
+            assert!(SourceMigration::confirm(Some(&a), None).is_err());
+            assert!(SourceMigration::confirm(Some(&a), Some(&b.id)).is_err());
+            assert!(SourceMigration::confirm(None, Some(&a.id)).is_err());
+            assert!(SourceMigration::confirm(None, None).is_ok());
+            assert!(!store.validate_reviewed_install(&first, &bytes, &source, Some(old.revision), None).unwrap());
+            assert!(store.validate_reviewed_install(&first, &bytes, &target, Some(old.revision), Some(&a)).unwrap());
+            assert!(store.validate_reviewed_install(&first, &bytes, &target, Some(old.revision), None).is_err());
+        });
+    }
+    #[test]
+    fn reviewed_source_migration_preserves_data_bindings_state_and_rollback() {
+        for state in ["enabled", "disabled", "removed"] {
+            with_store(|store, _| {
+                let (first, bytes, source) = package("1.0.0", "publisher/old-project");
+                let a = store.install(&first, &bytes, &source, None).unwrap();
+                store.set_value(&a.manifest.id, "global", "config", &serde_json::json!({"bank":"original","enabled":true})).unwrap();
+                store.set_value(&a.manifest.id, "agent", "history", &serde_json::json!(["first","second"])).unwrap();
+                store.set_binding("personality", "memory", Some(&a.manifest.id), Some("memory"), Some(0)).unwrap();
+                let a = if state == "enabled" { a } else { store.set_state(&a.manifest.id, a.revision, state).unwrap() };
+                let (next, next_bytes, target) = package("2.0.0", "publisher/independent-project");
+                let digest = format!("{:x}", Sha256::digest(&next_bytes));
+                let review = SourceMigration::preview(&a, &target, &digest).unwrap();
+                let b = store.install_migrating(&next, &next_bytes, &target, Some(a.revision), &review).unwrap();
+                assert_eq!(b.manifest.id, a.manifest.id);
+                let expected_state = if state == "removed" { "enabled" } else { state };
+                assert_eq!(b.state, expected_state);
+                assert_eq!(serde_json::to_value(&review).unwrap()["operation"], if state == "removed" { "migrate-and-install" } else { "migrate" });
+                assert_eq!(b.revision, a.revision + 1);
+                assert_eq!(b.source, target);
+                assert!(b.has_rollback);
+                assert_eq!(store.value(&b.manifest.id, "global", "config").unwrap()["bank"], "original");
+                assert_eq!(store.value(&b.manifest.id, "agent", "history").unwrap(), serde_json::json!(["first","second"]));
+                let binding = store.binding("personality", "memory").unwrap().unwrap();
+                assert_eq!(binding.plugin_id.as_deref(), Some(a.manifest.id.as_str()));
+                assert_eq!(binding.revision, 1);
+                let restored = store.rollback(&b.manifest.id, b.revision).unwrap();
+                assert_eq!(restored.source, source);
+                assert_eq!(restored.sha256, a.sha256);
+                assert_eq!(restored.state, expected_state);
+                assert_eq!(store.value(&restored.manifest.id, "agent", "history").unwrap(), serde_json::json!(["first","second"]));
+            });
+        }
+    }
+    #[test]
+    fn same_bytes_same_version_can_move_from_local_to_github_and_survive_reopen() {
+        with_store(|store, root| {
+            let (package, bytes, github) = package("1.0.0", "different-author/project");
+            let local = Source::Local { path: "C:/former-location/development.zip".into() };
+            let a = store.install(&package, &bytes, &local, None).unwrap();
+            store.set_value(&a.manifest.id, "global", "note", &serde_json::json!("kept")).unwrap();
+            let review = SourceMigration::preview(&a, &github, &a.sha256).unwrap();
+            let moved = store.install_migrating(&package, &bytes, &github, Some(a.revision), &review).unwrap();
+            assert_eq!(moved.revision, a.revision + 1);
+            assert_eq!(moved.source, github);
+            assert_eq!(moved.sha256, a.sha256);
+            let reopened = Store::open(root).unwrap();
+            assert_eq!(reopened.get(&a.manifest.id).unwrap().source, github);
+            assert_eq!(reopened.value(&a.manifest.id, "global", "note").unwrap(), "kept");
+        });
+    }
+    #[test]
+    fn source_migration_review_cannot_be_reused_for_other_source_bytes_or_revision() {
+        with_store(|store, _| {
+            let (first, bytes, source) = package("1.0.0", "first/origin");
+            let a = store.install(&first, &bytes, &source, None).unwrap();
+            let (next, next_bytes, target) = package("2.0.0", "second/origin");
+            let review = SourceMigration::preview(&a, &target, &format!("{:x}", Sha256::digest(&next_bytes))).unwrap();
+            assert!(store.install(&next, &next_bytes, &target, Some(a.revision)).is_err());
+            let (other, other_bytes, other_source) = package("3.0.0", "third/origin");
+            assert!(store.install_migrating(&other, &other_bytes, &other_source, Some(a.revision), &review).is_err());
+            let (different, different_bytes, same_target) = package("3.0.0", "second/origin");
+            assert!(store.install_migrating(&different, &different_bytes, &same_target, Some(a.revision), &review).is_err());
+            let changed = store.set_state(&a.manifest.id, a.revision, "disabled").unwrap();
+            assert!(store.install_migrating(&next, &next_bytes, &target, Some(a.revision), &review).is_err());
+            assert!(store.install_migrating(&next, &next_bytes, &target, Some(changed.revision), &review).is_err());
+            assert_eq!(store.get(&a.manifest.id).unwrap().source, source);
+        });
+    }
+    #[test]
+    fn source_migration_keeps_version_and_archive_integrity_guards() {
+        with_store(|store, _| {
+            let (first, bytes, source) = package("2.0.0", "first/origin");
+            let a = store.install(&first, &bytes, &source, None).unwrap();
+            let (older, old_bytes, target) = package("1.0.0", "second/origin");
+            let review = SourceMigration::preview(&a, &target, &format!("{:x}", Sha256::digest(&old_bytes))).unwrap();
+            assert!(store.install_migrating(&older, &old_bytes, &target, Some(a.revision), &review).is_err());
+            let (repacked, repacked_bytes, target) = package("2.0.0+repacked", "second/origin");
+            let review = SourceMigration::preview(&a, &target, &format!("{:x}", Sha256::digest(&repacked_bytes))).unwrap();
+            assert!(store.install_migrating(&repacked, &repacked_bytes, &target, Some(a.revision), &review).is_err());
+            let (next, next_bytes, target) = package("3.0.0", "second/origin");
+            let review = SourceMigration::preview(&a, &target, &format!("{:x}", Sha256::digest(&next_bytes))).unwrap();
+            store.db.execute("UPDATE extensions SET archive=?1 WHERE id=?2", params![b"corrupted".as_slice(), &a.manifest.id]).unwrap();
+            assert!(store.install_migrating(&next, &next_bytes, &target, Some(a.revision), &review).is_err());
+            assert_eq!(store.get(&a.manifest.id).unwrap().source, source);
+            assert_eq!(store.get(&a.manifest.id).unwrap().revision, a.revision);
+        });
+    }
+    #[test]
+    fn source_migration_write_failure_cannot_change_origin_or_data() {
+        with_store(|store, _| {
+            let (first, bytes, source) = package("1.0.0", "first/origin");
+            let a = store.install(&first, &bytes, &source, None).unwrap();
+            store.set_value(&a.manifest.id, "global", "saved", &serde_json::json!(42)).unwrap();
+            let (next, next_bytes, target) = package("2.0.0", "second/origin");
+            let review = SourceMigration::preview(&a, &target, &format!("{:x}", Sha256::digest(&next_bytes))).unwrap();
+            store.db.execute_batch("CREATE TRIGGER refuse_migration BEFORE UPDATE ON extensions BEGIN SELECT RAISE(ABORT,'test failure'); END;").unwrap();
+            assert!(store.install_migrating(&next, &next_bytes, &target, Some(a.revision), &review).is_err());
+            let old = store.get(&a.manifest.id).unwrap();
+            assert_eq!(old.source, source);
+            assert_eq!(old.revision, a.revision);
+            assert_eq!(old.sha256, a.sha256);
+            assert_eq!(store.value(&a.manifest.id, "global", "saved").unwrap(), 42);
+        });
     }
     #[test]
     fn github_rollback_preserves_the_previous_release_identity_and_digest() {

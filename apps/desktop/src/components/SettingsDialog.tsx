@@ -16,6 +16,7 @@ import ConnectionsPanel from './ConnectionsPanel';
 import CaptureSettings from './CaptureSettings';
 import GeneralSettings from './GeneralSettings';
 import { AboutSettings, createSettingsInformation, DataSettings } from './SettingsFacts';
+import { createAppUpdateSettings } from './AppUpdateSettings';
 import type { Preferences } from '../interface-preferences';
 export type { Preferences } from '../interface-preferences';
 import { t } from '../i18n';
@@ -81,6 +82,7 @@ export default function SettingsDialog(props: Props) {
   const activePluginPage = createMemo(() => pluginPages().find(choice => tab() === `extension:${extensionServiceKey(choice)}`));
   createEffect(() => { if (extensionDiscoveryReady() && tab().startsWith('extension:') && !activePluginPage()) setTab('plugins'); });
   const facts = createSettingsInformation(() => tab() === 'general' || tab() === 'capture' || tab() === 'data' || tab() === 'about');
+  const updater = createAppUpdateSettings(() => true, undefined, { checkOnOpen: true });
   const [agentId, setAgentId] = createSignal(props.snapshot.scenes.find(s => s.id === props.snapshot.activeSceneId)?.agentId || props.snapshot.agents[0]?.id || '');
   const [agentPane, setAgentPane] = createSignal<'identity' | 'connection' | 'tools'>(props.initialTab === 'agent' ? 'connection' : 'identity');
   createEffect(() => {
@@ -98,7 +100,6 @@ export default function SettingsDialog(props: Props) {
     { id: 'agent' as const, label: 'Agent 与连接', icon: UserRound },
     { id: 'plugins' as const, label: '插件', icon: Puzzle },
     { id: 'data' as const, label: '数据', icon: Database },
-    { id: 'about' as const, label: '关于', icon: Info },
   ];
   onMount(() => closeButton.focus());
   const keyboard = (event: KeyboardEvent) => {
@@ -119,7 +120,7 @@ export default function SettingsDialog(props: Props) {
     <section ref={dialog} class="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title">
       <header class="settings-header" data-tauri-drag-region={props.draggable ? true : undefined}><h1 id="settings-title" data-tauri-drag-region={props.draggable ? true : undefined}>{t("设置")}</h1><button ref={closeButton} class="icon-button" title={t("关闭")} aria-label={t("关闭设置")} onClick={props.onClose}><X size={18} /></button></header>
       <div class="settings-body">
-        <nav class="settings-nav" aria-label={t("设置分类")}><For each={nav.filter(entry => entry.id !== 'agent' || agentEnabled())}>{entry => <button classList={{ selected: tab() === entry.id }} onClick={() => setTab(entry.id)}><entry.icon size={16} /><span>{t(entry.label)}</span></button>}</For><For each={pluginPages()}>{choice => <button classList={{ selected: tab() === `extension:${extensionServiceKey(choice)}` }} onClick={() => setTab(`extension:${extensionServiceKey(choice)}`)}><PluginIcon plugin={choice.record.manifest} size={16}/><span>{choice.service.title}</span></button>}</For></nav>
+        <nav class="settings-nav" aria-label={t("设置分类")}><div class="settings-nav-pages"><For each={nav.filter(entry => entry.id !== 'agent' || agentEnabled())}>{entry => <button classList={{ selected: tab() === entry.id }} onClick={() => setTab(entry.id)}><entry.icon size={16} /><span>{t(entry.label)}</span></button>}</For><For each={pluginPages()}>{choice => <button classList={{ selected: tab() === `extension:${extensionServiceKey(choice)}` }} onClick={() => setTab(`extension:${extensionServiceKey(choice)}`)}><PluginIcon plugin={choice.record.manifest} size={16}/><span>{choice.service.title}</span></button>}</For></div><button class="settings-nav-about" classList={{ selected: tab() === 'about' }} onClick={() => setTab('about')}><Info size={16}/><span>{t('关于')}</span><Show when={updater.status()?.availableVersion}><small class="settings-update-badge">{t('检测到新版本')}</small></Show></button></nav>
         <div class="settings-content">
           <div hidden={tab() !== 'general'}><GeneralSettings active={tab() === 'general'} agentEnabled={anyAgentEnabled()} preferences={props.preferences} onPreferences={props.onPreferences} platform={facts.info()?.platform} /></div>
           <div hidden={tab() !== 'capture'}><CaptureSettings active={tab() === 'capture'} preferences={props.preferences} onPreferences={props.onPreferences} platform={facts.info()?.platform} /></div>
@@ -133,7 +134,7 @@ export default function SettingsDialog(props: Props) {
           </div></Show>
           <div hidden={tab() !== 'plugins'}><PluginsPanel active={tab() === 'plugins'} /></div>
           <div hidden={tab() !== 'data'}><DataSettings data={facts} active={tab() === 'data'} /></div>
-          <div hidden={tab() !== 'about'}><AboutSettings data={facts} active={tab() === 'about'} /></div>
+          <div hidden={tab() !== 'about'}><AboutSettings data={facts} active={tab() === 'about'} updater={updater} /></div>
           <Show when={activePluginPage()} keyed>{choice => <ExtensionSettings choice={choice} onEscape={props.onClose}/>}</Show>
         </div>
       </div>

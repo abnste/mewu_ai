@@ -4,6 +4,7 @@ import { ArrowLeft, Check, ChevronRight, Download, LoaderCircle, RefreshCw, Tras
 import * as api from '../extension-bridge';
 import type { ExtensionCatalogEntry, ExtensionControl, ExtensionManifest, ExtensionProposal, ExtensionRecord, ExtensionSource } from '../extension-contracts';
 import { mergeExtensionRecords } from '../extension-state';
+import { extensionUpdateEntry } from '../extension-updates';
 import { extensionPlatformError, installedExtensionError, type HostPlatform } from '../plugin-platform';
 import { pluginTagLabels } from '../plugin-categories';
 import type { PluginTag } from '../plugin-contracts';
@@ -25,7 +26,7 @@ export default function CommunityExtensions(props: Props) {
   const [selected, setSelected] = createSignal(''), [proposal, setProposal] = createSignal<ExtensionProposal>();
   const [busy, setBusy] = createSignal(''), [error, setError] = createSignal(''), [loading, setLoading] = createSignal(false);
   const [confirmRemoval, setConfirmRemoval] = createSignal(false);
-  let disposed = false, serial = 0, navigation = 0, initialized = false, eventSerial = 0, unsubscribe: (() => void) | undefined, listening: Promise<void> | undefined;
+  let disposed = false, serial = 0, navigation = 0, eventSerial = 0, unsubscribe: (() => void) | undefined, listening: Promise<void> | undefined;
   const accept = (value: ExtensionRecord[]) => { if (!disposed) setRecords(old => mergeExtensionRecords(old, value)); };
   const record = (id: string) => records().find(record => record.manifest.id === id);
   const selectedRecord = () => record(proposal()?.manifest.id ?? selected());
@@ -39,8 +40,9 @@ export default function CommunityExtensions(props: Props) {
     const found = selectedCatalog(); if (found) return { manifest: found, source: { type: 'github', entry: found } };
   });
   const entries = createMemo(() => {
-    const text = props.query.trim().toLocaleLowerCase(), source = props.pane === 'discover' ? catalog()
-      : records().filter(record => record.source.type === 'github' && record.state !== 'removed').map(record => ({ ...record.manifest, repository: record.source.type === 'github' ? record.source.entry.repository : '' }));
+    const text = props.query.trim().toLocaleLowerCase(), known = new Set(catalog().map(entry => entry.id));
+    const source = props.pane === 'discover' ? catalog().filter(entry => !record(entry.id) || record(entry.id)!.state === 'removed')
+      : records().filter(record => record.state !== 'removed' && (record.source.type === 'github' || known.has(record.manifest.id))).map(record => ({ ...record.manifest, repository: record.source.type === 'github' ? record.source.entry.repository : '' }));
     return source.filter(entry => (!props.filter || entry.tags.includes(props.filter))
       && (!text || [entry.name, entry.id, entry.description, ...entry.tags.map(tagText)].join(' ').toLocaleLowerCase().includes(text)));
   });
@@ -59,15 +61,12 @@ export default function CommunityExtensions(props: Props) {
       await ensureListening(); if (disposed) return;
       const beforeEvents = eventSerial, installed = await api.getExtensions();
       if (beforeEvents === eventSerial) accept(installed);
-      if (props.pane === 'discover') {
-        const value = await api.getExtensionCatalog();
-        if (!disposed && current === serial) { rememberExtensionIcons(value.plugins); setCatalog(value.plugins); }
-      }
-      initialized = true;
+      const value = await api.getExtensionCatalog();
+      if (!disposed && current === serial) { rememberExtensionIcons(value.plugins); setCatalog(value.plugins); }
     } catch (cause) { if (!disposed && current === serial) setError(cause instanceof Error ? cause.message : String(cause)); }
     finally { if (!disposed && current === serial) setLoading(false); }
   }
-  createEffect(on(() => [props.active, props.pane] as const, ([active]) => { if (active && (!initialized || props.pane === 'discover')) void refresh(); }));
+  createEffect(on(() => [props.active, props.pane] as const, ([active]) => { if (active) void refresh(); }));
   createEffect(on(() => props.refreshRequest, () => { if (props.active) void refresh(); }, { defer: true }));
   createEffect(on(() => props.addRequest, () => { if (props.active) void prepare(); }, { defer: true }));
   createEffect(on(() => props.pane, () => back(), { defer: true }));
@@ -90,14 +89,17 @@ export default function CommunityExtensions(props: Props) {
   async function install() {
     const value = proposal(); if (!value) return;
     if (unsupported(value.manifest, value.source)) return;
-    await operate(value.manifest.id, async () => { accept(await api.installExtension(value.id)); if (!disposed && proposal()?.id === value.id) setProposal(undefined); });
+    if (value.sourceMigration && (value.sourceMigration.schemaVersion !== 1 || !['migrate', 'migrate-and-install'].includes(value.sourceMigration.operation))) { setError(t('插件迁移协议版本不受支持')); return; }
+    await operate(value.manifest.id, async () => { accept(await api.installExtension(value.id, value.sourceMigration?.id)); if (!disposed && proposal()?.id === value.id) setProposal(undefined); });
   }
   async function control(value: ExtensionRecord, action: ExtensionControl) {
     if (action !== 'disable' && action !== 'remove' && installedExtensionError(value, props.platform)) return;
     await operate(value.manifest.id, async () => { accept(await api.controlExtension(value, action)); if (!disposed) { setConfirmRemoval(false); if (action === 'remove') back(); } });
   }
   const status = (value?: ExtensionRecord) => !value || value.state === 'removed' ? t('未安装') : value.state === 'enabled' ? t('已启用') : t('已停用');
-  const updateEntry = () => { const value = selectedCatalog(), installed = selectedRecord(); return value && installed && value.version !== installed.manifest.version ? value : undefined; };
+  const availableUpdate = (id: string) => { const installed = record(id); return installed ? extensionUpdateEntry(installed, catalog()) : undefined; };
+  const updateEntry = () => availableUpdate(selected());
+  const updateLabel = (id: string) => availableUpdate(id)?.version === record(id)?.manifest.version ? t('迁移来源') : t('更新');
   return <div class="community-extensions" onKeyDown={event => { if (event.key === 'Escape' && detail()) { event.preventDefault(); event.stopPropagation(); back(); } }}>
     <Show when={!api.extensionNative}><p class="plugin-empty">{t('请在桌面版管理插件')}</p></Show>
     <Show when={error()}><div class="plugin-error" role="alert"><span>{error()}</span><button class="icon-button compact" aria-label={t('关闭提示')} onClick={() => setError('')}><X size={13}/></button></div></Show>
@@ -109,7 +111,9 @@ export default function CommunityExtensions(props: Props) {
           <p class="plugin-description">{entry.description}</p><div class="plugin-tags"><span>{entry.version}</span><span>{entry.repository || t('本地开发包')}</span><For each={entry.tags}>{tag => <span>{tagText(tag)}</span>}</For></div>
         </div><div class="plugin-row-actions">
           <Show when={record(entry.id) && record(entry.id)!.state !== 'removed'} fallback={<button class="secondary-button" title={entryError(entry) && t(entryError(entry)!)} disabled={Boolean(busy()) || !api.extensionNative || Boolean(entryError(entry))} onClick={() => void prepare(entry as ExtensionCatalogEntry)}><Download size={13}/>{t('安装')}</button>}>
+            <Show when={availableUpdate(entry.id)} fallback={
             <button class="secondary-button" title={entryError(entry) && t(entryError(entry)!)} disabled={Boolean(busy()) || (record(entry.id)?.state !== 'enabled' && Boolean(entryError(entry)))} aria-pressed={record(entry.id)?.state === 'enabled'} onClick={() => void control(record(entry.id)!, record(entry.id)!.state === 'enabled' ? 'disable' : 'enable')}><Show when={record(entry.id)?.state === 'enabled'}><Check size={13}/></Show>{record(entry.id)?.state === 'enabled' ? t('已启用') : t('启用')}</button>
+            }>{update => <button class="secondary-button" disabled={Boolean(busy()) || Boolean(unsupported(update()))} onClick={() => void prepare(update())}><RefreshCw size={13}/>{updateLabel(entry.id)}</button>}</Show>
           </Show><span class="plugin-status"><Show when={busy() === entry.id} fallback={entryError(entry) ? t(entryError(entry)!) : status(record(entry.id))}><LoaderCircle size={12} class="spin"/></Show></span>
         </div>
       </article>}</For></div>
@@ -122,12 +126,13 @@ export default function CommunityExtensions(props: Props) {
       <div class="plugin-detail-actions"><span class="plugin-status"><Show when={busy()} fallback={selectedError() ? t(selectedError()!) : proposal() ? t('待确认') : status(selectedRecord())}><LoaderCircle size={13} class="spin"/>{t('处理中')}</Show></span>
         <Show when={proposal()} fallback={<Show when={selectedRecord() && selectedRecord()!.state !== 'removed'} fallback={<button class="primary-button" disabled={Boolean(busy()) || Boolean(selectedError())} onClick={() => void prepare(selectedCatalog())}><Download size={13}/>{t('安装')}</button>}>
           <button class="secondary-button" title={selectedError() && t(selectedError()!)} disabled={Boolean(busy()) || (selectedRecord()?.state !== 'enabled' && Boolean(selectedError()))} onClick={() => void control(selectedRecord()!, selectedRecord()!.state === 'enabled' ? 'disable' : 'enable')}>{selectedRecord()?.state === 'enabled' ? t('停用') : t('启用')}</button>
-          <Show when={updateEntry()}>{entry => <button class="secondary-button" title={unsupported(entry()) && t(unsupported(entry())!)} disabled={Boolean(busy()) || Boolean(unsupported(entry()))} onClick={() => void prepare(entry())}><RefreshCw size={13}/>{t('安装更新')}{entry().version}</button>}</Show>
+          <Show when={updateEntry()}>{entry => <button class="secondary-button" title={unsupported(entry()) && t(unsupported(entry())!)} disabled={Boolean(busy()) || Boolean(unsupported(entry()))} onClick={() => void prepare(entry())}><RefreshCw size={13}/>{updateLabel(entry().id)}</button>}</Show>
           <Show when={selectedRecord()?.hasRollback}><button class="secondary-button" disabled={Boolean(busy()) || Boolean(selectedError())} onClick={() => void control(selectedRecord()!, 'rollback')}><Undo2 size={13}/>{t('恢复上一版')}</button></Show>
           <button class="icon-button" disabled={Boolean(busy())} aria-label={t('卸载插件')} title={t('卸载插件')} onClick={() => setConfirmRemoval(true)}><Trash2 size={15}/></button>
-        </Show>}><button class="secondary-button" disabled={Boolean(busy())} onClick={back}>{t('取消')}</button><button class="primary-button" disabled={Boolean(busy()) || Boolean(selectedError())} onClick={() => void install()}><Download size={13}/>{proposal()?.expectedRevision ? t('安装更新') : t('安装')}</button></Show>
+        </Show>}><button class="secondary-button" disabled={Boolean(busy())} onClick={back}>{t('取消')}</button><button class="primary-button" disabled={Boolean(busy()) || Boolean(selectedError())} onClick={() => void install()}><Download size={13}/>{proposal()?.sourceMigration ? proposal()?.sourceMigration?.operation === 'migrate-and-install' ? t('迁移并安装') : t('确认迁移') : proposal()?.expectedRevision && selectedRecord()?.state !== 'removed' ? t('更新') : t('安装')}</button></Show>
       </div>
       <Show when={confirmRemoval()}><div class="plugin-confirm"><span>{t('卸载')}{value().manifest.name}？</span><button class="text-button" disabled={Boolean(busy())} onClick={() => setConfirmRemoval(false)}>{t('取消')}</button><button class="secondary-button" disabled={Boolean(busy())} onClick={() => void control(selectedRecord()!, 'remove')}>{t('卸载')}</button></div></Show>
+      <Show when={proposal()?.sourceMigration}>{migration => <section class="plugin-detail-section"><h4>{t('来源迁移')}</h4><dl class="plugin-metadata"><dt>{t('原来源')}</dt><dd>{sourceText(migration().from)}</dd><dt>{t('新来源')}</dt><dd>{sourceText(value().source)}</dd></dl><p class="plugin-description">{migration().operation === 'migrate-and-install' ? t('保留配置、凭据和数据，从新来源重新安装。') : t('保留配置、凭据和数据，启停状态不变。')}{t('新来源将接管后续更新及此插件的数据访问。')}</p></section>}</Show>
       <dl class="plugin-metadata"><Show when={value().source.type === 'local'}><dt>{t('来源')}</dt><dd>{sourceText(value().source)}</dd></Show><dt>{t('标识')}</dt><dd>{value().manifest.id}</dd>
         <Show when={'license' in value().manifest}><dt>{t('许可')}</dt><dd>{(value().manifest as ExtensionManifest).license}</dd></Show>
         <Show when={proposal() || selectedRecord()}><dt>SHA-256</dt><dd>{proposal()?.sha256 ?? selectedRecord()?.sha256}</dd></Show></dl>

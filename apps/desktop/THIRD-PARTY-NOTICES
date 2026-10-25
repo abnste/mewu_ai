@@ -1,20 +1,20 @@
 # Mewu 1.0 desktop — third-party notices
 
-Generated from the locked dependency graph on 2026-10-20.
+Generated from the locked dependency graph on 2026-10-25.
 
 This notice belongs to the Rust/Tauri/Solid desktop application. Legacy WPF dependency notices remain with the legacy releases; those binaries are not shipped in this release.
 
 ## Scope and evidence
 
-- Cargo.lock SHA-256: 8621f03c4e7aaced8479202b0c31547ad9db8477dc8717b6a1528eaa6339dc40
-- package-lock.json SHA-256: bf27f5e94ef761d30ee6ab7535e037e452dd58a8233dde7225ee86393393e5fc
-- 763 external Cargo packages and 139 external npm package entries. Workspace-owned packages and workspace symlinks are excluded.
+- Cargo.lock SHA-256: a7dfd60382d95ea85257f93db77c24b52e7559f84533684a913ab98cae4dcc7b
+- package-lock.json SHA-256: bf40fcd6a832a84cb9dfffc93dbcc0c75fb01fdfcf03c8aaefdc2453a656b169
+- 763 external Cargo packages and 140 external npm package entries. Workspace-owned packages and workspace symlinks are excluded.
 - 480 external Cargo packages are reachable in the default-feature x86_64-pc-windows-msvc metadata graph, including build dependencies. The larger all-platform inventory is not a list of Windows-linked libraries.
 - Cargo declarations come from cargo metadata --locked --format-version 1 and the registry packages resolved by Cargo.lock. npm declarations come from package-lock.json; installed package versions are checked before reading their files.
 - The inventory includes runtime, build-time, and optional packages for other operating systems. Inclusion does not mean that every listed package is linked into the Windows executable or that every platform is implemented.
 - Each L-number below identifies a complete collected UTF-8 LICENSE, COPYING, COPYRIGHT, or NOTICE text, or an explicitly identified standard-license supplement. Identical texts are stored once with all source-package references. Relative paths are inside the relevant third-party package; no private development records are included.
 - Output formatting normalizes line endings and removes trailing whitespace on each line; all license wording is retained. Empty quoted lines are rendered as > without a trailing space.
-- 791 package entries have collected legal text; 111 have declarations only. Missing text is explicitly marked below. 456 distinct texts are included.
+- 792 package entries have collected legal text; 111 have declarations only. Missing text is explicitly marked below. 457 distinct texts are included.
 - Every package in the Windows non-dev dependency graph has complete collected legal text. Declaration-only entries below concern optional, development or other-platform packages; they are not evidence of a license review for a future platform release. Bundled mathematical font notices are retained separately below. System WebView2 and Windows media/graphics runtimes are supplied by Microsoft, not relicensed by Mewu.
 - r-efi 5.3.0 and 6.0.0 declare MIT OR Apache-2.0 OR LGPL-2.1-or-later. MIT is the selected alternative for this inventory; unselected LGPL/Apache text is not used as the license of Mewu. Other OR expressions retain their upstream alternatives; AND components apply together.
 - aws-lc-sys 0.45.0 includes an upstream statement expressly selecting the BSD-3-Clause alternative for Jitter Entropy, rather than GPL-2.0. That complete statement is retained below; its mention of GPL is not a selection of GPL for this dependency.
@@ -84,16 +84,16 @@ Reproduce with Cargo, Node.js, and ripgrep on PATH, after npm ci: node apps/desk
 | Cargo | plist | 1.10.1 | MIT | direct (runtime) | LICENCE [L233] |
 | Cargo | process-wrap | 10.0.1 | Apache-2.0 OR MIT | direct (runtime) | COPYRIGHT [L242]; LICENSE-APACHE [L011]; LICENSE-MIT [L004] |
 | Cargo | pulldown-cmark | 0.13.4 | MIT | direct (runtime) | LICENSE [L243] |
-| Cargo | ratex-layout | 0.1.14 | MIT | direct (runtime) | verified repository LICENSE supplement [L449] |
-| Cargo | ratex-parser | 0.1.14 | MIT | direct (runtime) | verified repository LICENSE supplement [L449] |
-| Cargo | ratex-svg | 0.1.14 | MIT | direct (runtime) | verified repository LICENSE supplement [L449] |
-| Cargo | ratex-types | 0.1.14 | MIT | direct (runtime) | verified repository LICENSE supplement [L449] |
-| Cargo | ratex-unicode-font | 0.1.14 | MIT | direct (runtime) | verified repository LICENSE supplement [L449] |
+| Cargo | ratex-layout | 0.1.14 | MIT | direct (runtime) | verified repository LICENSE supplement [L450] |
+| Cargo | ratex-parser | 0.1.14 | MIT | direct (runtime) | verified repository LICENSE supplement [L450] |
+| Cargo | ratex-svg | 0.1.14 | MIT | direct (runtime) | verified repository LICENSE supplement [L450] |
+| Cargo | ratex-types | 0.1.14 | MIT | direct (runtime) | verified repository LICENSE supplement [L450] |
+| Cargo | ratex-unicode-font | 0.1.14 | MIT | direct (runtime) | verified repository LICENSE supplement [L450] |
 | Cargo | regex | 1.13.1 | MIT OR Apache-2.0 | direct (runtime) | LICENSE-APACHE [L005]; LICENSE-MIT [L039] |
 | Cargo | reqwest | 0.13.5 | MIT OR Apache-2.0 | direct (runtime) | LICENSE-APACHE [L261]; LICENSE-MIT [L262] |
 | Cargo | resvg | 0.48.1 | Apache-2.0 OR MIT | direct (runtime) | LICENSE-APACHE [L001]; LICENSE-MIT [L263] |
 | Cargo | rfd | 0.17.2 | MIT | direct (runtime) | LICENSE [L264]; src/backend/xdg_desktop_portal/window_identifier/LICENSE [L265] |
-| Cargo | rmcp | 3.5.1 | Apache-2.0 | direct (runtime) | verified repository LICENSE supplement [L447] |
+| Cargo | rmcp | 3.5.1 | Apache-2.0 | direct (runtime) | verified repository LICENSE supplement [L448] |
 | Cargo | roxmltree | 0.21.1 | MIT OR Apache-2.0 | direct (runtime) | LICENSE-APACHE [L005]; LICENSE-MIT [L272] |
 | Cargo | rquickjs | 0.14.0 | MIT | direct (runtime) | LICENSE [L275] |
 | Cargo | rusqlite | 0.40.2 | MIT | direct (runtime) | LICENSE [L197] |
@@ -121,7 +121,7 @@ Reproduce with Cargo, Node.js, and ripgrep on PATH, after npm ci: node apps/desk
 | Cargo | url | 2.5.8 | MIT OR Apache-2.0 | direct (runtime) | LICENSE-APACHE [L005]; LICENSE-MIT [L085] |
 | Cargo | uuid | 1.27.0 | Apache-2.0 OR MIT | direct (runtime) | LICENSE-APACHE [L005]; LICENSE-MIT [L353] |
 | Cargo | webkit2gtk | 2.0.2 | MIT | direct (runtime) | LICENSE [L364] |
-| Cargo | webview2-com | 0.39.1 | MIT | direct (runtime) | verified repository LICENSE supplement [L451] |
+| Cargo | webview2-com | 0.39.1 | MIT | direct (runtime) | verified repository LICENSE supplement [L452] |
 | Cargo | widestring | 1.2.1 | MIT OR Apache-2.0 | direct (runtime) | LICENSE-APACHE [L001]; LICENSE-MIT [L150] |
 | Cargo | windows-capture | 2.0.1 | MIT | direct (runtime) | LICENCE [L372] |
 | Cargo | windows-future | 0.3.2 | MIT OR Apache-2.0 | direct (runtime) | license-apache-2.0 [L370]; license-mit [L371] |
@@ -135,15 +135,16 @@ Reproduce with Cargo, Node.js, and ripgrep on PATH, after npm ci: node apps/desk
 | Cargo | zip | 6.0.0 | MIT | direct (runtime) | LICENSE [L391] |
 | npm | @tauri-apps/api | 2.12.1 | Apache-2.0 OR MIT | direct (runtime) | LICENSE-APACHE-2.0 [L017]; LICENSE-MIT [L320]; LICENSE.spdx [L403] |
 | npm | @tauri-apps/cli | 2.12.1 | Apache-2.0 OR MIT | direct (build/dev) | LICENSE-APACHE-2.0 [L017]; LICENSE-MIT [L320] |
-| npm | dompurify | 3.4.16 | (MPL-2.0 OR Apache-2.0) | direct (runtime) | LICENSE [L061]; LICENSE-MPL [L080]; src/license_header [L414] |
-| npm | entities | 6.0.1 | BSD-2-Clause | direct (runtime) | LICENSE [L416] |
-| npm | katex | 0.19.0 | MIT | direct (runtime) | LICENSE [L425]; separate font OFL-1.1 notice [L446]; code MIT notice remains separate |
-| npm | lucide-solid | 1.52.0 | ISC | direct (runtime) | LICENSE [L428] |
-| npm | marked | 18.1.0 | MIT | direct (runtime) | LICENSE [L429] |
+| npm | compare-versions | 6.1.1 | MIT | direct (runtime) | LICENSE [L411] |
+| npm | dompurify | 3.4.16 | (MPL-2.0 OR Apache-2.0) | direct (runtime) | LICENSE [L061]; LICENSE-MPL [L080]; src/license_header [L415] |
+| npm | entities | 6.0.1 | BSD-2-Clause | direct (runtime) | LICENSE [L417] |
+| npm | katex | 0.19.0 | MIT | direct (runtime) | LICENSE [L426]; separate font OFL-1.1 notice [L447]; code MIT notice remains separate |
+| npm | lucide-solid | 1.52.0 | ISC | direct (runtime) | LICENSE [L429] |
+| npm | marked | 18.1.0 | MIT | direct (runtime) | LICENSE [L430] |
 | npm | solid-js | 1.9.17 | MIT | direct (runtime) | LICENSE [L407] |
-| npm | typescript | 7.0.2 | Apache-2.0 | direct (build/dev) | LICENSE [L404]; NOTICE.txt [L405]; vendor/vscode-jsonrpc/License.txt [L442] |
+| npm | typescript | 7.0.2 | Apache-2.0 | direct (build/dev) | LICENSE [L404]; NOTICE.txt [L405]; vendor/vscode-jsonrpc/License.txt [L443] |
 | npm | vite-plugin-solid | 2.11.14 | MIT | direct (build/dev) | METADATA ONLY — license/copyright text not collected |
-| npm | vite | 8.3.3 | MIT | direct (build/dev) | LICENSE.md [L444] |
+| npm | vite | 8.3.3 | MIT | direct (build/dev) | LICENSE.md [L445] |
 
 ## Transitive dependencies
 
@@ -551,9 +552,9 @@ Reproduce with Cargo, Node.js, and ripgrep on PATH, after npm ci: node apps/desk
 | Cargo | rand_pcg | 0.10.2 | MIT OR Apache-2.0 | transitive | COPYRIGHT [L250]; LICENSE-APACHE [L248]; LICENSE-MIT [L252] |
 | Cargo | rand | 0.10.3 | MIT OR Apache-2.0 | transitive | COPYRIGHT [L250]; LICENSE-APACHE [L253]; LICENSE-MIT [L251] |
 | Cargo | rand | 0.8.8 | MIT OR Apache-2.0 | transitive | COPYRIGHT [L250]; LICENSE-APACHE [L253]; LICENSE-MIT [L251] |
-| Cargo | ratex-font-loader | 0.1.14 | MIT | transitive | verified repository LICENSE supplement [L449] |
-| Cargo | ratex-font | 0.1.14 | MIT | transitive | verified repository LICENSE supplement [L449] |
-| Cargo | ratex-lexer | 0.1.14 | MIT | transitive | verified repository LICENSE supplement [L449] |
+| Cargo | ratex-font-loader | 0.1.14 | MIT | transitive | verified repository LICENSE supplement [L450] |
+| Cargo | ratex-font | 0.1.14 | MIT | transitive | verified repository LICENSE supplement [L450] |
+| Cargo | ratex-lexer | 0.1.14 | MIT | transitive | verified repository LICENSE supplement [L450] |
 | Cargo | raw-window-handle | 0.6.2 | MIT OR Apache-2.0 OR Zlib | transitive | LICENSE-APACHE.md [L017]; LICENSE-MIT.md [L254]; LICENSE-ZLIB.md [L255] |
 | Cargo | rayon-core | 1.13.0 | MIT OR Apache-2.0 | transitive | LICENSE-APACHE [L005]; LICENSE-MIT [L256] |
 | Cargo | rayon | 1.12.0 | MIT OR Apache-2.0 | transitive | LICENSE-APACHE [L005]; LICENSE-MIT [L256] |
@@ -594,7 +595,7 @@ Reproduce with Cargo, Node.js, and ripgrep on PATH, after npm ci: node apps/desk
 | Cargo | scoped-tls | 1.0.1 | MIT/Apache-2.0 | transitive | LICENSE-APACHE [L005]; LICENSE-MIT [L052] |
 | Cargo | scopeguard | 1.2.0 | MIT OR Apache-2.0 | transitive | LICENSE-APACHE [L005]; LICENSE-MIT [L287] |
 | Cargo | security-framework-sys | 2.17.0 | MIT OR Apache-2.0 | transitive | LICENSE-APACHE [L005]; LICENSE-MIT [L288] |
-| Cargo | selectors | 0.38.0 | MPL-2.0 | transitive | declared license standard text [L450] |
+| Cargo | selectors | 0.38.0 | MPL-2.0 | transitive | declared license standard text [L451] |
 | Cargo | serde_core | 1.0.229 | MIT OR Apache-2.0 | transitive | LICENSE-APACHE [L011]; LICENSE-MIT [L004] |
 | Cargo | serde_derive_internals | 0.29.1 | MIT OR Apache-2.0 | transitive | LICENSE-APACHE [L011]; LICENSE-MIT [L004] |
 | Cargo | serde_derive | 1.0.229 | MIT OR Apache-2.0 | transitive | LICENSE-APACHE [L011]; LICENSE-MIT [L004] |
@@ -708,11 +709,11 @@ Reproduce with Cargo, Node.js, and ripgrep on PATH, after npm ci: node apps/desk
 | Cargo | usvg | 0.48.1 | Apache-2.0 OR MIT | transitive | LICENSE-APACHE [L001]; LICENSE-MIT [L263] |
 | Cargo | utf8_iter | 1.0.4 | Apache-2.0 OR MIT | transitive | COPYRIGHT [L351]; LICENSE-APACHE [L061]; LICENSE-MIT [L109] |
 | Cargo | utf8parse | 0.2.2 | Apache-2.0 OR MIT | transitive | LICENSE-APACHE [L011]; LICENSE-MIT [L352] |
-| Cargo | uuid-simd | 0.8.0 | MIT | transitive | verified repository LICENSE supplement [L448] |
+| Cargo | uuid-simd | 0.8.0 | MIT | transitive | verified repository LICENSE supplement [L449] |
 | Cargo | vcpkg | 0.2.15 | MIT/Apache-2.0 | transitive | LICENSE-APACHE [L005]; LICENSE-MIT [L354] |
 | Cargo | version_check | 0.9.5 | MIT/Apache-2.0 | transitive | LICENSE-APACHE [L005]; LICENSE-MIT [L355] |
 | Cargo | version-compare | 0.2.1 | MIT | transitive | LICENSE [L356] |
-| Cargo | vsimd | 0.8.0 | MIT | transitive | verified repository LICENSE supplement [L448] |
+| Cargo | vsimd | 0.8.0 | MIT | transitive | verified repository LICENSE supplement [L449] |
 | Cargo | vswhom-sys | 0.1.3 | MIT | transitive | LICENSE [L357] |
 | Cargo | vswhom | 0.1.0 | MIT | transitive | LICENSE [L357] |
 | Cargo | walkdir | 2.5.0 | Unlicense/MIT | transitive | COPYING [L007]; LICENSE-MIT [L008]; UNLICENSE [L009] |
@@ -737,8 +738,8 @@ Reproduce with Cargo, Node.js, and ripgrep on PATH, after npm ci: node apps/desk
 | Cargo | web-time | 1.1.0 | MIT OR Apache-2.0 | transitive | LICENSE-APACHE [L361]; LICENSE-MIT [L362] |
 | Cargo | webkit2gtk-sys | 2.0.2 | MIT | transitive | LICENSE [L363] |
 | Cargo | webpki-root-certs | 1.0.9 | CDLA-Permissive-2.0 | transitive | LICENSE [L365] |
-| Cargo | webview2-com-macros | 0.8.1 | MIT | transitive | verified repository LICENSE supplement [L451] |
-| Cargo | webview2-com-sys | 0.39.1 | MIT | transitive | verified repository LICENSE supplement [L451] |
+| Cargo | webview2-com-macros | 0.8.1 | MIT | transitive | verified repository LICENSE supplement [L452] |
+| Cargo | webview2-com-sys | 0.39.1 | MIT | transitive | verified repository LICENSE supplement [L452] |
 | Cargo | weezl | 0.1.12 | MIT OR Apache-2.0 | transitive | LICENSE-APACHE [L005]; LICENSE-MIT [L366] |
 | Cargo | winapi-i686-pc-windows-gnu | 0.4.0 | MIT/Apache-2.0 | transitive | METADATA ONLY — license/copyright text not collected |
 | Cargo | winapi-util | 0.1.11 | Unlicense OR MIT | transitive | COPYING [L007]; LICENSE-MIT [L284]; UNLICENSE [L009] |
@@ -903,20 +904,20 @@ Reproduce with Cargo, Node.js, and ripgrep on PATH, after npm ci: node apps/desk
 | npm | browserslist | 4.29.3 | MIT | transitive (build/dev) | LICENSE [L408] |
 | npm | caniuse-lite | 1.0.30001815 | CC-BY-4.0 | transitive (build/dev) | LICENSE [L409] |
 | npm | commander | 15.0.0 | MIT | transitive | LICENSE [L410] |
-| npm | convert-source-map | 2.0.0 | MIT | transitive (build/dev) | LICENSE [L411] |
-| npm | csstype | 3.2.3 | MIT | transitive | LICENSE [L412] |
-| npm | debug | 4.4.3 | MIT | transitive (build/dev) | LICENSE [L413] |
+| npm | convert-source-map | 2.0.0 | MIT | transitive (build/dev) | LICENSE [L412] |
+| npm | csstype | 3.2.3 | MIT | transitive | LICENSE [L413] |
+| npm | debug | 4.4.3 | MIT | transitive (build/dev) | LICENSE [L414] |
 | npm | detect-libc | 2.1.2 | Apache-2.0 | transitive (build/dev) | LICENSE [L014] |
-| npm | electron-to-chromium | 1.5.451 | ISC | transitive (build/dev) | LICENSE [L415] |
-| npm | escalade | 3.2.0 | MIT | transitive (build/dev) | license [L417] |
-| npm | fdir | 6.5.0 | MIT | transitive (build/dev) | LICENSE [L418] |
+| npm | electron-to-chromium | 1.5.451 | ISC | transitive (build/dev) | LICENSE [L416] |
+| npm | escalade | 3.2.0 | MIT | transitive (build/dev) | license [L418] |
+| npm | fdir | 6.5.0 | MIT | transitive (build/dev) | LICENSE [L419] |
 | npm | fsevents | 2.3.3 | MIT | transitive (build/dev) | METADATA ONLY — license/copyright text not collected |
-| npm | gensync | 1.0.0-beta.2 | MIT | transitive (build/dev) | LICENSE [L419] |
-| npm | html-entities | 2.3.3 | MIT | transitive (build/dev) | LICENSE [L420] |
-| npm | is-what | 4.1.16 | MIT | transitive (build/dev) | LICENSE [L421] |
-| npm | js-tokens | 4.0.0 | MIT | transitive (build/dev) | LICENSE [L422] |
-| npm | jsesc | 3.1.0 | MIT | transitive (build/dev) | LICENSE-MIT.txt [L423] |
-| npm | json5 | 2.2.3 | MIT | transitive (build/dev) | LICENSE.md [L424] |
+| npm | gensync | 1.0.0-beta.2 | MIT | transitive (build/dev) | LICENSE [L420] |
+| npm | html-entities | 2.3.3 | MIT | transitive (build/dev) | LICENSE [L421] |
+| npm | is-what | 4.1.16 | MIT | transitive (build/dev) | LICENSE [L422] |
+| npm | js-tokens | 4.0.0 | MIT | transitive (build/dev) | LICENSE [L423] |
+| npm | jsesc | 3.1.0 | MIT | transitive (build/dev) | LICENSE-MIT.txt [L424] |
+| npm | json5 | 2.2.3 | MIT | transitive (build/dev) | LICENSE.md [L425] |
 | npm | lightningcss-android-arm64 | 1.33.0 | MPL-2.0 | transitive (build/dev) | METADATA ONLY — license/copyright text not collected |
 | npm | lightningcss-darwin-arm64 | 1.33.0 | MPL-2.0 | transitive (build/dev) | METADATA ONLY — license/copyright text not collected |
 | npm | lightningcss-darwin-x64 | 1.33.0 | MPL-2.0 | transitive (build/dev) | METADATA ONLY — license/copyright text not collected |
@@ -927,27 +928,27 @@ Reproduce with Cargo, Node.js, and ripgrep on PATH, after npm ci: node apps/desk
 | npm | lightningcss-linux-x64-gnu | 1.33.0 | MPL-2.0 | transitive (build/dev) | METADATA ONLY — license/copyright text not collected |
 | npm | lightningcss-linux-x64-musl | 1.33.0 | MPL-2.0 | transitive (build/dev) | METADATA ONLY — license/copyright text not collected |
 | npm | lightningcss-win32-arm64-msvc | 1.33.0 | MPL-2.0 | transitive (build/dev) | METADATA ONLY — license/copyright text not collected |
-| npm | lightningcss-win32-x64-msvc | 1.33.0 | MPL-2.0 | transitive (build/dev) | LICENSE [L426] |
-| npm | lightningcss | 1.33.0 | MPL-2.0 | transitive (build/dev) | LICENSE [L426] |
-| npm | lru-cache | 5.1.1 | ISC | transitive (build/dev) | LICENSE [L427] |
-| npm | merge-anything | 5.1.7 | MIT | transitive (build/dev) | LICENSE [L421] |
-| npm | ms | 2.1.3 | MIT | transitive (build/dev) | license.md [L430] |
-| npm | nanoid | 3.3.20 | MIT | transitive (build/dev) | LICENSE [L431] |
-| npm | node-releases | 2.0.57 | MIT | transitive (build/dev) | LICENSE [L432] |
-| npm | parse5 | 7.3.0 | MIT | transitive (build/dev) | LICENSE [L433] |
-| npm | picocolors | 1.1.1 | ISC | transitive (build/dev) | LICENSE [L434] |
-| npm | picomatch | 4.0.7 | MIT | transitive (build/dev) | LICENSE [L435] |
-| npm | postcss | 8.5.29 | MIT | transitive (build/dev) | LICENSE [L436] |
-| npm | rolldown | 1.2.13 | MIT | transitive (build/dev) | LICENSE [L437] |
-| npm | semver | 6.3.1 | ISC | transitive (build/dev) | LICENSE [L427] |
-| npm | seroval-plugins | 1.6.8 | MIT | transitive | LICENSE [L438] |
-| npm | seroval | 1.6.8 | MIT | transitive | LICENSE [L438] |
-| npm | solid-refresh | 0.6.3 | MIT | transitive (build/dev) | LICENSE [L439] |
-| npm | source-map-js | 1.2.2 | BSD-3-Clause | transitive (build/dev) | LICENSE [L440] |
-| npm | tinyglobby | 0.2.17 | MIT | transitive (build/dev) | LICENSE [L441] |
-| npm | update-browserslist-db | 1.3.4 | MIT | transitive (build/dev) | LICENSE [L443] |
-| npm | vitefu | 1.1.3 | MIT | transitive (build/dev) | LICENSE [L445] |
-| npm | yallist | 3.1.1 | ISC | transitive (build/dev) | LICENSE [L427] |
+| npm | lightningcss-win32-x64-msvc | 1.33.0 | MPL-2.0 | transitive (build/dev) | LICENSE [L427] |
+| npm | lightningcss | 1.33.0 | MPL-2.0 | transitive (build/dev) | LICENSE [L427] |
+| npm | lru-cache | 5.1.1 | ISC | transitive (build/dev) | LICENSE [L428] |
+| npm | merge-anything | 5.1.7 | MIT | transitive (build/dev) | LICENSE [L422] |
+| npm | ms | 2.1.3 | MIT | transitive (build/dev) | license.md [L431] |
+| npm | nanoid | 3.3.20 | MIT | transitive (build/dev) | LICENSE [L432] |
+| npm | node-releases | 2.0.57 | MIT | transitive (build/dev) | LICENSE [L433] |
+| npm | parse5 | 7.3.0 | MIT | transitive (build/dev) | LICENSE [L434] |
+| npm | picocolors | 1.1.1 | ISC | transitive (build/dev) | LICENSE [L435] |
+| npm | picomatch | 4.0.7 | MIT | transitive (build/dev) | LICENSE [L436] |
+| npm | postcss | 8.5.29 | MIT | transitive (build/dev) | LICENSE [L437] |
+| npm | rolldown | 1.2.13 | MIT | transitive (build/dev) | LICENSE [L438] |
+| npm | semver | 6.3.1 | ISC | transitive (build/dev) | LICENSE [L428] |
+| npm | seroval-plugins | 1.6.8 | MIT | transitive | LICENSE [L439] |
+| npm | seroval | 1.6.8 | MIT | transitive | LICENSE [L439] |
+| npm | solid-refresh | 0.6.3 | MIT | transitive (build/dev) | LICENSE [L440] |
+| npm | source-map-js | 1.2.2 | BSD-3-Clause | transitive (build/dev) | LICENSE [L441] |
+| npm | tinyglobby | 0.2.17 | MIT | transitive (build/dev) | LICENSE [L442] |
+| npm | update-browserslist-db | 1.3.4 | MIT | transitive (build/dev) | LICENSE [L444] |
+| npm | vitefu | 1.1.3 | MIT | transitive (build/dev) | LICENSE [L446] |
+| npm | yallist | 3.1.1 | ISC | transitive (build/dev) | LICENSE [L428] |
 
 ## Package-source locators
 
@@ -1799,6 +1800,7 @@ Reproduce with Cargo, Node.js, and ripgrep on PATH, after npm ci: node apps/desk
 - npm browserslist@4.29.3: https://registry.npmjs.org/browserslist/-/browserslist-4.29.3.tgz
 - npm caniuse-lite@1.0.30001815: https://registry.npmjs.org/caniuse-lite/-/caniuse-lite-1.0.30001815.tgz
 - npm commander@15.0.0: https://registry.npmjs.org/commander/-/commander-15.0.0.tgz
+- npm compare-versions@6.1.1: https://registry.npmjs.org/compare-versions/-/compare-versions-6.1.1.tgz
 - npm convert-source-map@2.0.0: https://registry.npmjs.org/convert-source-map/-/convert-source-map-2.0.0.tgz
 - npm csstype@3.2.3: https://registry.npmjs.org/csstype/-/csstype-3.2.3.tgz
 - npm debug@4.4.3: https://registry.npmjs.org/debug/-/debug-4.4.3.tgz
@@ -28646,6 +28648,35 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ### L411
 
 Source packages:
+- npm compare-versions@6.1.1 — LICENSE
+
+----- BEGIN UPSTREAM TEXT -----
+The MIT License (MIT)
+
+Copyright (c) 2015-2021 Ole Michelsen
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+----- END UPSTREAM TEXT -----
+
+### L412
+
+Source packages:
 - npm convert-source-map@2.0.0 — LICENSE
 
 ----- BEGIN UPSTREAM TEXT -----
@@ -28674,7 +28705,7 @@ FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 OTHER DEALINGS IN THE SOFTWARE.
 ----- END UPSTREAM TEXT -----
 
-### L412
+### L413
 
 Source packages:
 - npm csstype@3.2.3 — LICENSE
@@ -28701,7 +28732,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ----- END UPSTREAM TEXT -----
 
-### L413
+### L414
 
 Source packages:
 - npm debug@4.4.3 — LICENSE
@@ -28728,7 +28759,7 @@ WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN 
 SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ----- END UPSTREAM TEXT -----
 
-### L414
+### L415
 
 Source packages:
 - npm dompurify@3.4.16 — src/license_header
@@ -28737,7 +28768,7 @@ Source packages:
 /*! @license DOMPurify VERSION | (c) Cure53 and other contributors | Released under the Apache license 2.0 and Mozilla Public License 2.0 | github.com/cure53/DOMPurify/blob/VERSION/LICENSE */
 ----- END UPSTREAM TEXT -----
 
-### L415
+### L416
 
 Source packages:
 - npm electron-to-chromium@1.5.451 — LICENSE
@@ -28750,7 +28781,7 @@ Permission to use, copy, modify, and/or distribute this software for any purpose
 THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 ----- END UPSTREAM TEXT -----
 
-### L416
+### L417
 
 Source packages:
 - npm entities@6.0.1 — LICENSE
@@ -28769,7 +28800,7 @@ THIS IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRE
 EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ----- END UPSTREAM TEXT -----
 
-### L417
+### L418
 
 Source packages:
 - npm escalade@3.2.0 — license
@@ -28786,7 +28817,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ----- END UPSTREAM TEXT -----
 
-### L418
+### L419
 
 Source packages:
 - npm fdir@6.5.0 — LICENSE
@@ -28801,7 +28832,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ----- END UPSTREAM TEXT -----
 
-### L419
+### L420
 
 Source packages:
 - npm gensync@1.0.0-beta.2 — LICENSE
@@ -28816,7 +28847,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ----- END UPSTREAM TEXT -----
 
-### L420
+### L421
 
 Source packages:
 - npm html-entities@2.3.3 — LICENSE
@@ -28843,7 +28874,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ----- END UPSTREAM TEXT -----
 
-### L421
+### L422
 
 Source packages:
 - npm is-what@4.1.16 — LICENSE
@@ -28873,7 +28904,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ----- END UPSTREAM TEXT -----
 
-### L422
+### L423
 
 Source packages:
 - npm js-tokens@4.0.0 — LICENSE
@@ -28902,7 +28933,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ----- END UPSTREAM TEXT -----
 
-### L423
+### L424
 
 Source packages:
 - npm jsesc@3.1.0 — LICENSE-MIT.txt
@@ -28930,7 +28961,7 @@ OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ----- END UPSTREAM TEXT -----
 
-### L424
+### L425
 
 Source packages:
 - npm json5@2.2.3 — LICENSE.md
@@ -28961,7 +28992,7 @@ SOFTWARE.
 [others]: https://github.com/json5/json5/contributors
 ----- END UPSTREAM TEXT -----
 
-### L425
+### L426
 
 Source packages:
 - npm katex@0.19.0 — LICENSE
@@ -28990,7 +29021,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ----- END UPSTREAM TEXT -----
 
-### L426
+### L427
 
 Source packages:
 - npm lightningcss-win32-x64-msvc@1.33.0 — LICENSE
@@ -29372,7 +29403,7 @@ This Source Code Form is "Incompatible With Secondary Licenses", as
 defined by the Mozilla Public License, v. 2.0.
 ----- END UPSTREAM TEXT -----
 
-### L427
+### L428
 
 Source packages:
 - npm lru-cache@5.1.1 — LICENSE
@@ -29397,7 +29428,7 @@ ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR
 IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 ----- END UPSTREAM TEXT -----
 
-### L428
+### L429
 
 Source packages:
 - npm lucide-solid@1.52.0 — LICENSE
@@ -29448,7 +29479,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ----- END UPSTREAM TEXT -----
 
-### L429
+### L430
 
 Source packages:
 - npm marked@18.1.0 — LICENSE
@@ -29500,7 +29531,7 @@ Redistribution and use in source and binary forms, with or without modification,
 This software is provided by the copyright holders and contributors “as is” and any express or implied warranties, including, but not limited to, the implied warranties of merchantability and fitness for a particular purpose are disclaimed. In no event shall the copyright owner or contributors be liable for any direct, indirect, incidental, special, exemplary, or consequential damages (including, but not limited to, procurement of substitute goods or services; loss of use, data, or profits; or business interruption) however caused and on any theory of liability, whether in contract, strict liability, or tort (including negligence or otherwise) arising in any way out of the use of this software, even if advised of the possibility of such damage.
 ----- END UPSTREAM TEXT -----
 
-### L430
+### L431
 
 Source packages:
 - npm ms@2.1.3 — license.md
@@ -29529,7 +29560,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ----- END UPSTREAM TEXT -----
 
-### L431
+### L432
 
 Source packages:
 - npm nanoid@3.3.20 — LICENSE
@@ -29557,7 +29588,7 @@ IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ----- END UPSTREAM TEXT -----
 
-### L432
+### L433
 
 Source packages:
 - npm node-releases@2.0.57 — LICENSE
@@ -29586,7 +29617,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ----- END UPSTREAM TEXT -----
 
-### L433
+### L434
 
 Source packages:
 - npm parse5@7.3.0 — LICENSE
@@ -29613,7 +29644,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ----- END UPSTREAM TEXT -----
 
-### L434
+### L435
 
 Source packages:
 - npm picocolors@1.1.1 — LICENSE
@@ -29636,7 +29667,7 @@ ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 ----- END UPSTREAM TEXT -----
 
-### L435
+### L436
 
 Source packages:
 - npm picomatch@4.0.7 — LICENSE
@@ -29665,7 +29696,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ----- END UPSTREAM TEXT -----
 
-### L436
+### L437
 
 Source packages:
 - npm postcss@8.5.29 — LICENSE
@@ -29693,7 +29724,7 @@ IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ----- END UPSTREAM TEXT -----
 
-### L437
+### L438
 
 Source packages:
 - npm rolldown@1.2.13 — LICENSE
@@ -29726,7 +29757,7 @@ end of terms and conditions
 The licenses of externally maintained libraries from which parts of the Software is derived are listed [here](https://github.com/rolldown/rolldown/blob/main/THIRD-PARTY-LICENSE).
 ----- END UPSTREAM TEXT -----
 
-### L438
+### L439
 
 Source packages:
 - npm seroval-plugins@1.6.8 — LICENSE
@@ -29742,7 +29773,7 @@ The above copyright notice and this permission notice (including the next paragr
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ----- END UPSTREAM TEXT -----
 
-### L439
+### L440
 
 Source packages:
 - npm solid-refresh@0.6.3 — LICENSE
@@ -29771,7 +29802,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ----- END UPSTREAM TEXT -----
 
-### L440
+### L441
 
 Source packages:
 - npm source-map-js@1.2.2 — LICENSE
@@ -29807,7 +29838,7 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ----- END UPSTREAM TEXT -----
 
-### L441
+### L442
 
 Source packages:
 - npm tinyglobby@0.2.17 — LICENSE
@@ -29836,7 +29867,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ----- END UPSTREAM TEXT -----
 
-### L442
+### L443
 
 Source packages:
 - npm typescript@7.0.2 — vendor/vscode-jsonrpc/License.txt
@@ -29855,7 +29886,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED *AS IS*, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ----- END UPSTREAM TEXT -----
 
-### L443
+### L444
 
 Source packages:
 - npm update-browserslist-db@1.3.4 — LICENSE
@@ -29883,7 +29914,7 @@ IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ----- END UPSTREAM TEXT -----
 
-### L444
+### L445
 
 Source packages:
 - npm vite@8.3.3 — LICENSE.md
@@ -32156,7 +32187,7 @@ Repository: https://github.com/sveltejs/zimmerframe
 > SOFTWARE.
 ----- END UPSTREAM TEXT -----
 
-### L445
+### L446
 
 Source packages:
 - npm vitefu@1.1.3 — LICENSE
@@ -32185,7 +32216,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ----- END UPSTREAM TEXT -----
 
-### L446
+### L447
 
 Source packages:
 - npm katex@0.19.0 — font copyright/RFN declarations from pinned TTF name tables; OFL 1.1 standard text from https://openfontlicense.org/documents/OFL.txt
@@ -32448,7 +32479,7 @@ FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
 OTHER DEALINGS IN THE FONT SOFTWARE.
 ----- END UPSTREAM TEXT -----
 
-### L447
+### L448
 
 Source packages:
 - Cargo rmcp@3.5.1 — exact published commit 79437f291b2c44053d00dcd5db969fd0cca7c887, https://raw.githubusercontent.com/modelcontextprotocol/rust-sdk/79437f291b2c44053d00dcd5db969fd0cca7c887/LICENSE; SHA-256 0382b0057770ca05e9c350a50aa3b1c1fea84da0bc81d723bf00b9aa841be58a
@@ -32672,7 +32703,7 @@ CC-BY-4.0. See https://creativecommons.org/licenses/by/4.0/legalcode for
 the full license text.
 ----- END UPSTREAM TEXT -----
 
-### L448
+### L449
 
 Source packages:
 - Cargo uuid-simd@0.8.0 — exact published commit d74c030d9dc4f3cae02146d1f497ff62726ef09a, https://raw.githubusercontent.com/Nugine/simd/d74c030d9dc4f3cae02146d1f497ff62726ef09a/LICENSE; SHA-256 71674605ec4c087fe9eb534e3e4f9e26eb2e4aabcd76a29fd156c6a844d44b3d
@@ -32702,7 +32733,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ----- END UPSTREAM TEXT -----
 
-### L449
+### L450
 
 Source packages:
 - Cargo ratex-font@0.1.14 — exact published commit 776c1d37bafa3bf445a0ab9377c55fe77f7a0133, https://raw.githubusercontent.com/erweixin/RaTeX/776c1d37bafa3bf445a0ab9377c55fe77f7a0133/LICENSE; SHA-256 f65e10eaa978c50a58c5e792110b4be5014b865edcb2ade49076bfcc98fa92b0
@@ -32745,7 +32776,7 @@ are not under the MIT License above. They are licensed under the SIL Open Font
 License, Version 1.1. See THIRD_PARTY_NOTICES.txt and the licenses/ directory.
 ----- END UPSTREAM TEXT -----
 
-### L450
+### L451
 
 Source packages:
 - Cargo selectors@0.38.0 — exact published commit 572ecba2d1600e7c3d490586692a209faf703baa, https://www.mozilla.org/en-US/MPL/2.0/; SHA-256 9221c2f936159b8446d329249fb4c0f25be510f447383a0f13336ac7985668a3
@@ -33126,7 +33157,7 @@ Exhibit B - "Incompatible With Secondary Licenses" Notice
   defined by the Mozilla Public License, v. 2.0.
 ----- END UPSTREAM TEXT -----
 
-### L451
+### L452
 
 Source packages:
 - Cargo webview2-com@0.39.1 — exact published commit edc2caf886175ccaebe86078c9cfe1ae2a187328, https://raw.githubusercontent.com/wravery/webview2-rs/edc2caf886175ccaebe86078c9cfe1ae2a187328/LICENSE; SHA-256 0dcf41516e608bbcb6cdc5229feb7b86fe4a643b85e7df251133c93408fdac73
@@ -33157,7 +33188,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ----- END UPSTREAM TEXT -----
 
-### L452
+### L453
 
 Source packages:
 - Bundled native RaTeX formula SDK and KaTeX font resources — THIRD_PARTY_NOTICES.txt; upstream revision 776c1d37bafa3bf445a0ab9377c55fe77f7a0133
@@ -33184,7 +33215,7 @@ web assets, packages, etc.), keep the above files with your distribution or
 otherwise satisfy the OFL attribution requirements for your channel.
 ----- END UPSTREAM TEXT -----
 
-### L453
+### L454
 
 Source packages:
 - Bundled native RaTeX formula SDK and KaTeX font resources — KaTeX-fonts-NOTICE.txt; upstream revision 776c1d37bafa3bf445a0ab9377c55fe77f7a0133
@@ -33226,7 +33257,7 @@ Complete text of the SIL Open Font License, Version 1.1: see SIL-OFL-1.1.txt
 in this directory (reproduced from the SPDX license list).
 ----- END UPSTREAM TEXT -----
 
-### L454
+### L455
 
 Source packages:
 - Bundled native RaTeX formula SDK and KaTeX font resources — SIL-OFL-1.1.txt; upstream revision 776c1d37bafa3bf445a0ab9377c55fe77f7a0133
@@ -33277,7 +33308,7 @@ DISCLAIMER
 THE FONT SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO ANY WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT OF COPYRIGHT, PATENT, TRADEMARK, OR OTHER RIGHT. IN NO EVENT SHALL THE COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, INCLUDING ANY GENERAL, SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL DAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM OTHER DEALINGS IN THE FONT SOFTWARE.
 ----- END UPSTREAM TEXT -----
 
-### L455
+### L456
 
 Source packages:
 - Microsoft WebView2 SDK 1.0.3800.47, x64 static loader — https://api.nuget.org/v3-flatcontainer/microsoft.web.webview2/1.0.3800.47/microsoft.web.webview2.1.0.3800.47.nupkg, archive member LICENSE.txt; SHA-256 0af8f1b807512aae39c2ac1aa4d0cae65cabecb6fd554b8439a5162a0d6eca55
@@ -33312,7 +33343,7 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ----- END UPSTREAM TEXT -----
 
-### L456
+### L457
 
 Source packages:
 - Microsoft WebView2 SDK 1.0.3800.47, x64 static loader — https://api.nuget.org/v3-flatcontainer/microsoft.web.webview2/1.0.3800.47/microsoft.web.webview2.1.0.3800.47.nupkg, archive member NOTICE.txt; SHA-256 106423785c5b7eba0a8e61d1837f2132e9c828e20ad530f565d981c1df60dd90

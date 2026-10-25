@@ -7,6 +7,7 @@ import { stripTypeScriptTypes } from 'node:module';
 import { runInNewContext, SourceTextModule, SyntheticModule } from 'node:vm';
 import { parse } from '@babel/parser';
 import * as reactive from '../../../node_modules/solid-js/dist/solid.js';
+import * as versions from 'compare-versions';
 
 const raw = file => readFile(new URL(file, import.meta.url), 'utf8');
 const plain = source => stripTypeScriptTypes(source, { mode: 'transform' });
@@ -16,6 +17,10 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
 function deferred() { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; }
 const stateModule = new SourceTextModule(plain(await raw('./extension-state.ts'))); await stateModule.link(() => { throw new Error('Unexpected value import'); }); await stateModule.evaluate();
 const state = stateModule.namespace;
+const updatesModule = new SourceTextModule(plain(await raw('./extension-updates.ts')));
+await updatesModule.link(name => { if (name === 'compare-versions') return synthetic(versions); throw new Error('Unexpected update policy import'); });
+await updatesModule.evaluate();
+const updates = updatesModule.namespace;
 const platformModule = new SourceTextModule(plain(await raw('./plugin-platform.ts'))); await platformModule.link(() => { throw new Error('Unexpected value import'); }); await platformModule.evaluate();
 const platformPolicy = platformModule.namespace;
 const manifest = { schemaVersion: 2, hostApi: 2, runtime: 'javascript', id: 'independent.tool', version: '1.0.0', name: 'Independent', description: 'Synthetic', license: 'MPL-2.0', entry: 'index.js', permissions: [], tags: ['tools'], dependencies: {} };
@@ -23,7 +28,7 @@ const command = { kind: 'command', id: 'operate', title: '区域操作', metadat
 const record = (patch = {}) => ({ manifest, revision: 1, state: 'enabled', source: { type: 'local', path: 'synthetic.zip' }, sha256: 'a'.repeat(64), hasRollback: false, services: [command], ...patch });
 const entry = { ...manifest, repository: 'independent/tool', releaseTag: 'v1.0.0', assetName: 'tool.zip', size: 100, sha256: 'a'.repeat(64), platforms: ['any'] };
 async function controller(filename, api, expose, props) {
-  if (filename.endsWith('CommunityExtensions.tsx')) props = { platform: 'windows', ...props };
+  if (filename.endsWith('CommunityExtensions.tsx')) props = reactive.mergeProps({ platform: 'windows' }, props);
   const source = await raw(filename), ast = parse(source, { sourceType: 'module', plugins: ['typescript', 'jsx'] });
   const component = ast.program.body.find(node => node.type === 'ExportDefaultDeclaration').declaration;
   const returning = component.body.body.find(node => node.type === 'ReturnStatement');
@@ -35,6 +40,7 @@ async function controller(filename, api, expose, props) {
   await module.link(name => name === 'solid-js' ? synthetic(reactive)
     : name.endsWith('/extension-bridge') ? synthetic(api)
       : name.endsWith('/extension-state') ? synthetic(state)
+        : name.endsWith('/extension-updates') ? synthetic(updates)
         : name.endsWith('/plugin-platform') ? synthetic(platformPolicy)
         : name.endsWith('/i18n') ? synthetic({ t: text => text })
           : name.endsWith('/plugin-categories') ? synthetic({ pluginTagLabels: { tools: '工具与能力' } }) : synthetic(Object.fromEntries(importedNames(name).map(key => [key, () => {}]))));
@@ -285,6 +291,49 @@ test('failed install retains the reviewed proposal and never reports installed',
   const { value, dispose } = await controller('./components/CommunityExtensions.tsx', api, ['records', 'proposal', 'prepare', 'install', 'error'], { active: true, pane: 'discover', query: '', filter: '', addRequest: 0, refreshRequest: 0, onDetail() {} });
   await tick(); await value.prepare(entry); await value.install();
   assert.equal(value.proposal().id, 'proposal'); assert.equal(value.records().length, 0); assert.equal(value.error(), 'activation failed'); dispose();
+});
+
+test('installed plugins leave the market, disabled plugins stay installed, and removal restores discovery', async () => {
+  let receive; const [pane, setPane] = reactive.createSignal('discover');
+  const api = { extensionNative: true, subscribeExtensions: async callback => { receive = callback; return () => {}; },
+    getExtensions: async () => [record({ source: { type: 'github', entry } })],
+    getExtensionCatalog: async () => ({ schemaVersion: 2, plugins: [entry] }) };
+  const { value, dispose } = await controller('./components/CommunityExtensions.tsx', api, ['entries'],
+    { active: true, get pane() { return pane(); }, query: '', filter: '', addRequest: 0, refreshRequest: 0, onDetail() {} });
+  await tick(); assert.equal(value.entries().length, 0);
+  setPane('installed'); await tick(); assert.equal(value.entries()[0].id, manifest.id);
+  receive([record({ revision: 2, state: 'disabled', source: { type: 'github', entry } })]);
+  assert.equal(value.entries().length, 1);
+  setPane('discover'); await tick(); assert.equal(value.entries().length, 0);
+  receive([record({ revision: 3, state: 'removed', source: { type: 'github', entry } })]);
+  assert.equal(value.entries()[0].id, manifest.id); dispose();
+});
+
+test('update policy handles semver precedence and same-version source moves without offering downgrades', () => {
+  const installed = record({ source: { type: 'github', entry } });
+  assert.equal(updates.extensionUpdateEntry(installed, [entry]), undefined);
+  assert.equal(updates.extensionUpdateEntry(installed, [{ ...entry, version: '1.0.0+rebuilt' }]), undefined);
+  assert.equal(updates.extensionUpdateEntry(installed, [{ ...entry, version: '0.9.9', repository: 'new/repository' }]), undefined);
+  assert.equal(updates.extensionUpdateEntry(installed, [{ ...entry, version: '1.0.1' }]).version, '1.0.1');
+  const relocated = { ...entry, repository: 'new/repository' };
+  assert.equal(updates.extensionUpdateEntry(installed, [relocated]).repository, 'new/repository');
+  const pre = record({ manifest: { ...manifest, version: '1.0.0-rc.2' }, source: { type: 'github', entry } });
+  assert.equal(updates.extensionUpdateEntry(pre, [{ ...entry, version: '1.0.0-rc.10' }]).version, '1.0.0-rc.10');
+  assert.equal(updates.extensionUpdateEntry(pre, [{ ...entry, version: '1.0.0-rc.1' }]), undefined);
+});
+
+test('source migration review must pass its exact native confirmation token', async () => {
+  const calls = [];
+  const proposed = { id: 'proposal', manifest, source: { type: 'github', entry }, sha256: 'a'.repeat(64),
+    expectedRevision: 1, sourceMigration: { schemaVersion: 1, operation: 'migrate', id: 'specific-migration-review', from: record().source } };
+  const api = { extensionNative: true, subscribeExtensions: async () => () => {}, getExtensions: async () => [record()],
+    getExtensionCatalog: async () => ({ schemaVersion: 2, plugins: [entry] }), prepareExtension: async () => proposed,
+    installExtension: async (...args) => { calls.push(args); return [record({ revision: 2, source: proposed.source })]; } };
+  const { value, dispose } = await controller('./components/CommunityExtensions.tsx', api, ['prepare', 'install', 'proposal'],
+    { active: true, pane: 'installed', query: '', filter: '', addRequest: 0, refreshRequest: 0, onDetail() {} });
+  await tick(); await value.prepare(entry); await value.install();
+  assert.deepEqual(calls, [['proposal', 'specific-migration-review']]);
+  assert.equal(value.proposal(), undefined); dispose();
 });
 
 test('region command forwards selected scene/region, can stop, and discards a late result after scene changes', async () => {

@@ -38,10 +38,10 @@ const nativeUpdates: UpdateApi = {
   status: () => invoke<UpdateStatus>('app_update_status'),
   perform: command => invoke(command),
 };
-export function createAppUpdateSettings(active: Accessor<boolean>, api: UpdateApi = nativeUpdates) {
+export function createAppUpdateSettings(active: Accessor<boolean>, api: UpdateApi = nativeUpdates, options: { checkOnOpen?: boolean } = {}) {
   const [information, setInformation] = createSignal<SettingsInfo>();
   const [status, setStatus] = createSignal<UpdateStatus>(), [error, setError] = createSignal(''), [pending, setPending] = createSignal(false);
-  let disposed = false, reading = false;
+  let disposed = false, reading = false, checkedOnOpen = false;
   const mode = () => {
     const info = information();
     if (!info) return 'loading';
@@ -79,8 +79,16 @@ export function createAppUpdateSettings(active: Accessor<boolean>, api: UpdateAp
       if (!disposed) setError(errors[String(cause)] ?? '更新未完成，请重试');
     } finally { if (!disposed) setPending(false); }
   }
-  createEffect(on(active, visible => { if (visible) void refresh(); }));
-  const timer = setInterval(() => void refresh(), 1000);
+  createEffect(on(active, visible => {
+    if (visible) void (async () => {
+      await refresh();
+      if (disposed || !active() || !options.checkOnOpen || checkedOnOpen || mode() !== 'signed') return;
+      checkedOnOpen = true;
+      if (!busy()) await perform('check_app_update');
+    })();
+  }));
+  // Poll only a host-owned operation in progress, never idle settings pages.
+  const timer = setInterval(() => { if (['checking', 'downloading', 'installing'].includes(status()?.phase ?? '')) void refresh(); }, 1000);
   onCleanup(() => { disposed = true; clearInterval(timer); });
   const label = () => {
     const value = status();
@@ -97,8 +105,9 @@ export function createAppUpdateSettings(active: Accessor<boolean>, api: UpdateAp
   };
   return { status, error, busy, mode, refresh, perform, label };
 }
-export function AppUpdateSettings(props: { active: boolean }) {
-  const { status, error, busy, mode, perform, label } = createAppUpdateSettings(() => props.active);
+export type AppUpdateController = ReturnType<typeof createAppUpdateSettings>;
+export function AppUpdateSettings(props: { active: boolean; controller?: AppUpdateController }) {
+  const { status, error, busy, mode, perform, label } = props.controller ?? createAppUpdateSettings(() => props.active);
   return <><Row title={t('软件更新')}>
     <Show when={mode() === 'manual'}><span class="settings-value">{t('手动更新：请退出 MewuAI，使用新版安装包替换应用。')}</span></Show>
     <Show when={mode() === 'unsupported'}><span class="settings-value">{t(errors.update_unsupported)}</span></Show>

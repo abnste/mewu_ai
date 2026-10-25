@@ -14,7 +14,7 @@ export async function subscribeExtensions(accept: (records: ExtensionRecord[]) =
   return listen<ExtensionRecord[]>('extension-state', event => accept(event.payload));
 }
 export async function prepareExtension(entry?: ExtensionCatalogEntry): Promise<ExtensionProposal | null> { desktop(); return invoke('prepare_extension', { entry: entry ?? null }); }
-export async function installExtension(proposalId: string): Promise<ExtensionRecord[]> { desktop(); return invoke('install_extension', { proposalId }); }
+export async function installExtension(proposalId: string, sourceMigrationId?: string): Promise<ExtensionRecord[]> { desktop(); return invoke('install_extension', { proposalId, ...(sourceMigrationId ? { sourceMigrationId } : {}) }); }
 export async function controlExtension(record: ExtensionRecord, action: ExtensionControl): Promise<ExtensionRecord[]> {
   desktop(); return invoke('control_extension', { pluginId: record.manifest.id, revision: record.revision, action });
 }
