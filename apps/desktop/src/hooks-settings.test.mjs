@@ -18,18 +18,18 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
 const plain = value => JSON.parse(JSON.stringify(value));
 async function fixture({ begin } = {}) {
   const ended = new Set(), opened = [], closed = [], hookLeases = [], writes = [], hooks = [];
-  let view = { revision: 3, rules: [], runs: [], platform: 'windows', enabled: true }, stopped = 0;
+  let view = { revision: 3, rules: [], runs: [], platform: 'windows', enabled: true }, stopped = 0, shortcutEvents, recordEvent, blurred = 0;
   let capture = { revision: 5, sequence: 8, configured: { code: 'KeyS', alt: true, ctrl: false, shift: true } };
   const shortcut = {
     beginCaptureShortcutEdit: async id => { assert.equal(ended.has(id), false); opened.push(id); if (begin) await begin(id); },
     endCaptureShortcutEdit: async id => { ended.add(id); closed.push(id); },
-    subscribeCaptureShortcut: async () => () => { stopped++; },
+    subscribeCaptureShortcut: async callbacks => { shortcutEvents = callbacks; return () => { stopped++; }; },
     getCaptureShortcut: async () => capture,
     setCaptureShortcut: async (revision, value) => { assert.equal(revision, capture.revision); writes.push(value); return capture = { ...capture, revision: revision + 1, sequence: capture.sequence + 1, configured: value }; },
   };
   const bridge = {
     editHookShortcut: async (id, active) => { hookLeases.push({ id, active }); },
-    subscribeHooks: async cb => { hooks.push(cb); return () => { stopped++; }; },
+    subscribeHooks: async (cb, recorded) => { hooks.push(cb); recordEvent=recorded; return () => { stopped++; }; },
     getHooks: async () => view,
     saveHook: async (revision, rule) => { assert.equal(revision, view.revision); view = { ...view, revision: revision + 1, rules: [{ ...plain(rule), revision: rule.revision + 1 }] }; return view; },
   };
@@ -52,11 +52,13 @@ async function fixture({ begin } = {}) {
     return synthetic({ default() {} });
   }); await mod.evaluate();
   const original = globalThis.window;
+  const originalDocument = globalThis.document;
   globalThis.window = { addEventListener() {}, removeEventListener() {} };
+  globalThis.document = { activeElement: { matches: selector => selector === '[data-hook-shortcut]', blur: () => { blurred++; globalThis.document.activeElement=null; } } };
   let api, dispose, activate;
   solid.createRoot(cleanup => { dispose = cleanup; const [active, setActive] = solid.createSignal(true); activate = setActive; api = mod.namespace.default({ get active() { return active(); } }); });
   await tick(); await tick();
-  return { api, opened, closed, hookLeases, writes, hooks, activate, setView: value => { view = value; }, stop: async () => { dispose(); await tick(); globalThis.window = original; }, stopped: () => stopped };
+  return { api, opened, closed, hookLeases, writes, hooks, activate, record: (id,key)=>recordEvent(id,key), endRecord: id=>shortcutEvents.ended(id), blurred:()=>blurred, setView: value => { view = value; }, stop: async () => { dispose(); await tick(); globalThis.window = original; globalThis.document=originalDocument; }, stopped: () => stopped };
 }
 test('recording gets a fresh native lease on every focus and releases the exact old lease', async () => {
   const f = await fixture();
@@ -76,6 +78,18 @@ test('a late OS editor receipt cannot reactivate a hidden or disposed Hooks page
     const flight = f.api.arm('rule-a'); await tick(); f.activate(false); release(); await flight;
     assert.equal(f.api.recording(), ''); assert.ok(f.closed.includes(f.opened[0]));
     assert.equal(f.hookLeases.filter(x => x.active).length, 0);
+  } finally { await f.stop(); }
+});
+test('native recording receipts and expiry can only affect their current editor lease', async () => {
+  const f = await fixture();
+  try {
+    f.api.setTab('shortcut'); f.api.add(); const [first] = f.api.ids();
+    await f.api.arm(first); const old=f.opened.at(-1);
+    f.api.add(); const second=f.api.ids().find(id=>id!==first); await f.api.arm(second); const current=f.opened.at(-1);
+    f.record(old,'F9'); assert.equal(f.api.rule(second).trigger.accelerator,'');
+    f.record(current,'F10'); assert.equal(f.api.rule(second).trigger.accelerator,'F10');
+    f.endRecord(old); assert.equal(f.api.recording(),second); assert.equal(f.blurred(),0);
+    f.endRecord(current); await tick(); assert.equal(f.api.recording(),''); assert.equal(f.blurred(),1);
   } finally { await f.stop(); }
 });
 test('deleting the displayed capture binding updates the existing authoritative shortcut setting', async () => {

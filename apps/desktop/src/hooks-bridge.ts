@@ -10,11 +10,11 @@ export const checkHook = (rule: HookRule) => invoke<void>('check_hook', { rule }
 export const runHook = (id: string, ruleRevision: number, text: string) => invoke<string>('run_hook', { id, ruleRevision, text });
 export const cancelHook = (runId: string) => invoke<void>('cancel_hook', { runId });
 export const editHookShortcut = (leaseId: string, active: boolean) => invoke<void>('edit_hook_shortcut', { leaseId, active });
-export async function subscribeHooks(changed: () => void, recorded: (accelerator: string) => void): Promise<() => void> {
+export async function subscribeHooks(changed: () => void, recorded: (leaseId: string, accelerator: string) => void): Promise<() => void> {
   const stops: (() => void)[] = [];
   try {
     stops.push(await listen('hooks-changed', changed, { target: 'settings' }));
-    stops.push(await listen<{ accelerator: string }>('hooks-shortcut-recorded', e => recorded(e.payload.accelerator), { target: 'settings' }));
+    stops.push(await listen<{ leaseId: string; accelerator: string }>('hooks-shortcut-recorded', e => { if(typeof e.payload.leaseId==='string'&&typeof e.payload.accelerator==='string')recorded(e.payload.leaseId,e.payload.accelerator); }, { target: 'settings' }));
   } catch (e) { stops.forEach(stop => stop()); throw e; }
   return () => stops.forEach(stop => stop());
 }

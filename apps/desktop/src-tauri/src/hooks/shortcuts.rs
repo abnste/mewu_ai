@@ -322,23 +322,23 @@ pub(super) fn end_edit(r: &Shared, id: Option<&str>) {
     }
 }
 pub(super) fn recording(r: &Shared, accelerator: Option<&str>) -> bool {
-    let own = r.shortcuts.editor.lock().ok().is_some_and(|mut edit| {
+    let own = r.shortcuts.editor.lock().ok().and_then(|mut edit| {
         if edit
             .as_ref()
             .is_some_and(|(_, until)| Instant::now() < *until)
         {
-            true
+            edit.as_ref().map(|(id, _)| id.clone())
         } else {
             *edit = None;
-            false
+            None
         }
     });
-    if own {
+    if let Some(lease_id) = own {
         if let Some(accelerator) = accelerator {
             let _ = r.app.emit_to(
                 "settings",
                 "hooks-shortcut-recorded",
-                json!({"accelerator":accelerator}),
+                json!({"leaseId":lease_id,"accelerator":accelerator}),
             );
         }
         return true;

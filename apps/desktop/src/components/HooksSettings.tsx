@@ -40,7 +40,8 @@ export default function HooksSettings(props:{active:boolean}) {
   function edit(id:string,patch:Partial<HookRule>){const current=rule(id);if(!current)return;if(!(id in bases()))setBases(v=>({...v,[id]:data()?.revision||0}));setDrafts(v=>({...v,[id]:{...current,...patch}}));setChecked('');}
   function discard(id:string){setDrafts(v=>{const n={...v};delete n[id];return n;});setBases(v=>{const n={...v};delete n[id];return n;});setInvalid(v=>Object.fromEntries(Object.entries(v).filter(([key])=>!key.startsWith(id+':'))));}
   async function refresh(){if(disposed)return;if(refreshing){dirty=true;return;}refreshing=true;try{do{dirty=false;const value=await bridge.getHooks();if(!disposed)setData(v=>!v||value.revision>=v.revision?value:v);}while(dirty&&!disposed);}catch(e){if(!disposed)setError(e instanceof Error?e.message:String(e));}finally{refreshing=false;}}
-  function received(accelerator:string){const id=recording();if(id&&document.activeElement?.matches('[data-hook-shortcut]'))edit(id,{trigger:{kind:'shortcut',accelerator}});}
+  function received(leaseId:string,accelerator:string){const id=recording();if(leaseId===editLease&&id&&document.activeElement?.matches('[data-hook-shortcut]'))edit(id,{trigger:{kind:'shortcut',accelerator}});}
+  function recordingEnded(leaseId:string){if(leaseId!==editLease)return;void disarm();const field=document.activeElement as HTMLElement|null;if(field?.matches('[data-hook-shortcut]'))field.blur();}
   async function endLease(id:string){await Promise.allSettled([bridge.editHookShortcut(id,false),shortcut.endCaptureShortcutEdit(id)]);}
   async function disarm(){const id=editLease;editLease=undefined;setRecording('');if(id)await endLease(id);}
   async function arm(id:string){
@@ -54,7 +55,7 @@ export default function HooksSettings(props:{active:boolean}) {
       setRecording(id);
     }catch(e){if(editLease===lease)await disarm();else await endLease(lease);if(!disposed)setError(e instanceof Error?e.message:String(e));}
   }
-  onMount(async()=>{try{stops=await bridge.subscribeHooks(()=>{if(props.active)void refresh();else dirty=true;},received);if(disposed){stops();return;}stopShortcuts=await shortcut.subscribeCaptureShortcut({state:acceptCapture,recorded:value=>received(formatShortcut(value.shortcut).replace(/Ctrl/g,'Control')),ended:()=>{}});if(disposed){stopShortcuts();return;}await refresh();if(!disposed)acceptCapture(await shortcut.getCaptureShortcut());}catch(e){if(!disposed)setError(e instanceof Error?e.message:String(e));}});
+  onMount(async()=>{try{stops=await bridge.subscribeHooks(()=>{if(props.active)void refresh();else dirty=true;},received);if(disposed){stops();return;}stopShortcuts=await shortcut.subscribeCaptureShortcut({state:acceptCapture,recorded:value=>received(value.leaseId,formatShortcut(value.shortcut).replace(/Ctrl/g,'Control')),ended:recordingEnded});if(disposed){stopShortcuts();return;}await refresh();if(!disposed)acceptCapture(await shortcut.getCaptureShortcut());}catch(e){if(!disposed)setError(e instanceof Error?e.message:String(e));}});
   const blur=()=>void disarm();onMount(()=>window.addEventListener('blur',blur));
   createEffect(()=>{if(!props.active)void disarm();else if(dirty)void refresh();});
   onCleanup(()=>{disposed=true;void disarm();stops?.();stopShortcuts?.();window.removeEventListener('blur',blur);});
