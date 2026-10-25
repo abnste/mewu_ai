@@ -3375,6 +3375,8 @@ fn main() {
             }
         })
         .setup(move |app| {
+            #[cfg(target_os = "linux")]
+            desktop_session_linux::observe_display();
             if quit_only || EARLY_QUIT.load(Ordering::Acquire) {
                 app.handle().exit(0);
                 return Ok(());
