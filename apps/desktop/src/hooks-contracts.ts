@@ -44,9 +44,16 @@ export function newHookAction(kind: HookAction['kind'], platform = ''): HookActi
     case 'delay': return { kind, milliseconds: 500 };
   }
 }
-export function hookAccelerator(event: Pick<KeyboardEvent, 'code' | 'ctrlKey' | 'altKey' | 'shiftKey' | 'metaKey' | 'isComposing'>): string | undefined {
-  if (event.isComposing || /^(Control|Shift|Alt|Meta)/.test(event.code)) return;
-  if (!/^(Key[A-Z]|Digit\d|F(?:[1-9]|1\d|2[0-4])|Space|Enter|Tab|Escape|Backspace|Delete|Insert|Home|End|PageUp|PageDown|Arrow(?:Up|Down|Left|Right)|PrintScreen|Pause|Backquote|Minus|Equal|BracketLeft|BracketRight|Backslash|Semicolon|Quote|Comma|Period|Slash)$/.test(event.code)) return;
-  if (!(event.ctrlKey || event.altKey || event.metaKey) && !/^F\d|PrintScreen|Pause$/.test(event.code)) return;
-  return [event.ctrlKey && 'Control', event.altKey && 'Alt', event.shiftKey && 'Shift', event.metaKey && 'Super', event.code].filter(Boolean).join('+');
+export function hookAccelerator(event: Pick<KeyboardEvent, 'code' | 'ctrlKey' | 'altKey' | 'shiftKey' | 'metaKey' | 'isComposing'> & Partial<Pick<KeyboardEvent, 'key'>>): string | undefined {
+  let code = event.code;
+  // Remote/accessibility input may have a logical key without a physical code.
+  // Preserve known physical layouts; do not guess punctuation/dead-key positions.
+  if (!code || code === 'Unidentified') {
+    const key = event.key || '';
+    code = /^[a-z]$/i.test(key) ? `Key${key.toUpperCase()}` : /^\d$/.test(key) ? `Digit${key}` : key === ' ' ? 'Space' : key;
+  }
+  if (event.isComposing || /^(Control|Shift|Alt|Meta)/.test(code)) return;
+  if (!/^(Key[A-Z]|Digit\d|F(?:[1-9]|1\d|2[0-4])|Space|Enter|Tab|Escape|Backspace|Delete|Insert|Home|End|PageUp|PageDown|Arrow(?:Up|Down|Left|Right)|PrintScreen|Pause|Backquote|Minus|Equal|BracketLeft|BracketRight|Backslash|Semicolon|Quote|Comma|Period|Slash)$/.test(code)) return;
+  if (!(event.ctrlKey || event.altKey || event.metaKey) && !/^F\d|PrintScreen|Pause$/.test(code)) return;
+  return [event.ctrlKey && 'Control', event.altKey && 'Alt', event.shiftKey && 'Shift', event.metaKey && 'Super', code].filter(Boolean).join('+');
 }
