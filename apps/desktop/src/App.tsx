@@ -871,29 +871,42 @@ export default function App() {
     void command({ type: 'set_refs', sceneId: id, refs: next }).catch(showError);
   }
   async function flush() {
-    await voice.cancel();
-    const sceneId = scene()?.id; if (!sceneId) return;
-    await objectFlush.flush(() => !disposed && scene()?.id === sceneId);
-    await flushVideoDrawing(() => !disposed && scene()?.id === sceneId, sceneId);
-    await flushVideo(() => !disposed && scene()?.id === sceneId);
-    await flushDrawing(() => !disposed && scene()?.id === sceneId, sceneId);
-    await regionGeometry.flush();
-    const current = scene(); if (!current || current.id !== sceneId) throw new Error('会话已变化');
-    const text = draft(), references = refs().map(reference => ({ ...reference }));
-    autosaveVersion++; clearTimeout(debounce);
-    // Keep this handoff's captured intent, but compare with the acknowledged
-    // host after earlier writes settle. Unchanged drafts/refs need no new full
-    // snapshot transaction when closing or switching an otherwise idle scene.
-    while (true) {
-      const pending = commands; await pending;
-      if (disposed || scene()?.id !== sceneId) throw new Error('会话已变化');
-      if (pending === commands) break;
-    }
-    const saved = snapshot(); if (!saved) throw new Error('会话尚未就绪');
-    const pending = pendingSceneDrafts(saved, { [sceneId]: text }, { [sceneId]: references });
-    for (const value of pending) {
-      if (disposed || scene()?.id !== sceneId) throw new Error('会话已变化');
-      await command(value);
+    // Report only the fixed handoff stage to CLI callers, never user text,
+    // filesystem paths or arbitrary provider errors. Keep the cause locally.
+    let stage = '语音输入';
+    try {
+      await voice.cancel();
+      const sceneId = scene()?.id; if (!sceneId) return;
+      stage = '素材编辑';
+      await objectFlush.flush(() => !disposed && scene()?.id === sceneId);
+      stage = '视频绘制';
+      await flushVideoDrawing(() => !disposed && scene()?.id === sceneId, sceneId);
+      stage = '视频编辑';
+      await flushVideo(() => !disposed && scene()?.id === sceneId);
+      stage = '截图标注';
+      await flushDrawing(() => !disposed && scene()?.id === sceneId, sceneId);
+      stage = '选区位置';
+      await regionGeometry.flush();
+      stage = '会话草稿';
+      const current = scene(); if (!current || current.id !== sceneId) throw new Error('会话已变化');
+      const text = draft(), references = refs().map(reference => ({ ...reference }));
+      autosaveVersion++; clearTimeout(debounce);
+      // Keep this handoff's captured intent, but compare with the acknowledged
+      // host after earlier writes settle. Unchanged drafts/refs need no new full
+      // snapshot transaction when closing or switching an otherwise idle scene.
+      while (true) {
+        const pending = commands; await pending;
+        if (disposed || scene()?.id !== sceneId) throw new Error('会话已变化');
+        if (pending === commands) break;
+      }
+      const saved = snapshot(); if (!saved) throw new Error('会话尚未就绪');
+      const pending = pendingSceneDrafts(saved, { [sceneId]: text }, { [sceneId]: references });
+      for (const value of pending) {
+        if (disposed || scene()?.id !== sceneId) throw new Error('会话已变化');
+        await command(value);
+      }
+    } catch (cause) {
+      throw new AppControlError('OPERATION_FAILED', `${stage}未保存，当前会话已保留`, { cause });
     }
   }
   async function flushDrawing(active: () => boolean, sceneId?: string) {

@@ -61,7 +61,7 @@ export interface AppControlOptions {
   now?: () => number;
 }
 export class AppControlError extends Error {
-  constructor(readonly code: AppControlCode, message: string) { super(message); this.name = 'AppControlError'; }
+  constructor(readonly code: AppControlCode, message: string, options?: ErrorOptions) { super(message, options); this.name = 'AppControlError'; }
 }
 
 const MAX_BYTES = 1024 * 1024, MAX_DEPTH = 32, MAX_NODES = 100_000;

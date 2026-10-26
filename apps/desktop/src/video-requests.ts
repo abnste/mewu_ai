@@ -59,17 +59,27 @@ export class VideoRequestLane {
 
 export type RegisterVideoFlush = (flush: DrawingFlush) => () => void;
 export class VideoFlushRegistry {
-  private entries = new Set<DrawingFlush>();
-  register: RegisterVideoFlush = flush => { this.entries.add(flush); return () => { this.entries.delete(flush); }; };
+  private entries = new Set<{ flush: DrawingFlush }>();
+  register: RegisterVideoFlush = flush => {
+    const entry = { flush };
+    this.entries.add(entry);
+    return () => { this.entries.delete(entry); };
+  };
   interacting(): boolean {
     for (const entry of this.entries) {
-      try { if (entry.interacting?.() !== false) return true; }
+      try { if (entry.flush.interacting?.() !== false) return true; }
       catch { return true; }
     }
     return false;
   }
   async flush(active: () => boolean) {
-    for (const entry of [...this.entries]) { if (!active()) throw new TrimCanceled(); await entry(active); }
+    for (const entry of [...this.entries]) {
+      if (!active()) throw new TrimCanceled();
+      // Earlier saves can publish and unmount a later editor. Do not invoke
+      // its disposed controller from this batch's stale registration snapshot.
+      // An already-started save still owns its receipt/errors and is awaited.
+      if (this.entries.has(entry)) await entry.flush(active);
+    }
     if (!active()) throw new TrimCanceled();
   }
 }

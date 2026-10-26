@@ -9,6 +9,9 @@ import { parse } from '@babel/parser';
 import { loadProviderPresets, loadGeometryHistory, loadAssetImport, loadDrawingDiagnostics, loadHighlightSource } from './geometry-test-module.mjs';
 
 const source = async file => stripTypeScriptTypes(await readFile(new URL(file, import.meta.url), 'utf8'), { mode: 'transform' });
+const controlModule = new SourceTextModule(await source('app-control.ts'));
+await controlModule.link(() => { throw new Error('Unexpected control dependency'); }); await controlModule.evaluate();
+const { AppControlError } = controlModule.namespace;
 const module = new SourceTextModule(await source('exit-preparation.ts'));
 await module.link(() => { throw new Error('Unexpected runtime dependency'); }); await module.evaluate();
 const { pendingSceneDrafts, persistSceneDrafts, SpaceOperations, ExitPreparation } = module.namespace;
@@ -67,7 +70,7 @@ const flushSource = stripTypeScriptTypes(appSource.slice(flushNode.start, flushN
 function flushFixture({ queue = Promise.resolve(), state = initial(), text = 'old A', references = [{ kind: 'region', id: 'r1' }], failDrawing = false, save } = {}) {
   const order = [], writes = [], local = { state, text, references, disposed: false, sceneId: 'a' };
   const context = createContext({
-    pendingSceneDrafts,
+    pendingSceneDrafts, AppControlError,
     voice: { cancel: async () => { order.push('voice'); } },
     objectFlush: { flush: async () => { order.push('objects'); } },
     flushVideoDrawing: async () => { order.push('video-drawings'); },
@@ -107,14 +110,14 @@ assert.equal(intentFlush.local.state.scenes[1].draft, 'old B');
 checks.push('Actual App flush preserves captured empty-text/reference-clear intent while awaiting IPC, clones refs and touches only its owning scene');
 
 const failedDrawingFlush = flushFixture({ failDrawing: true }), failedDrawingApi = await failedDrawingFlush.run();
-await assert.rejects(() => failedDrawingApi.flush(), /标注尚未保存/); assert.deepEqual(failedDrawingFlush.writes, []);
+await assert.rejects(() => failedDrawingApi.flush(), error => error.message === '截图标注未保存，当前会话已保留' && error.cause.message === '标注尚未保存'); assert.deepEqual(failedDrawingFlush.writes, []);
 const changedSceneWait = deferred(), changedSceneFlush = flushFixture({ queue: changedSceneWait.promise, text: 'retain A draft' });
 const changedSceneApi = await changedSceneFlush.run(), changedSceneHandoff = changedSceneApi.flush(); await tick();
 changedSceneFlush.local.sceneId = 'b'; changedSceneWait.resolve();
-await assert.rejects(() => changedSceneHandoff, /会话已变化/); assert.deepEqual(changedSceneFlush.writes, []);
+await assert.rejects(() => changedSceneHandoff, error => error.cause.message === '会话已变化'); assert.deepEqual(changedSceneFlush.writes, []);
 const saveFailureFlush = flushFixture({ text: 'unsaved edit', save: async () => { throw new Error('database unavailable'); } });
 const saveFailureApi = await saveFailureFlush.run();
-await assert.rejects(() => saveFailureApi.flush(), /database unavailable/);
+await assert.rejects(() => saveFailureApi.flush(), error => error.message === '会话草稿未保存，当前会话已保留' && error.cause.message === 'database unavailable');
 assert.equal(saveFailureFlush.writes.length, 1); assert.equal(saveFailureFlush.local.text, 'unsaved edit');
 checks.push('Actual App flush never bypasses unsaved drawing failure, rejects a changed scene after queue drain and preserves local drafts on persistence failure');
 

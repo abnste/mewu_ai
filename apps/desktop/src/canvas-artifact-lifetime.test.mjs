@@ -43,6 +43,17 @@ const definition=nodes.find(node=>node.type==='VariableDeclarator'&&['renderItem
 const layer=nodes.find(node=>node.type==='JSXElement'&&node.openingElement.name.name==='div'&&node.openingElement.attributes.some(attribute=>attribute.name?.name==='class'&&attribute.value?.value==='artifact-layer'));
 assert.ok(definition&&layer,'exercise the actual production list definition and call site');
 const actual=name=>{const node=nodes.find(value=>value.type==='VariableDeclarator'&&value.id.name===name);assert.ok(node,name);return `const ${source.slice(node.start,node.end)};`;};
+test('object flush does not call a removed or replaced card captured before a prior await', async () => {
+ const objectFlushes=new Map();let release,stale=0,replacement=0;
+ objectFlushes.set('first',()=>new Promise(resolve=>{release=resolve;}));
+ objectFlushes.set('removed',async()=>{stale++;throw Error('disposed');});
+ objectFlushes.set('replaced',async()=>{stale++;throw Error('disposed');});
+ const flush=vm.runInNewContext(stripTypeScriptTypes(`${actual('flushObjects')}\nflushObjects`,{mode:'transform'}),{objectFlushes});
+ const pending=flush(()=>true);await new Promise(resolve=>setImmediate(resolve));
+ objectFlushes.delete('removed');objectFlushes.set('replaced',async()=>{replacement++;});release();
+ await pending;assert.equal(stale,0);assert.equal(replacement,0);
+ objectFlushes.delete('first');await flush(()=>true);assert.equal(replacement,1);
+});
 const appSource=await readFile(process.env.MEWU_SCENE_OWNER_SOURCE??new URL('./App.tsx',desktopSource),'utf8');
 const appAst=parse(appSource,{sourceType:'module',plugins:['typescript','jsx']});
 const appNodes=[];const appWalk=node=>{if(!node||typeof node!=='object')return;if(node.type)appNodes.push(node);for(const value of Object.values(node))if(Array.isArray(value))value.forEach(appWalk);else if(value&&typeof value==='object')appWalk(value);};appWalk(appAst);

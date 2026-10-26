@@ -261,7 +261,13 @@ export default function SpaceCanvas(props: Props) {
   const objectWheels=new Map<string,(event:WheelEvent)=>void>();
   const wheelObject=(event:WheelEvent)=>{if((event.target as Element).closest('button,input,textarea,.drawing-toolbar'))return false;const vp=viewport();const item=[...props.scene.items].reverse().find(item=>{const p=displayedItem(item.id);return (item.asset.kind==='image'||item.asset.kind==='video')&&event.clientX>=p.x*vp.width&&event.clientY>=p.y*vp.height&&event.clientX<(p.x+p.width)*vp.width&&event.clientY<(p.y+p.height)*vp.height;});if(!item)return false;objectWheels.get(item.id)?.(event);return event.defaultPrevented;};
   const registerObjectTrash=(port:ObjectTrashPort)=>{setObjectTrash(port);return()=>{if(objectTrash()===port)setObjectTrash(undefined);};};
-  const flushObjects: DrawingFlush=async(active:()=>boolean)=>{for(const flush of [...objectFlushes.values()]){if(!active())throw Error('素材编辑已切换');await flush(active);}};
+  const flushObjects: DrawingFlush=async(active:()=>boolean)=>{
+    for(const [id,flush] of [...objectFlushes]){
+      if(!active())throw Error('素材编辑已切换');
+      if(objectFlushes.get(id)===flush)await flush(active);
+    }
+    if(!active())throw Error('素材编辑已切换');
+  };
   flushObjects.interacting=()=>[...objectFlushes.values()].some(flush=>flush.interacting?.()!==false);
   // Board editors already compose their object flushes into DrawingFlushRegistry.
   // Plain capture objects need their own owner without displacing that editor.

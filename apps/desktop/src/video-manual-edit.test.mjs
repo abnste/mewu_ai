@@ -20,6 +20,34 @@ const { VideoRequestLane, VideoFlushRegistry } = await import(await load('video-
 const { videoAnnotationTarget, videoAnnotationIdentity } = await import(await load('video-annotations'));
 const { TrimCanceled } = await import(await load('video-trim'));
 const turn = () => new Promise(resolve => setImmediate(resolve));
+test('scene flush skips editors unmounted while an earlier video save is pending', async () => {
+  const registry = new VideoFlushRegistry();
+  let release;
+  registry.register(() => new Promise(resolve => { release = resolve; }));
+  let staleCalls = 0;
+  const remove = registry.register(async () => { staleCalls++; throw new TrimCanceled(); });
+  const closing = registry.flush(() => true);
+  await turn(); remove(); release();
+  await closing;
+  assert.equal(staleCalls, 0);
+});
+
+test('flush registration ownership survives remove and re-register of the same callback', async () => {
+  const registry = new VideoFlushRegistry(); let calls = 0;
+  const callback = async () => { calls++; };
+  const old = registry.register(callback); old();
+  registry.register(callback); old();
+  await registry.flush(() => true);
+  assert.equal(calls, 1);
+});
+
+test('live save errors still block close and a later explicit attempt can recover', async () => {
+  const registry = new VideoFlushRegistry(); let fail = true;
+  registry.register(async () => { if (fail) throw Error('save rejected'); });
+  await assert.rejects(registry.flush(() => true), /save rejected/);
+  fail = false; await registry.flush(() => true);
+  await assert.rejects(registry.flush(() => false), TrimCanceled);
+});
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 const origin = { runId: 'run', userMessageId: 'user', toolEventId: 'event', groupId: 'group', targetHandle: 'target', manifestSha256: 'a'.repeat(64), createdSha256: 'b'.repeat(64) };
 function fixture(cache = new VideoTextDraftCache()) {
