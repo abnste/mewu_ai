@@ -1,257 +1,217 @@
 <div align="center">
-  <img src="./Assets/MewuAI.Icon.png" width="88" alt="喵呜AI" />
-  <h1>喵呜AI（MewuAI）— 截图与 AI 空间</h1>
-  <h1>注意！暂时还在测试阶段</h1>
-  
-  <p>开源桌面应用，让截图、对话、标注与可交互的 AI 结果共处同一空间。</p>
+  <img src="./Assets/MewuAI.Icon.png" width="88" alt="MewuAI">
+  <h1>MewuAI · 喵呜AI</h1>
+  <p><strong>由 LLM 驱动的个人 Agent 与 AI 创意画布</strong></p>
+  <p>Mewu with you — 与你一起看、画、创作和完成桌面工作。</p>
   <p>
-    <a href="https://github.com/abnste/mewu_ai/releases/tag/v1.0.8"><img src="https://img.shields.io/badge/正式版-1.0.8-7C6CF0?style=flat-square" alt="1.0.8 正式版" /></a>
-    <img src="https://img.shields.io/badge/Windows-x64-0078D4?style=flat-square" alt="Windows x64" />
-    <img src="https://img.shields.io/badge/macOS-ARM64-555555?style=flat-square" alt="macOS ARM64" />
-    <img src="https://img.shields.io/badge/Linux-x64-E95420?style=flat-square" alt="Linux x64" />
-    <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MPL--2.0-blue?style=flat-square" alt="MPL-2.0" /></a>
+    <a href="https://github.com/abnste/mewu_ai/releases/latest"><img src="https://img.shields.io/github/v/release/abnste/mewu_ai?style=flat-square&color=7055e7" alt="最新发行"></a>
+    <img src="https://img.shields.io/badge/Windows%20%C2%B7%20macOS%20%C2%B7%20Linux-18181b?style=flat-square" alt="Windows、macOS、Linux">
+    <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MPL--2.0-7055e7?style=flat-square" alt="MPL-2.0"></a>
   </p>
-  <p>
-    <a href="https://github.com/abnste/mewu_ai/releases/download/v1.0.8/MewuAI-Setup-1.0.8-win-x64.exe"><strong>Windows 安装版</strong></a>
-    &nbsp;·&nbsp; <a href="https://github.com/abnste/mewu_ai/releases/download/v1.0.8/MewuAI-Portable-1.0.8-win-x64.zip">Windows 便携版</a>
-    &nbsp;·&nbsp; <a href="https://github.com/abnste/mewu_ai/releases/download/v1.0.8/MewuAI-1.0.8-mac-arm64.dmg">macOS ARM64</a>
-    &nbsp;·&nbsp; <a href="https://github.com/abnste/mewu_ai/releases/download/v1.0.8/MewuAI-1.0.8-linux-x64.AppImage">Linux x64</a>
-  </p>
-  <p><strong>简体中文</strong> · <a href="./README.md">English</a> · <a href="./docs/release-notes-1.0.8.md">更新说明</a> · <a href="https://github.com/abnste/mewu_ai/issues">问题反馈</a></p>
+  <p><strong>简体中文</strong> · <a href="./README.md">English</a> · <a href="https://www.mewu.ai/?lang=zh">官网与交互演示</a> · <a href="https://github.com/abnste/mewu_ai/releases/latest">最新发行</a></p>
+  <p><a href="https://www.mewu.ai/download.php?platform=windows"><strong>下载 Windows 版</strong></a>　·　<a href="https://www.mewu.ai/download.php?platform=macos"><strong>下载 macOS 版</strong></a>　·　<a href="https://www.mewu.ai/download.php?platform=linux"><strong>下载 Linux 版</strong></a></p>
 </div>
 
-**喵呜AI（MewuAI）是一款跨 Windows、macOS 和 Linux 的开源截图与 AI 空间应用**。快捷键唤起的截图界面本身就是空间：框选、绘制、贴图、添加文件，再通过对话条提问。截图、视频与生成的 HTML/SVG/Canvas 交互结果可以作为对象放在同一界面中使用。
+MewuAI 是一个开源桌面 Agent 应用。把屏幕中的内容框选给 AI，用文字、箭头和手绘说明细节，在同一个空间里讨论、生成交互工具、整理素材，再通过 CLI、MCP 和插件完成操作。截图、录屏和标注是表达工具；你选择的模型、Agent 与记忆共同参与工作。
 
-| 产品速览 | 说明 |
-| --- | --- |
-| 支持系统 | Windows x64、macOS ARM64、Linux x64；简体中文和 English 界面 |
-| 核心操作 | 截图 → 标注、复制、保存；或引用内容 → 向 AI 提问 → 使用生成结果 |
-| 未配置 AI | 仍可截图、使用内置绘制和录屏；配置模型或显式绑定独立 Agent 提供方后才出现对话条 |
-| AI 与插件 | 自有模型连接、经权限控制的可执行插件、可独立选择的 Agent 和记忆提供方 |
-| 官方来源 | [1.0.8 正式版](https://github.com/abnste/mewu_ai/releases/tag/v1.0.8) · [GitHub 社区插件市场](https://github.com/abnste/mewu-plugins) |
-| 开源协议 | [MPL-2.0](./LICENSE)；[第三方许可全文](./apps/desktop/THIRD-PARTY-NOTICES) |
+![框选多份参考，向个人 Agent 提出任务，在画布上使用生成的待办清单](./docs/media/readme/agent-overview.gif)
 
-**MewuAI 1.0.8** 为独立区域操作插件补齐 macOS 与 GNOME Wayland 后端，将 Hindsight 完整迁入独立插件，并改进选区确认、工具包拖入、视频重播与翻译进度。详见[更新说明](./docs/release-notes-1.0.8.md)。
+**看得见上下文，也能直接使用结果。** 选区自动成为引用；生成的 HTML 可以留在画布上点击、输入和拖动，继续与对话协作。
 
-MewuAI 维护于 **[master](https://github.com/abnste/mewu_ai/tree/master)**；原 Windows **.NET/WPF 0.7.x** 源码与文档保留在 **[dotnet](https://github.com/abnste/mewu_ai/tree/dotnet)**。新版使用 **Rust + Tauri 2 + Solid/TypeScript + SQLite** 及系统 WebView，不使用 Electron。
-
-<p align="center">
-  <a href="./docs/images/mewuai-cover-web-zh.png"><img src="./docs/images/mewuai-cover-web-zh.png" width="100%" alt="喵呜AI 概念封面：在 Windows 桌面上截图、提问和原位标注" /></a>
-  <br /><sub>旧版使用的 AI 生成概念封面；下方图库为 .NET 旧版历史演示，不代表 1.0 的当前界面。</sub>
-</p>
-
-
-默认启用的原生 **[Hooks 事件触发器](./docs/hooks.md)** 支持 Cron、提示词、AI 回复、全局快捷键及生命周期/自定义事件，可串联提示词注入、MCP、命令和键鼠操作；每条规则独立管理。
-
-## 功能
-
-- **先做好截图**：进入截图空间，框选区域或受支持的窗口，绘制、复制、保存或置顶。全新安装不需要模型密钥就能使用这些操作。长截图在旁边实时预览；自动应用快照取决于 Windows UI Automation 的支持情况。
-- **绘制与素材对象**：画笔、自适应箭头、形状、文字、序号和高亮使用两组气泡工具条。截图与黑板提供像素/对象橡皮、撤销重做，以及直接显示的三个颜色槽，默认红、黄、蓝，选中后再次单击可换色。导入的图片和视频保持为可移动对象，HTML/SVG/Canvas 内容可以直接交互。
-- **文字与表格**：官方能力插件提供 OCR、翻译和表格提取。OCR 在本机运行；翻译和 AI 表格结果需要合适的模型。链接、邮箱、电话号码及二维码/条码的可操作识别目前仅支持 Windows/macOS，不会自动发送消息或拨打电话。
-- **录屏与裁切**：录屏是内置能力，默认录制电脑声音，支持暂停继续、视频标注及 MP4/MP3/GIF 导出。动作工具条位于视频上方，播放与裁切位于下方；保留原片，导出边界按视频帧对齐。
-- **模型连接**：填写服务域名读取模型列表时，仅在必要时尝试常用 API 根路径；成功地址显示在设置草稿中，确认保存后才生效，已有自定义路径保持原样。
-- **在截图界面直接对话**：引用截图、视频或文件时插入对应 @ 名称，在原对话条继续提问。支持多会话、最小化、历史、Markdown、公式及可收纳的公开思考。鼠标离开时对话条收起，重新唤回保留草稿。
-- **可选 Agent 与黑板**：它们作为官方插件提供，可停用或卸载；绘制和录屏仍为内置。未配置可用模型或显式绑定独立 Agent 时只显示截图操作。独立提供方可以不使用宿主 API Key，但需要主动配置。
-- **可执行插件与真实市场**：Mewu API ES Modules 在独立 QuickJS 进程运行，通过经权限控制的宿主接口注册工具、Agent 引擎、记忆、模型、渠道、渲染器和界面服务。[GitHub 社区市场](https://github.com/abnste/mewu-plugins)安装真实 Release ZIP，提供效果截图、独立项目仓库、版本与包哈希。只接受统一 API 的可执行插件包，旧声明包不再兼容。
-- **长期记忆可扩展**：Agent 与记忆提供方独立选择。官方 Agent 支持本地 SQLite/FTS5 持久记忆；Hindsight 通过独立插件配置服务器、Key 与已有记忆库，停用后撤去入口和能力，也可选择其他社区记忆系统。
-
-开发方式见 [SDK](./packages/sdk/README.md)、[扩展指南](./docs/extensions.md)与[打包发行工具](./tools/extension-market/README.md)。独立示例有[区域 Agent](https://github.com/abnste/mewu-plugin-region-agent)、[日志记忆](https://github.com/abnste/mewu-plugin-journal-memory)和[交互圆角尺](https://github.com/abnste/mewu-plugin-interactive-widget)。引用区域后直接在现有对话条发指令，无需额外任务窗口。原生区域输入支持 Windows、macOS，以及安装 [Mewu Desktop Witness](./tools/linux-desktop-witness/README.md) 的 GNOME 50 Wayland x64；均需相应系统授权，其他 Linux 桌面尚未适配区域输入。
-
-开发版 SDK 新增隔离客户端界面与插件对象存储。已实现接口、仍在核心的耦合及限制
-见[插件边界核查](./docs/plugin-boundaries.md)；能注册服务不代表对应产品流程已经完整接通。
-
-**CLI**：默认开启的官方命令行插件让其他本机 Agent 通过 `mewu schema` 和固定 JSON 指令操作 Mewu，复用原截图、对话、绘制与录屏流程。见[命令行指南](./docs/cli.md)与[机器可读目录](./apps/desktop/control/catalog.json)。从 1.0.3 起提供，旧安装包不包含此接口。
-
-<details>
-<summary>.NET 0.7.x 原版功能资料</summary>
-
-以下为原 Windows 版本的功能介绍，保留在 [dotnet](https://github.com/abnste/mewu_ai/tree/dotnet) 分支。它们是项目历史与旧版使用资料，不代表所有接入方式和交互都已迁移到当前版本。
-
-- **试卷与作业**：像普通截图一样引用试卷，直接让 AI 讲解、批注；引用多张截图分析共同问题并生成练习，识读与判分仍需人工核对。
-
-- **截图与长截图**：框选区域、选择窗口、多屏截图，长截图不再限制固定拼接次数。框选时，紧凑取色框上方显示 #FFFFFF 格式的十六进制色值，中间是带十字线的无外框像素放大镜，下方显示屏幕坐标。自动吸附窗口后可截取应用快照，捕获受支持的滚动区域并恢复原位置，完成后自动置顶和引用；可用性取决于应用的渲染与滚动支持。
-- **标注与贴图**：第一行选择画笔、形状、文字、序号、马赛克等工具，第二行调整属性、撤回、重做、删除全部和确定。“选择”工具用于移动和编辑已有对象，序号工具可手动指定下个编号；荧光笔与重点高亮给背景上色并保护底图文字和细节。按住 Shift 约束线条、箭头和形状；移动或缩放截图选区时保留手工标注，确定后自动复制标注图。
-- **透明提取与局部修补**：“无痕提取”补齐原位置背景，并把文字或图案提取为可移动、缩放、删除的透明图层；“涂抹消除”沿笔刷路径修补内容。两者均在本机处理并支持撤回、重做，依据周边背景估算，适合截图文字和简单图案，不等同于通用主体抠图或生成式照片编辑。
-- **文字与表格**：离线识别并复制图片文字；截图翻译保留每个源行和独立分栏，较长的单行译文在本行空间内调整字号；用 AI 提取表格，粘贴到 Excel。
-- **二维码与记忆填充**：圈选二维码或条码后自动显示复制、打开提示，多个码在一张紧凑卡片中切换。在记忆设置中保存关键词和值，再右键截图工具条的“文字”按钮扫描填充表单；记忆值在本机加密，待填字段可逐项确认。
-- **录屏与裁切**：录制指定区域，支持电脑声音和麦克风。在预览下方直接定位、调整起止点、撤回修改或恢复完整视频，原文件不被覆盖；保存、复制、贴视频和 AI 引用统一使用保留片段，音频及时间轴标注同步处理。预览默认原分辨率，可在录屏设置中选择降低预览分辨率，保存的视频分辨率不受影响。支持导出 MP4 视频、MP3 音频或 GIF 动图。
-- **看图、看视频提问**：引用多张截图或附件继续追问，查看 AI 批注，点击回答中的时间跳到对应视频片段。
-- **选择你常用的 AI**：支持 API、Hermes、ChatGPT Work / Codex、WorkBuddy 和 MiniMax Code，可随时切换，记住上次选择。
-- **屏幕操作与 MCP 服务**：识别链接、邮箱地址和电话号码；连接 QQ 邮箱、网易邮箱、钉钉、飞书、ima 或 Obsidian，使用相应的邮件、分享及笔记功能。配置方法见[集成使用指南](https://github.com/abnste/mewu_ai/blob/dotnet/docs/mcp-integrations.md#中文)。
-
-截图、手工标注、贴图、文字识别和录屏无需配置 AI。翻译、表格提取及 AI 问答需要连接相应服务。
-
-</details>
-
-## 开发中 / TODO
-
-- 扩展 Agent、记忆、模型和通讯渠道插件。
-- Windows 以外平台的区域输入，以及更多三端一致性适配。
-- NVIDIA 即时重放的硬件兼容验证，以及全程序实时诊断日志界面。
-- 专用图片/视频生成接口和更多视觉、音频流程。
-- AIGC 画布编辑与交互渲染器。
-- 更多语言、更低资源占用和更高响应效率。
-- 继续迁移原 .NET 集成；现有文档保留在 [dotnet](https://github.com/abnste/mewu_ai/tree/dotnet)。
+[功能演示](#功能演示) · [使用场景](#使用场景) · [插件市场](#插件市场) · [开始使用](#开始使用) · [开发与贡献](#开发与贡献) · [项目成员](#项目成员)
 
 ## 功能演示
 
-**旧版历史图库。** 以下八项演示完整保留自原 .NET README，呈现项目已有功能方向和旧版界面；不是 1.0 的实机截图，也不表示新版已实现全部功能同等适配。
+### 框选即引用，让 AI 看清具体位置
+
+在桌面连续框选多个区域，选区会自动加入当前对话的引用，非选区压暗。可以同时比较几段文字、几张图或不同窗口的内容，无需整屏发送，也无需再点击一次“引用”。
+
+- 用手绘、箭头、矩形和文字补充要求，指出修改位置或需要解释的细节。
+- 在原位置查看结果，或将内容复制、保存、置顶，继续整理。
+- 单区、多区、长截图与录屏共用桌面工作空间。
+
+![连续框选三处内容，自动形成多条引用](./docs/media/readme/multi-region.gif)
+
+### AI 创意画布，组织素材与对话
+
+把图片、视频、文字和生成对象放在同一张画布上，调整大小和位置，建立参考关系。每个项目与会话保留自己的内容；Agent 角色、模型连接和记忆可以分别配置。适合比较设计稿、整理研究资料、讨论画面构图或推进一个创作项目。
+
+- **多模态对话：** 引用图片、视频和文件，保留会话历史，支持 Markdown、公式与可折叠的公开思考。
+- **角色与记忆：** 自定义 Agent 设定，选择模型和工具；官方 Agent 支持本地持久记忆，也可通过插件连接独立记忆服务。
+
+![在画布中整理分镜参考、图片和对话](./docs/media/readme/creative-canvas.gif)
+
+### 用自然语言生成 HTML 交互工具
+
+描述你需要的计算器、可视化实验、任务面板或小游戏，让 AI 生成 HTML / SVG / Canvas 内容。结果作为可交互对象放在空间中，可以输入、点击、拖动，也可以继续提出修改要求。下面的粒子实验展示模式切换与参数调节。
+
+![生成粒子实验控件并切换运动模式、调整参数](./docs/media/readme/interactive-tools.gif)
+
+### 视频标注与时间定位
+
+导入视频或录制屏幕，对指定时间段添加框线和文字；点击对话里的时间标记，回到对应画面继续查看。下面用一只沿围栏行走的狸花猫演示分段标注、播放和时间跳转。
+
+![狸花猫视频：带时间范围的目标标注与点击时间跳转](./docs/media/readme/video-annotations.gif)
+
+标注按设定时间范围显示；连续时段可以设置不同位置。录屏还支持系统声音与麦克风、暂停与继续、非破坏性裁剪，以及 MP4、MP3、GIF 导出，具体音频能力取决于系统。
+
+### 电子黑板与手绘讲解
+
+打开黑板，用笔迹、几何图形、公式和颜色讲清楚推导过程。可以配合题目截图进行讲解，也可以把手绘内容交给 AI 继续分析；用于屏幕共享时，可在设置中允许共享软件看到框选和标注。
+
+![在全屏黑板上手绘坐标系、函数曲线与说明](./docs/media/readme/blackboard.gif)
+
+### 文字识别、翻译与表格提取
+
+截图后的基础工具同样保留：本地 OCR 提取文字，翻译选中内容，借助支持图像的模型解释图表、把截图中的表格整理成可复用的数据。下面分别展示文字提取、原位翻译与表格整理。
 
 <table>
-<tr>
-<td width="50%" valign="top">
-<h3>圈出重点</h3>
-<p>让 AI 在截图上圈选、打勾或添加说明，也可以继续追问。</p>
-<a href="./docs/images/ai-checkmarks.jpg"><img src="./docs/images/ai-checkmarks.jpg" width="100%" alt="AI 在截图中圈出重点并添加勾选标记" /></a>
-</td>
-<td width="50%" valign="top">
-<h3>表格识别</h3>
-<p>把截图中的表格识别成行列清晰的回答，点击“复制表格”即可粘贴到 Excel。</p>
-<a href="./docs/images/table-recognition.png"><img src="./docs/images/table-recognition.png" width="100%" alt="表格截图识别为结构化行列，回答上方提供复制表格按钮" /></a>
-</td>
-</tr>
-<tr>
-<td width="50%" valign="top">
-<h3>视频分析</h3>
-<p>点击回答中的时间跳到相关画面；播放标记片段时，批注跟随目标移动。</p>
-<a href="./docs/media/MewuAI-video-annotations.gif"><img src="./docs/media/MewuAI-video-annotations.gif" width="100%" alt="点击回答定位视频片段，播放时标注跟随目标移动" /></a>
-</td>
-<td width="50%" valign="top">
-<h3>数据标注</h3>
-<p>让 AI 识别并圈出图片中的目标，例如交通画面里可辨认的车辆。</p>
-<a href="./docs/images/data-annotations.png"><img src="./docs/images/data-annotations.png" width="100%" alt="AI 圈出交通画面中可辨认的车辆，并说明识别范围" /></a>
-</td>
-</tr>
-<tr>
-<td width="50%" valign="top">
-<h3>截图翻译</h3>
-<p>在原文的位置阅读译文，选中文字即可复制。</p>
-<a href="./docs/images/in-place-translation.jpg"><img src="./docs/images/in-place-translation.jpg" width="100%" alt="译文显示在截图原文的位置" /></a>
-</td>
-<td width="50%" valign="top">
-<h3>绘图与批注</h3>
-<p>让 AI 添加图示，或自己用画笔、形状和文字补充说明。</p>
-<a href="./docs/images/draw-and-annotate-latest.jpg"><img src="./docs/images/draw-and-annotate-latest.jpg" width="100%" alt="截图上的 AI 绘图与批注" /></a>
-</td>
-</tr>
-<tr>
-<td width="50%" valign="top">
-<h3>代码讲解</h3>
-<p>框选看不懂的代码，让 AI 对着具体位置解释。</p>
-<a href="./docs/images/understand-code-20260921.png"><img src="./docs/images/understand-code-20260921.png" width="100%" alt="代码截图旁的解释与对应代码位置相连" /></a>
-</td>
-<td width="50%" valign="top">
-<h3>试卷批注</h3>
-<p>引用试卷截图进行讲解和批注；多张截图可一起分析共同问题、生成练习。</p>
-<a href="./docs/images/exam-annotation-latest.jpg"><img src="./docs/images/exam-annotation-latest.jpg" width="100%" alt="几何试题截图上的解答与原位批注演示" /></a>
-</td>
-</tr>
+  <tr>
+    <td width="50%"><a href="./docs/media/readme/ocr.png"><img src="./docs/media/readme/ocr.png" alt="选区内文字识别与提取"></a><br><strong>文字识别</strong> · 提取截图中的文字</td>
+    <td width="50%"><a href="./docs/media/readme/translate.png"><img src="./docs/media/readme/translate.png" alt="选区内英文内容翻译"></a><br><strong>文字翻译</strong> · 对照原文查看译文</td>
+  </tr>
 </table>
 
-<details>
-<summary>试卷演示说明</summary>
+![识别截图中的表格并整理数据](./docs/media/readme/table.png)
 
-配图展示几何试题的讲解与原位批注。AI 回答与批注请结合原题核对。
+Windows 与 macOS 还支持链接、邮箱、电话号码和二维码／条码的可操作识别。
 
-</details>
+### CLI，让其他 Agent 操作同一个 Mewu 空间
 
+`mewu` 既可以在终端中对话，也提供截图、添加选区、绘制、OCR、录屏和导出图片等固定操作接口。本机 Agent 可以读取当前场景、提交操作，再查看实际结果，与用户共同使用同一个桌面空间。
+
+![终端调用截图、添加选区和绘制接口，右侧 Mewu 界面同步变化](./docs/media/readme/cli-screen-control.gif)
+
+先运行桌面应用，再打开终端：
+
+```sh
+mewu                         # 进入 Agent 对话
+mewu status                  # 查看当前应用与会话
+mewu schema                  # 查询可用操作及参数
+mewu call capture.open --json '{}' --wait
+```
+
+普通 `mewu chat` 默认只发送文字；截图与文件需通过对应引用接口提供。接口参数、安装后的命令行集成和 Linux 要求见 [CLI 文档](./docs/cli.md)与[操作目录](./apps/desktop/control/catalog.json)。
+
+## 使用场景
+
+| 你正在做的事 | 在 Mewu 中怎样完成 |
+| --- | --- |
+| 阅读资料、比较信息 | 连续框选多个来源，让 AI 对照解释；把重点整理到画布或笔记中。 |
+| 审阅设计与内容 | 圈出局部、画箭头、加文字，直接说明“修改哪里、保留什么”。 |
+| 教学与解题 | 引用题目，手绘推导过程，在黑板上讲解，再让 AI 协助检查。 |
+| 视频复盘 | 对关键时间段加标注，通过对话中的时间按钮反复定位片段。 |
+| 制作小工具 | 描述交互需求，生成可点击的 HTML 控件，边使用边修改。 |
+| 自动化桌面工作 | 用 CLI、区域 AI 操作或 Hooks 串联截图、工具调用和本机动作。 |
+
+## 插件市场
+
+在 **设置 → 插件** 中查看、安装和管理扩展。Agent、记忆、工具与界面能力可以独立扩展；插件可从市场安装，也可以导入发行 ZIP。查看[完整插件市场](https://github.com/abnste/mewu-plugins)。
+
+### Hooks · 官方事件触发器
+
+Hooks 随 Mewu 安装、默认启用。在设置侧栏打开 **Hooks**，把触发条件和动作组合为规则；每条规则可独立开关、编辑，并查看运行记录。
+
+| 什么时候触发 | 可以接着做什么 |
+| --- | --- |
+| 到达设定时间（Cron） | 发送任务、打开应用或运行命令。 |
+| 用户提示词匹配条件 | 为当次请求注入补充要求，或调用工具。 |
+| AI 回复完成 | 调用已配置的 MCP 工具，或继续本机工作流。 |
+| 按下全局快捷键 | 唤起截图、打开黑板或执行一组动作。 |
+| 应用、插件或自定义事件发生 | 按条件串联 Mewu 操作、键鼠动作与其他事件。 |
+
+规则支持动作排序、条件、冷却和运行记录。详见 [Hooks 使用说明](./docs/hooks.md)。
+
+### Agent、记忆与工具扩展
+
+| 插件 | 用途 |
+| --- | --- |
+| [外部 Agent](https://github.com/abnste/mewu-plugin-agent-connectors) | 将 Codex、MiniMax Code、WorkBuddy / CodeBuddy、Hermes 接入原有对话条，沿用相应客户端的登录与配置。 |
+| [区域 AI 操作](https://github.com/abnste/mewu-plugin-region-agent) | 框选目标，描述任务；模型观察区域、执行动作，再根据新截图继续。 |
+| [Hindsight 记忆](https://github.com/abnste/mewu-plugin-hindsight) | 连接自己的 Hindsight 服务与记忆库，为角色选择长期记忆。 |
+| [日志记忆](https://github.com/abnste/mewu-plugin-journal-memory) | 为 Agent 选用独立的日志式记忆提供方。 |
+| [Mewu 工具包](https://github.com/abnste/mewu-plugin-object-toolbox) | 收藏图片、视频、HTML 和绘制对象，拖出复用，按文件夹整理。 |
+| [研究便笺](https://github.com/abnste/mewu-plugin-research-notes) | 在空间中记录、整理和复用笔记。 |
+| [交互圆角尺](https://github.com/abnste/mewu-plugin-interactive-widget) | 在画布中使用可移动、可调节的 HTML / SVG 测量工具。 |
+
+外部 Agent 需要安装并登录相应客户端，支持范围以各插件文档为准。区域 AI 操作支持 Windows、macOS 和符合条件的 GNOME 50 Wayland x64；Linux 还需 Desktop Witness 与系统 Portal 授权，详见插件说明。
+
+**后续方向：** 参考图生成与专用图像／视频生成模型接入、即圈即搜、桌面宠物插件。这些能力仍在规划中，未作为已发布功能列出。
 
 ## 开始使用
 
-> **合作项目：** [**kangarooking/Ta**](https://github.com/kangarooking/Ta)（拓）同样是一款 macOS AI 截图工具，提供文字识别、翻译、长截图和标注。喵呜AI 也提供 macOS ARM64 安装包。
-
-1. **安装并打开。** 选择上方对应安装包。Windows 要求 Windows 10 2004 及以上和 WebView2；macOS 使用 WKWebView，Linux 使用 WebKitGTK。MewuAI 无需另装 .NET。
-2. **截取画面。** 左键托盘图标或使用截图快捷键；Windows 默认为 <kbd>Shift</kbd> + <kbd>Alt</kbd> + <kbd>S</kbd>。框选后复制、保存、标注或录屏，快捷键可在设置修改；Wayland 可能需要桌面授权和快捷键设置。
-3. **按需连接 AI。** 在 **设置 → Agent 与连接** 配置模型，或安装并绑定独立 Agent 插件。Agent 与模型分别选择，在输入框添加区域引用或文件后即可提问。
-
-Linux Wayland 通过桌面 portal 授权截图和录屏。录屏授权后需在刷新的预览中再次框选区域；请把控制条移出录制区域，GNOME 不保证它始终置顶。Linux 需要系统 `libnghttp2.so.14`；本机 OCR 需要 Tesseract 4.1/5 和英语语言数据，Ubuntu 对应 `libnghttp2-14`、`tesseract-ocr-eng`。
-
-新安装的数据默认位于用户目录 `~/.mewu`，已有安装保留原位置。**设置 → 数据** 支持迁移目录、查看文件/图片/会话占用并分别清理。从旧版升级前，请备份重要数据。
-
-## 支持的 AI
-
-| 接入方式 | 当前支持 |
+| 平台 | 下载与安装 |
 | --- | --- |
-| API | Chat Completions、OpenAI Responses、Anthropic Messages，支持多个独立连接和模型模板；图片/视频能力、费用及限额由对应服务决定。 |
-| 独立 Agent | Mewu API Agent 提供方插件可使用自己的运行时，记忆独立选择；调用宿主模型时使用当前连接及已授权能力。 |
-| MCP | 在 **Agent 与连接 → MCP** 配置本地服务；已安装的插件工具也进入现有 Agent 对话。 |
+| **Windows x64** | [安装版](https://www.mewu.ai/download.php?platform=windows) · [便携版](https://www.mewu.ai/download.php?platform=portable)。使用系统 WebView2。 |
+| **macOS Apple Silicon** | [下载 DMG](https://www.mewu.ai/download.php?platform=macos)，将应用移入“应用程序”，按系统提示授予屏幕录制等权限。 |
+| **Linux x64** | [下载 AppImage](https://www.mewu.ai/download.php?platform=linux)，添加执行权限后启动。参阅 [AppImage 与桌面授权](./docs/linux-appimage-permissions.md)。 |
 
-开发中的[外部 Agent 插件](./extensions/official/agent-connectors/README.md)通过设置入口管理 Codex App Server 与 ACP 客户端，包括 Hermes、MiniMax Code CLI 和 CodeBuddy。它需要本轮新增的宿主接口，公开版 1.0.3 无法运行；桌面应用内置 CLI 的兼容性需单独验证。专用图片/视频生成接口及跨设备同步也尚未交付。AI 原位和视频标注的内容仍取决于模型，需要人工核对。
+下载入口跟随最新正式发行；全部文件与更新说明见 [GitHub Releases](https://github.com/abnste/mewu_ai/releases/latest)。
+
+1. **先用桌面工具。** 从托盘或截图快捷键进入空间，框选、绘制、保存，或打开黑板。截图快捷键可在 Hooks 中设置。
+2. **连接 AI。** 在 **设置 → Agent 与连接** 添加模型服务，选择角色、模型与记忆；也可以通过外部 Agent 插件接入已有客户端。
+3. **带着内容提问。** 框选会自动加入引用，在底部对话条发送任务。根据需要启用 MCP 与插件工具。
+
+模型连接支持 Chat Completions、OpenAI Responses 和 Anthropic Messages 接口；可配置多个独立连接。图片、视频与工具调用能力由所选模型和服务决定。
+
+### 常见问题
 
 <details>
-<summary>.NET 原版的第三方客户端接入说明</summary>
+<summary><strong>必须配置 AI 才能用吗？需要付费吗？</strong></summary>
 
-以下说明适用于 [dotnet](https://github.com/abnste/mewu_ai/tree/dotnet)，不是当前版本的连接控件。
+截图、手工绘制、录屏和本地 OCR 不需要 AI 账号。AI 对话及生成内容使用你配置的服务或外部 Agent，费用与额度由相应服务决定；MewuAI 本身是开源项目。
 
-| 接入方式 | 如何使用 |
+</details>
+
+<details>
+<summary><strong>截图和对话会发到哪里？</strong></summary>
+
+截图和手工绘制在本机完成。使用 AI 时，所引用的内容及相关上下文会发送给你选择的服务。插件使用你授予的权限，外部 Agent 沿用其自己的运行配置。
+
+</details>
+
+<details>
+<summary><strong>如何更新、反馈问题？</strong></summary>
+
+在 **设置 → 关于** 检查更新，或从[最新发行](https://github.com/abnste/mewu_ai/releases/latest)下载安装包。Windows 便携版的内置更新会转为安装版；希望保持便携使用时，请下载新的便携包。
+
+遇到问题可提交 [Issue](https://github.com/abnste/mewu_ai/issues)，附上系统、软件版本、复现步骤与必要的截图。录屏和截图受系统授权与桌面环境影响，Linux 可参阅[录屏说明](./docs/linux-native-recording.md)。
+
+</details>
+
+## 开发与贡献
+
+桌面应用使用 **Rust + Tauri 2 + SolidJS / TypeScript**，通过系统 WebView 呈现界面，使用 SQLite 保存项目与会话。浏览器开发预览可调试界面；原生截图、录屏与系统输入需要桌面运行环境。
+
+| 文档 | 内容 |
 | --- | --- |
-| API | 填写服务商的 API Key 并选择模型。可搜索国内外服务商模板、实时加载模型目录，独立保存多个连接。[支持的服务商与接入说明](https://github.com/abnste/mewu_ai/blob/dotnet/docs/api-providers.md)。 |
-| Hermes | 连接电脑上已经配置好的 Hermes，选择人格和模型。 |
-| ChatGPT Work / Codex | 使用电脑上已登录的 ChatGPT Work / Codex，在设置中选择模型和思考程度。 |
-| WorkBuddy | 安装并登录 WorkBuddy 桌面版后，在设置中连接并选择模型。 |
-| MiniMax Code | 使用 MiniMax Code 桌面版的登录状态；可从设置中打开客户端，无需另装命令行工具。 |
+| [桌面开发](./apps/desktop/README.md) | 环境准备、开发与构建。 |
+| [CLI](./docs/cli.md) · [操作目录](./apps/desktop/control/catalog.json) | 让脚本及其他本机 Agent 控制 Mewu。 |
+| [Hooks](./docs/hooks.md) | 事件、条件、动作与运行规则。 |
+| [扩展 SDK](./packages/sdk/README.md) · [扩展接口](./docs/extensions.md) | 编写独立插件，注册工具、Agent、记忆与界面服务。 |
+| [插件打包与投稿](./tools/extension-market/README.md) | 发布独立插件并提交市场。 |
+| [发行指南](./docs/releasing.md) | 桌面安装包与发行流程。 |
 
-配置好多个服务后，点击对话条中 **上传按钮后面的模型按钮**，直接选择要使用的模型。各项配置会保留，下次打开仍使用上次的选择。
+欢迎贡献代码、插件、文档、使用案例与问题反馈。
 
-图片和视频支持取决于所选模型。MiniMax M3 可通过 API 或 Hermes 使用；Codex、WorkBuddy 分析视频时可能需要电脑上已有的视频处理工具。AI 回答和标注请结合原内容核对。
+## 项目成员
 
-</details>
+<table>
+  <tr>
+    <td align="center"><a href="https://github.com/abnste"><img src="https://github.com/abnste.png?size=100" width="48" alt="Abner Stephen"><br>Abner Stephen</a></td>
+    <td align="center"><a href="https://github.com/pyxyd"><img src="https://github.com/pyxyd.png?size=100" width="48" alt="Yandi"><br>Yandi</a></td>
+    <td align="center"><a href="https://github.com/shuziyuxingxing-stack"><img src="https://github.com/shuziyuxingxing-stack.png?size=100" width="48" alt="数字与星星"><br>数字与星星</a></td>
+    <td align="center"><a href="https://github.com/AndeDrCobb"><img src="https://github.com/AndeDrCobb.png?size=100" width="48" alt="Cobb"><br>Cobb</a></td>
+    <td align="center"><a href="https://github.com/tljsj"><img src="https://github.com/tljsj.png?size=100" width="48" alt="tljsj"><br>tljsj</a></td>
+  </tr>
+</table>
 
-## 常见问题
+[查看全部贡献者](https://github.com/abnste/mewu_ai/graphs/contributors)
 
-<details>
-<summary>需要付费吗？</summary>
+## 开源协议与致谢
 
-截图、内置绘制和录屏无需 AI 账号，OCR 等官方可选能力可在本机运行。AI 请求使用你配置的服务或 Agent 提供方，费用和额度由相应服务决定。
+MewuAI 自有源码采用 [MPL-2.0](./LICENSE)，允许遵守协议的商业使用。分发时应按协议提供受覆盖源码，并保留版权与许可声明。[第三方许可](./apps/desktop/THIRD-PARTY-NOTICES)随安装包提供。
 
-</details>
+感谢 **林文杰老师** 提供学科帮助，**张文彪老师** 提供功能开发建议，以及 [**blueling0**](https://github.com/blueling0) 协助测试。也感谢每一位报告问题、分享场景和参与贡献的用户。
 
-<details>
-<summary>为什么会议共享里看不到截图和标注？</summary>
-
-MewuAI 可在 **设置 → 通用 → 允许屏幕共享看到框选和标注** 调整。实际可见性也取决于系统和共享软件。原 .NET 版教学演示模式及 F8 的说明保留在 [dotnet](https://github.com/abnste/mewu_ai/blob/dotnet/README.zh-CN.md)，不能直接当作所有新平台的相同行为保证。
-
-</details>
-
-<details>
-<summary>截图和聊天内容会自动上传吗？</summary>
-
-截图和手工绘制在本机完成。使用 AI 时，引用内容和相应上下文会发送给你选择的服务；插件使用你授予的能力。密钥通过原生凭据存储保存，所接服务或 Agent 仍可能使用云端处理。
-
-</details>
-
-<details>
-<summary>如何更新？旧版自动更新失败怎么办？</summary>
-
-在 **设置 → 关于** 检查并安装更新。MewuAI 直接读取 [GitHub 最新正式发行](https://github.com/abnste/mewu_ai/releases/latest)，选择当前系统的安装包，保留版本、大小与签名校验，不需要额外更新清单或独立签名文件。Windows 便携版更新会运行安装器并切换到安装版位置。
-
-已安装的 **0.7.4、1.0.0 和预览版** 可能写死旧包名或更新地址，请从正式发行页手动安装一次，无需先卸载，之后使用新版自动更新。
-
-Windows **0.7.4** 即使在关于页发现 1.0.3，也可能无法匹配新的安装包名；请直接下载本发行的安装包覆盖安装，无需先卸载。**0.7.3 及更早版本也请直接安装本发行，无需先安装 0.7.4。**
-
-支持的旧 API 连接一次导入，旧文件保留；旧版历史对话尚未转换到新版历史界面，偏好设置也并非全部迁移。详见 [1.0 升级说明](./docs/release-notes-1.0.3.md)和[早期兼容入口说明](./docs/legacy-updates.md)。发行附件详情提供 SHA-256，不另附校验文件；[原版更新日志](https://github.com/abnste/mewu_ai/blob/dotnet/CHANGELOG.md)继续保留。
-
-</details>
-
-<details>
-<summary>安装或录屏遇到问题怎么办？</summary>
-
-Windows 安装包尚无 Authenticode 证书，自动更新签名验证与它分别处理。请从 [1.0.3 发行页](https://github.com/abnste/mewu_ai/releases/tag/v1.0.3)下载。Windows N/KN 录屏可能需要 Media Feature Pack；Linux 请检查桌面授权及上述运行依赖。反馈 [Issues](https://github.com/abnste/mewu_ai/issues) 时请附系统、版本和复现步骤。
-
-</details>
-
-## 参与项目
-
-欢迎反馈问题、提出建议、贡献代码、插件和文档。当前 Rust/Tauri/Solid 项目的开发与发行见[桌面开发指南](./apps/desktop/README.md)、[扩展 SDK](./packages/sdk/README.md)和[发行说明](./docs/releasing.md)。浏览器开发预览不具备原生截图和录屏能力。
-
-原[贡献指南](https://github.com/abnste/mewu_ai/blob/dotnet/CONTRIBUTING.md)、[社区行为准则](https://github.com/abnste/mewu_ai/blob/dotnet/CODE_OF_CONDUCT.md)与[安全策略](https://github.com/abnste/mewu_ai/blob/dotnet/SECURITY.md)保留在 .NET 分支。
-
-## 开源协议
-
-<a href="https://github.com/abnste"><img src="https://github.com/abnste.png?size=150" width="50px" alt="Abner Stephen"></a><a href="https://github.com/pyxyd"><img src="https://github.com/pyxyd.png?size=150" width="50px" alt="Yandi"></a><a href="https://github.com/shuziyuxingxing-stack"><img src="https://github.com/shuziyuxingxing-stack.png?size=150" width="50px" alt="数字与星星"></a><a href="https://github.com/AndeDrCobb"><img src="https://github.com/AndeDrCobb.png?size=150" width="50px" alt="Cobb"></a><a href="https://github.com/tljsj"><img src="https://github.com/tljsj.png?size=150" width="50px" alt="tljsj"></a>
-
-项目自有源码继续采用 [MPL-2.0](./LICENSE)，允许遵守协议的商业使用。对外分发时须按协议提供受覆盖源码，保留版权和许可声明。[第三方许可全文](./apps/desktop/THIRD-PARTY-NOTICES)随安装包提供，各发行标签对应当时源码；原[许可与源码说明](https://github.com/abnste/mewu_ai/blob/dotnet/SOURCE.md)保留在 dotnet。
-
-## 致谢
-
-感谢**林文杰老师**提供学科帮助，**张文彪老师**提供功能开发建议，以及 [**blueling0**](https://github.com/blueling0) 协助测试。
+演示采用 Mewu 界面组件与预置示例内容，展示操作方式；生成结果会随模型与提示词变化。[演示素材与来源](./docs/media/readme/README.md)。

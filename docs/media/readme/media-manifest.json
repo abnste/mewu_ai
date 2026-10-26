@@ -1,0 +1,146 @@
+{
+  "recordedSource": "Mewu website component demos",
+  "preparedExampleContent": true,
+  "assets": [
+    {
+      "file": "agent-overview.gif",
+      "bytes": 1361527,
+      "dimensions": [
+        1120,
+        630
+      ],
+      "frames": 128,
+      "durationMs": 8540,
+      "sha256": "f8febd6f615c8da658bfafb11fa1b3d21e89a77269fccdd3ed3ed6fccabbf43b",
+      "source": "https://www.mewu.ai/assets/hero/agent.mp4",
+      "sourceSha256": "4be95c5106625fb2259ef79cb29d507c278961ac26f2b33945933aa0ea0fa039",
+      "cropped": false
+    },
+    {
+      "file": "interactive-tools.gif",
+      "bytes": 4559748,
+      "dimensions": [
+        960,
+        540
+      ],
+      "frames": 147,
+      "durationMs": 8170,
+      "sha256": "9db1391ce1b080efc6970c40913dd018058ed9252eb726ae9f2d2bb048e0bdaf",
+      "source": "https://www.mewu.ai/assets/hero/interactive.mp4",
+      "sourceSha256": "12e8c4e0f21e2d574cfa204d653605c91ab6c46ae1d187365e2fb18d90823478",
+      "cropped": false
+    },
+    {
+      "file": "blackboard.gif",
+      "bytes": 482892,
+      "dimensions": [
+        960,
+        540
+      ],
+      "frames": 153,
+      "durationMs": 8500,
+      "sha256": "117da630099908453d71c1f37b5e48baf84e86296981cb95109e715eb475a05f",
+      "source": "https://www.mewu.ai/assets/hero/blackboard.mp4",
+      "sourceSha256": "1f496a331a350e2299a43ed1b1c87554006be8a9c1738257c123b5c83d1550cb",
+      "cropped": false
+    },
+    {
+      "file": "multi-region.gif",
+      "bytes": 738179,
+      "dimensions": [
+        960,
+        540
+      ],
+      "frames": 109,
+      "durationMs": 7270,
+      "sha256": "956123c72876538ef432c4be752b8d24272cdf6a8f968428b7da83cfa1b786cd",
+      "source": "https://www.mewu.ai/assets/hero/capture.mp4",
+      "sourceSha256": "081c426d6d2b8e067e773c5684a3258984cbdd6ce868fa131f57deae1307dc47",
+      "cropped": false
+    },
+    {
+      "file": "video-annotations.gif",
+      "bytes": 8891942,
+      "dimensions": [
+        896,
+        504
+      ],
+      "frames": 123,
+      "durationMs": 12300,
+      "sha256": "52d51ce6ee402395595415d2e1834397caef5ac98c974966aa8649b7c5c97a64",
+      "source": "https://www.mewu.ai/assets/features/annotation.mp4",
+      "sourceSha256": "49bb12fa79457eba381433dfe4dab2b1f0f180987008c9f02772c8656dfe6a1f",
+      "cropped": false
+    },
+    {
+      "file": "cli-screen-control.gif",
+      "bytes": 5767328,
+      "dimensions": [
+        960,
+        540
+      ],
+      "frames": 381,
+      "durationMs": 31750,
+      "sha256": "bd983c6b08a448ee83edb60b905936f64d7cb21914b0c8a183f7c123f0b85ce4",
+      "source": "https://www.mewu.ai/assets/features/cli.mp4",
+      "sourceSha256": "f18a1f80fb8cc3c114956aca66ef932104e216934cba0e33415a32b7b0a61665",
+      "cropped": false
+    },
+    {
+      "file": "creative-canvas.gif",
+      "bytes": 817956,
+      "dimensions": [
+        960,
+        540
+      ],
+      "frames": 80,
+      "durationMs": 5340,
+      "sha256": "ce2bbcd49f37d2fd103fa328e79d8ddaf643f9804a152a8b57790f8c08e0e48f",
+      "source": "https://www.mewu.ai/assets/features/canvas.mp4",
+      "sourceSha256": "c98bc22eb7c21bff3acb4453af3c3707a5ded69a4e7c70771693f3a47b324380",
+      "cropped": false
+    },
+    {
+      "file": "ocr.png",
+      "bytes": 231381,
+      "dimensions": [
+        1280,
+        720
+      ],
+      "frames": 1,
+      "durationMs": 0,
+      "sha256": "80b4c2d4321160e167fa35c3281e7aa9a16d6134c5fbba305779ad42bf0126d9",
+      "source": "https://www.mewu.ai/assets/hero/ocr.webp",
+      "sourceSha256": "e181353dcfb40c038a182d7a1904af44df8321f171aa173a39ab92d9412a328c",
+      "cropped": false
+    },
+    {
+      "file": "translate.png",
+      "bytes": 297005,
+      "dimensions": [
+        1280,
+        720
+      ],
+      "frames": 1,
+      "durationMs": 0,
+      "sha256": "786ea04d16aa940382641bd262dd7731e7496365e10ec324f12c8353d6719ac9",
+      "source": "https://www.mewu.ai/assets/hero/translate.webp",
+      "sourceSha256": "762da87b46f45e0dcf686538fcefb707d066bb35656e5d21dcd54a3f2a5b6826",
+      "cropped": false
+    },
+    {
+      "file": "table.png",
+      "bytes": 187831,
+      "dimensions": [
+        1280,
+        720
+      ],
+      "frames": 1,
+      "durationMs": 0,
+      "sha256": "940b826c47717302aa070eed297f8d192122c30089505c00f27d5efea2e74a26",
+      "source": "https://www.mewu.ai/assets/hero/table.webp",
+      "sourceSha256": "09d68e3d608267e7f1f0c5f0686e72e56df2540e0257a8068cc90253abc34811",
+      "cropped": false
+    }
+  ]
+}
