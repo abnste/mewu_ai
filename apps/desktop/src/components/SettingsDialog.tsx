@@ -82,6 +82,7 @@ export default function SettingsDialog(props: Props) {
   onCleanup(() => { extensionDisposed = true; stopExtensions?.(); });
   const [tab, setTab] = createSignal(props.initialTab);
   const [hooksVisited, setHooksVisited] = createSignal(props.initialTab === 'hooks');
+  const [hookRequest,setHookRequest]=createSignal<{category:'shortcut';id?:string;nonce:number}>();
   createEffect(() => { if (tab() === 'hooks') setHooksVisited(true); if (tab() === 'hooks' && optional.installed().revision >= 0 && !hooksEnabled()) setTab('plugins'); });
   const activePluginPage = createMemo(() => pluginPages().find(choice => tab() === `extension:${extensionServiceKey(choice)}`));
   createEffect(() => { if (extensionDiscoveryReady() && tab().startsWith('extension:') && !activePluginPage()) setTab('plugins'); });
@@ -128,7 +129,7 @@ export default function SettingsDialog(props: Props) {
         <nav class="settings-nav" aria-label={t("设置分类")}><div class="settings-nav-pages"><For each={nav.filter(entry => (entry.id !== 'agent' || agentEnabled()) && (entry.id !== 'hooks' || hooksEnabled()))}>{entry => <button classList={{ selected: tab() === entry.id }} onClick={() => setTab(entry.id)}><entry.icon size={16} /><span>{t(entry.label)}</span></button>}</For><For each={pluginPages()}>{choice => <button classList={{ selected: tab() === `extension:${extensionServiceKey(choice)}` }} onClick={() => setTab(`extension:${extensionServiceKey(choice)}`)}><PluginIcon plugin={choice.record.manifest} size={16}/><span>{choice.service.title}</span></button>}</For></div><button class="settings-nav-about" classList={{ selected: tab() === 'about' }} onClick={() => setTab('about')}><Info size={16}/><span>{t('关于')}</span><Show when={updater.status()?.availableVersion}><small class="settings-update-badge">{t('检测到新版本')}</small></Show></button></nav>
         <div class="settings-content">
           <div hidden={tab() !== 'general'}><GeneralSettings active={tab() === 'general'} agentEnabled={anyAgentEnabled()} preferences={props.preferences} onPreferences={props.onPreferences} platform={facts.info()?.platform} /></div>
-          <div hidden={tab() !== 'capture'}><CaptureSettings active={tab() === 'capture'} preferences={props.preferences} onPreferences={props.onPreferences} platform={facts.info()?.platform} /></div>
+          <div hidden={tab() !== 'capture'}><CaptureSettings active={tab() === 'capture'} preferences={props.preferences} onPreferences={props.onPreferences} platform={facts.info()?.platform} hooksEnabled={hooksEnabled()} onOpenHooks={id=>{setHookRequest(old=>({category:'shortcut',id,nonce:(old?.nonce||0)+1}));setTab('hooks');}} /></div>
           <Show when={agentEnabled()}><div hidden={tab() !== 'agent'}><header class="settings-page-heading"><h2>{t("Agent 与连接")}</h2></header>
             <div class="segmented"><Show when={agentEnabled()}><button aria-pressed={agentPane() === 'identity'} classList={{ selected: agentPane() === 'identity' }} onClick={() => setAgentPane('identity')}><UserRound size={13} />Agent</button></Show><button aria-pressed={agentPane() === 'connection'} classList={{ selected: agentPane() === 'connection' }} onClick={() => setAgentPane('connection')}><Link2 size={13} />{t("连接")}</button><Show when={agentEnabled()}><button aria-pressed={agentPane() === 'tools'} classList={{ selected: agentPane() === 'tools' }} onClick={() => setAgentPane('tools')}><Wrench size={13} />MCP</button></Show></div>
             <div hidden={agentPane() !== 'identity'}>
@@ -138,7 +139,7 @@ export default function SettingsDialog(props: Props) {
             <div hidden={agentPane() !== 'tools'}><Show when={agentEnabled()}><ToolsPanel snapshot={props.snapshot} agentId={agentId()} onAgent={setAgentId} onDiscover={props.onDiscoverMcpServer} onCommand={props.onMcpCommand} /></Show></div>
           </div></Show>
           <div hidden={tab() !== 'plugins'}><PluginsPanel active={tab() === 'plugins'} /></div>
-          <Show when={hooksEnabled() && hooksVisited()}><div hidden={tab() !== 'hooks'}><HooksSettings active={tab() === 'hooks'} /></div></Show>
+          <Show when={hooksEnabled() && hooksVisited()}><div hidden={tab() !== 'hooks'}><HooksSettings active={tab() === 'hooks'} openRule={hookRequest()} /></div></Show>
           <div hidden={tab() !== 'data'}><DataSettings data={facts} active={tab() === 'data'} /></div>
           <div hidden={tab() !== 'about'}><AboutSettings data={facts} active={tab() === 'about'} updater={updater} /></div>
           <Show when={activePluginPage()} keyed>{choice => <ExtensionSettings choice={choice} onEscape={props.onClose}/>}</Show>

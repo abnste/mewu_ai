@@ -8,6 +8,13 @@ const module = new SourceTextModule(stripTypeScriptTypes(await readFile(new URL(
 await module.link(() => { throw Error('Unexpected dependency'); });
 await module.evaluate();
 const {hookAccelerator} = module.namespace;
+test('shortcut labels stay human-readable without changing stored accelerators',()=>{
+  const format=module.namespace.formatHookShortcut;
+  assert.equal(format('Shift+Alt+KeyS','windows'),'Shift + Alt + S');
+  assert.equal(format('Super+Shift+KeyS','windows'),'Win + Shift + S');
+  assert.equal(format('Super+Digit1','macos'),'⌘ + 1');
+  assert.equal(format('Control+F8'),'Ctrl + F8');
+});
 const key = values => ({code:'',key:'',ctrlKey:false,altKey:false,shiftKey:false,metaKey:false,isComposing:false,...values});
 test('remote logical keys work when no physical code is available', () => {
   assert.equal(hookAccelerator(key({key:'F8'})), 'F8');

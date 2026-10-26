@@ -2832,7 +2832,7 @@ pub(crate) fn capture_system_shortcut_pressed(app: &AppHandle, epoch: u64) {
         if system_capture_shortcut::dispatch_allowed(epoch)
             && capture_shortcut_host::system_capture_allowed(&target)
         {
-            start_capture(&target);
+            hooks::system_shortcut_pressed(&target);
         }
     });
 }
@@ -2999,11 +2999,6 @@ fn main() {
                 .with_handler(|app, shortcut, event| {
                     if hooks::route_shortcut(app, shortcut, event.state() == ShortcutState::Pressed) {
                         return;
-                    }
-                    if event.state() == ShortcutState::Pressed
-                        && capture_shortcut_host::route_pressed(app, shortcut)
-                    {
-                        start_capture(app);
                     }
                 })
                 .build(),
@@ -3501,19 +3496,6 @@ fn main() {
             app.manage(pixel_sampler::PixelSampler::default());
             app.manage(pin_host::PinRegistry::default());
             capture_shortcut_host::initialize(app.handle(), &app.state::<Host>().root)?;
-            #[cfg(windows)]
-            {
-                let target = app.handle().clone();
-                let enabled = app.state::<Host>().system_preferences.view()
-                    .map(|value| value.replace_system_capture_shortcut)
-                    .unwrap_or(false);
-                tauri::async_runtime::spawn_blocking(move || {
-                    if let Err(error) = system_capture_shortcut::initialize(&target, enabled) {
-                        let _ = target.emit_to("space", "host-error", &error);
-                        let _ = target.emit_to("settings", "host-error", &error);
-                    }
-                });
-            }
             recording_audio_host::initialize(app.handle(), &app.state::<Host>().root)?;
             {
                 let host = app.state::<Host>();

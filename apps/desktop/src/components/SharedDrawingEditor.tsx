@@ -26,6 +26,7 @@ import ImageExportButton from './ImageExportButton';
 import { initialDrawingColor } from '../drawing-colors';
 import { DrawingInputPhase, recordDrawingInput, type DrawingInputPhaseValue } from '../drawing-diagnostics';
 import {selectionBox,marqueeDrawings,movedDrawings,linkedRepairPreview,selectionRemovals} from './drawing-selection';
+import { placeDrawingToolbar, avoidDrawingToolbar, type ToolbarEdge } from '../drawing-toolbar-placement';
 
 import type { SharedDrawingEditorProps as Props, EditorDrawingAction } from '../drawing-editor-port';
 const labels: Record<ManualDrawingKind, string> = { pen: '画笔', line: '直线', arrow: '箭头', rect: '矩形', ellipse: '椭圆', text: '文字', highlighter: '荧光笔', mark: '重点高亮', number: '序号', mosaic: '马赛克' };
@@ -83,6 +84,7 @@ export default function SharedDrawingEditor(props: Props) {
   const cacheKey = () => props.port.draftKey();
   const [viewport, setViewport] = createSignal({ width: innerWidth, height: innerHeight });
   const [toolbarSize, setToolbarSize] = createSignal({ width: 680, height: 118 });
+  const [toolbarEdge,setToolbarEdge]=createSignal<ToolbarEdge>('bottom');
   const [toolsWidth, setToolsWidth] = createSignal(680);
   // Dock from the stable tool bubble, not the changing property bubble.
   const rightDocked = () => !props.blackboard && props.box.x + toolsWidth() + 6 > viewport().width;
@@ -150,13 +152,18 @@ export default function SharedDrawingEditor(props: Props) {
   const continuousStrokes = () => !props.documentOnly && !props.port.stored;
   const gestureIdentity = () => { strokeVersion(); return JSON.stringify([cacheKey(), props.port.sourceIdentity(), props.port.sourceSize(), historyLane?.revisionIdentity() ?? strokeQueue?.revisionIdentity() ?? props.port.revision(), props.box]); };
   const target = (expectedRevision = props.port.revision()) => ({ expectedRevision });
+  const toolbarPlacement=createMemo(()=>placeDrawingToolbar(props.box,toolbarSize(),viewport(),rightDocked(),toolbarEdge()));
   const position = createMemo(() => {
     const size = toolbarSize(), box = props.box, vp = viewport();
     if (props.blackboard) return { left: `${Math.max(6, (vp.width - size.width) / 2)}px`, top: `${Math.max(6, vp.height - size.height - 16)}px` };
-    const x = rightDocked() ? clamp(box.x + box.width - size.width, 6, Math.max(6, vp.width - size.width - 6)) : clamp(box.x, 6, Math.max(6, vp.width - size.width - 6));
-    const y = box.y >= size.height + 14 ? box.y - size.height - 8 : box.y + box.height + size.height + 14 <= vp.height ? box.y + box.height + 8 : 6;
-    return { left: `${x}px`, top: `${y}px` };
+    const placed=toolbarPlacement();
+    return { left: `${placed.x}px`, top: `${placed.y}px` };
   });
+  const avoidToolbar=(event:PointerEvent)=>{
+    if(props.blackboard||!cancelGesture||!event.buttons||event.isPrimary===false||!(event.target instanceof Node)||!svg?.contains(event.target))return;
+    const edge=avoidDrawingToolbar(toolbarPlacement(),{x:event.clientX,y:event.clientY},props.box,viewport(),rightDocked());
+    if(edge!==toolbarEdge())setToolbarEdge(edge);
+  };
   const point = (event: PointerEvent, clip = true, box = svg.getBoundingClientRect(), frame = props.port.frame()): DrawingPoint => {
     const value = { x: frame.x + (event.clientX - box.left) / box.width * frame.width, y: frame.y + (event.clientY - box.top) / box.height * frame.height };
     return clip ? { x: clamp(value.x, frame.x, frame.x + frame.width), y: clamp(value.y, frame.y, frame.y + frame.height) } : value;
@@ -930,7 +937,7 @@ export default function SharedDrawingEditor(props: Props) {
     if (key && props.port.mosaic) void props.port.mosaic.prepare().then(() => { if (alive) setMosaicReady(true); }).catch(error => { if (alive) { setMosaicFailed(true); report(error); } });
     onCleanup(() => { alive = false; });
   }));
-  document.addEventListener('keydown', keyboard, true); document.addEventListener('keyup', keyboard, true); window.addEventListener('resize', resize); window.addEventListener('blur', blur);
+  document.addEventListener('keydown', keyboard, true); document.addEventListener('keyup', keyboard, true); window.addEventListener('resize', resize); window.addEventListener('blur', blur); window.addEventListener('pointermove',avoidToolbar);
   function controlInteractionActive(): boolean {
     // Editing mode itself is not a gesture. Keep the same mounted authoring
     // owner and consult its real drafts, gestures and in-flight writes instead.
@@ -961,7 +968,7 @@ export default function SharedDrawingEditor(props: Props) {
     canRedo:()=>!historyDisabled()&&!edit()&&!erasing()&&!cancelGesture&&historyAvailable(true),
   });
   onCleanup(()=>unregisterHistory?.());
-  onCleanup(() => { unregisterFlush?.(); disposed = true; strokeQueue?.stop(); historyLane?.stop(); serial++; cancelGesture?.(); drawingInput.reset(); document.removeEventListener('keydown', keyboard, true); document.removeEventListener('keyup', keyboard, true); window.removeEventListener('resize', resize); window.removeEventListener('blur', blur); });
+  onCleanup(() => { unregisterFlush?.(); disposed = true; strokeQueue?.stop(); historyLane?.stop(); serial++; cancelGesture?.(); drawingInput.reset(); document.removeEventListener('keydown', keyboard, true); document.removeEventListener('keyup', keyboard, true); window.removeEventListener('resize', resize); window.removeEventListener('blur', blur); window.removeEventListener('pointermove',avoidToolbar); });
   function DrawingItem(item: { id: string }) {
     const isDraft = createMemo(() => activeDraftId() === item.id), isEdit = createMemo(() => activeEditId() === item.id);
     const value = createMemo(() => {const saved=drawingIndex().get(item.id),preview=pixelIndex().get(item.id)??previews().get(item.id);return preview??(saved?linkedRepairPreview(saved,drawingIndex(),previews()):undefined);});

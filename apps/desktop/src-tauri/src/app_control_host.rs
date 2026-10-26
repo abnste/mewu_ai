@@ -48,7 +48,19 @@ struct Operation {
 /// Native automation uses the same renderer flush/claim/receipt lane as CLI,
 /// while retaining its own revocation authority and no dependency on CLI state.
 #[derive(Clone)]
-struct NativeAuthority(Arc<dyn Fn()->Result<(),String>+Send+Sync>);
+struct NativeAuthority(Arc<dyn Fn()->Result<(),String>+Send+Sync>,Option<NativeEventOrigin>);
+/// Native provenance only: never deserializable from a model, plugin or CLI.
+#[derive(Clone,Default,PartialEq,Eq)]
+pub(crate) struct NativeEventOrigin {pub ancestors:Vec<String>,pub depth:u8}
+fn operation_origin(inner:&Inner)->Option<NativeEventOrigin>{
+    let mut merged:Option<NativeEventOrigin>=None;
+    for origin in inner.operations.values().filter(|op|op.phase==Phase::Claimed).filter_map(|op|op.native_authority.as_ref()?.1.as_ref()){
+        let value=merged.get_or_insert_with(NativeEventOrigin::default);value.depth=value.depth.max(origin.depth);
+        for ancestor in &origin.ancestors{if !value.ancestors.contains(ancestor){value.ancestors.push(ancestor.clone());}}
+    }
+    merged
+}
+pub(crate) fn native_event_origin(app:&AppHandle)->Option<NativeEventOrigin>{app.try_state::<Runtime>().and_then(|r|r.inner.lock().ok().and_then(|inner|operation_origin(&inner)))}
 #[derive(Default)]
 struct Inner { renderer_id: Option<String>, ready:bool, operations: HashMap<String, Operation> }
 #[derive(Default)]
@@ -419,11 +431,11 @@ fn enqueue_authorized(app:&AppHandle,mut request:Request,revision:u64,native_aut
     }
     Ok(json!({"operationId":request.id,"status":"queued"}))
 }
-pub(crate) async fn execute_native(app:&AppHandle,method:&str,params:Value,authority:Arc<dyn Fn()->Result<(),String>+Send+Sync>,deadline:Instant)->Result<Value,String>{
+pub(crate) async fn execute_native(app:&AppHandle,method:&str,params:Value,authority:Arc<dyn Fn()->Result<(),String>+Send+Sync>,deadline:Instant,origin:Option<NativeEventOrigin>)->Result<Value,String>{
     (authority)()?;
     if !METHODS.contains(&method){return Err("不支持此 Mewu 操作".into())}
     let id=format!("native-{}",uuid::Uuid::new_v4());let request=Request::new(&id,method,params);request.validate().map_err(|_|"操作参数无效")?;
-    enqueue_authorized(app,request,0,Some(NativeAuthority(authority.clone()))).map_err(|e|e.message)?;
+    enqueue_authorized(app,request,0,Some(NativeAuthority(authority.clone(),origin))).map_err(|e|e.message)?;
     loop {
         let stopped=(authority)().err().or_else(||(Instant::now()>=deadline).then(||"操作等待超时".to_string()));
         let terminal={let runtime=app.state::<Runtime>();let mut inner=runtime.inner.lock().map_err(|_|"操作状态不可用")?;let op=inner.operations.get_mut(&id).ok_or("操作记录已过期")?;expire(op);
@@ -458,6 +470,17 @@ mod catalog_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn lifecycle_provenance_is_native_claimed_only_and_does_not_count_parallel_parents_as_depth(){
+        let make=|phase,origin|Operation{fingerprint:[0;32],nonce:String::new(),renderer_id:String::new(),plugin_revision:0,phase,since:Instant::now(),result:None,native_authority:Some(NativeAuthority(Arc::new(||panic!("reading provenance must not invoke an effect or grant")),Some(origin)))};
+        let a=NativeEventOrigin{ancestors:vec!["rule-a".into()],depth:1};let b=NativeEventOrigin{ancestors:vec!["rule-b".into()],depth:2};
+        let mut inner=Inner::default();inner.operations.insert("a".into(),make(Phase::Queued,a.clone()));
+        assert!(operation_origin(&inner).is_none());
+        inner.operations.get_mut("a").unwrap().phase=Phase::Claimed;
+        let origin=operation_origin(&inner).unwrap();assert_eq!(origin.ancestors,a.ancestors);assert_eq!(origin.depth,1);
+        inner.operations.insert("b".into(),make(Phase::Claimed,b));let origin=operation_origin(&inner).unwrap();assert_eq!(origin.depth,2);assert_eq!(origin.ancestors.len(),2);
+        inner.operations.get_mut("a").unwrap().phase=Phase::Complete;inner.operations.get_mut("b").unwrap().phase=Phase::Complete;assert!(operation_origin(&inner).is_none());
+    }
     #[test]
     fn result_budget_stops_serializing_before_walking_the_entire_collection() {
         struct Counted<'a>(&'a std::cell::Cell<usize>);

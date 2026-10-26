@@ -235,7 +235,7 @@ const normalize = value => JSON.parse(JSON.stringify(value));
   assert.ok(dialog.includes('class="settings-nav-about"'));
   assert.ok(dialog.includes("onClick={() => setTab('about')}"));
   assert.ok(dialog.includes("t('检测到新版本')"));
-  assert.equal(dialog.includes('CaptureShortcutField'), false); assert.ok(capture.includes("CaptureShortcutField visible={props.active && pane() === 'screenshot'}")); assert.ok(capture.includes('选区外暗度')); assert.equal(dialog.includes('选区外暗度'), false);
+  assert.equal(dialog.includes('CaptureShortcutField'), false); assert.ok(capture.includes('HookShortcutSetting')); assert.ok(capture.includes('method="capture.open"')); assert.equal(capture.includes('SystemCaptureShortcutSetting'),false); assert.ok(capture.includes('选区外暗度')); assert.equal(dialog.includes('选区外暗度'), false);
   for (const forbidden of ['exportSnapshot', '导出会话', '导出 Agent', '本机</span>', 'Mewu 1.0</span>']) assert.equal(dialog.includes(forbidden), false);
   assert.equal(facts.includes('innerHTML'), false); assert.equal(facts.includes('检查更新'), false); assert.equal(facts.includes('更改目录'), false);
   checks.push('Actual dialog places hotkey and mask together under Capture; no static local/version row, JSON export, unimplemented updater/migration or unsafe license HTML');

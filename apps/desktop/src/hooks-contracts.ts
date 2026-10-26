@@ -22,7 +22,7 @@ export type HookAction =
 export type HookInput = { kind: 'move'; x: number; y: number } | { kind: 'click'; button: 'left' | 'right' | 'middle'; count: number } | { kind:'button'; button:'left'|'right'|'middle'; direction:'press'|'release' } | { kind: 'key'; key: string } | { kind: 'text'; text: string } | { kind: 'scroll'; x: number; y: number } | { kind: 'delay'; milliseconds: number };
 export interface HookRule { id: string; revision: number; name: string; enabled: boolean; trigger: HookTrigger; condition: string; actions: HookAction[]; cooldownMs: number; timeoutMs: number; stopOnError: boolean }
 export interface HookRun { id: string; ruleId: string; ruleRevision: number; eventId: string; eventName: string; startedAt: number; finishedAt?: number | null; status: 'running' | 'completed' | 'failed' | 'canceled' | 'skipped' | 'interrupted'; completedActions: number; error?: string | null }
-export interface HookSnapshot { revision: number; rules: HookRule[]; runs: HookRun[]; enabled: boolean; shortcuts: Record<string, { status: string; message?: string; label?: string }>; nextRuns: Record<string, number>; events: { name: string; title: string }[]; mcpServers: { id: string; name: string; tools: { name: string }[] }[]; platform: string }
+export interface HookSnapshot { revision: number; rules: HookRule[]; runs: HookRun[]; enabled: boolean; shortcuts: Record<string, { status: string; message?: string; label?: string }>; nextRuns: Record<string, number>; events: { name: string; title: string }[]; mcpServers: { id: string; name: string; tools: { name: string }[] }[]; platform: string;warning?:string|null }
 export function newHookRule(category: HookCategory, platform = ''): HookRule {
   const trigger: HookTrigger = category === 'cron' ? { kind: 'cron', expression: '0 9 * * *', timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'local' }
     : category === 'prompt' || category === 'reply' ? { kind: category, matcher: { mode: category === 'reply' ? 'regex' : 'contains', value: category === 'prompt' ? '？' : '.*', ignoreCase: false } }
@@ -43,6 +43,9 @@ export function newHookAction(kind: HookAction['kind'], platform = ''): HookActi
     case 'app': return { kind, method: 'capture.open', params: {} };
     case 'delay': return { kind, milliseconds: 500 };
   }
+}
+export function formatHookShortcut(value:string,platform=''):string {
+  return value.split('+').map(part=>{const key=part.trim();if(/^Key[A-Z]$/.test(key))return key.slice(3);if(/^Digit\d$/.test(key))return key.slice(5);if(key==='Control')return 'Ctrl';if(key==='Super')return platform==='macos'?'⌘':platform==='windows'?'Win':'Super';return key;}).join(' + ');
 }
 export function hookAccelerator(event: Pick<KeyboardEvent, 'code' | 'ctrlKey' | 'altKey' | 'shiftKey' | 'metaKey' | 'isComposing'> & Partial<Pick<KeyboardEvent, 'key'>>): string | undefined {
   let code = event.code;

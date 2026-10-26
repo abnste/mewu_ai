@@ -1168,7 +1168,8 @@
             }
           }
         }
-      ]
+      ],
+      "title": "唤起截图"
     },
     {
       "method": "region.add",
@@ -1250,7 +1251,8 @@
             }
           }
         }
-      ]
+      ],
+      "title": "添加选区"
     },
     {
       "method": "chat.setDraft",
@@ -1325,7 +1327,8 @@
             }
           }
         }
-      ]
+      ],
+      "title": "填写对话"
     },
     {
       "method": "chat.send",
@@ -1422,7 +1425,8 @@
             }
           }
         }
-      ]
+      ],
+      "title": "发送消息"
     },
     {
       "method": "chat.cancel",
@@ -1497,7 +1501,8 @@
             }
           }
         }
-      ]
+      ],
+      "title": "停止回复"
     },
     {
       "method": "blackboard.create",
@@ -1562,7 +1567,8 @@
             }
           }
         }
-      ]
+      ],
+      "title": "新建黑板"
     },
     {
       "method": "blackboard.finish",
@@ -1627,7 +1633,8 @@
             }
           }
         }
-      ]
+      ],
+      "title": "完成黑板"
     },
     {
       "method": "blackboard.open",
@@ -1698,7 +1705,8 @@
             }
           }
         }
-      ]
+      ],
+      "title": "打开黑板"
     },
     {
       "method": "drawing.apply",
@@ -1795,7 +1803,8 @@
             }
           }
         }
-      ]
+      ],
+      "title": "绘制标注"
     },
     {
       "method": "recording.start",
@@ -1873,7 +1882,8 @@
             }
           }
         }
-      ]
+      ],
+      "title": "开始录屏"
     },
     {
       "method": "recording.control",
@@ -1955,7 +1965,8 @@
             }
           }
         }
-      ]
+      ],
+      "title": "控制录屏"
     },
     {
       "method": "scroll.start",
@@ -2059,7 +2070,8 @@
             }
           }
         }
-      ]
+      ],
+      "title": "开始长截图"
     },
     {
       "method": "scroll.control",
@@ -2146,7 +2158,8 @@
             }
           }
         }
-      ]
+      ],
+      "title": "控制长截图"
     },
     {
       "method": "scene.activate",
@@ -2213,7 +2226,8 @@
             }
           }
         }
-      ]
+      ],
+      "title": "切换会话"
     },
     {
       "method": "scene.new",
@@ -2274,7 +2288,8 @@
             }
           }
         }
-      ]
+      ],
+      "title": "新建截图"
     },
     {
       "method": "scene.newConversation",
@@ -2335,7 +2350,8 @@
             }
           }
         }
-      ]
+      ],
+      "title": "新建对话"
     },
     {
       "method": "scene.freeze",
@@ -2396,7 +2412,8 @@
             }
           }
         }
-      ]
+      ],
+      "title": "收纳会话"
     },
     {
       "method": "scene.close",
@@ -2457,7 +2474,8 @@
             }
           }
         }
-      ]
+      ],
+      "title": "关闭会话"
     },
     {
       "method": "scene.command",
@@ -2528,7 +2546,8 @@
             }
           }
         }
-      ]
+      ],
+      "title": "操作会话"
     },
     {
       "method": "references.set",
@@ -2608,7 +2627,8 @@
             }
           }
         }
-      ]
+      ],
+      "title": "设置引用"
     },
     {
       "method": "settings.open",
@@ -2669,7 +2689,8 @@
             "params": {}
           }
         }
-      ]
+      ],
+      "title": "打开设置"
     },
     {
       "method": "asset.import",
@@ -2785,7 +2806,8 @@
             }
           }
         }
-      ]
+      ],
+      "title": "导入文件"
     },
     {
       "method": "image.export",
@@ -2894,7 +2916,8 @@
             }
           }
         }
-      ]
+      ],
+      "title": "导出图片"
     },
     {
       "method": "ocr.run",
@@ -2997,7 +3020,8 @@
             }
           }
         }
-      ]
+      ],
+      "title": "识别文字"
     },
     {
       "method": "translation.run",
@@ -3120,7 +3144,8 @@
             }
           }
         }
-      ]
+      ],
+      "title": "翻译"
     },
     {
       "method": "pin.create",
@@ -3230,7 +3255,8 @@
             }
           }
         }
-      ]
+      ],
+      "title": "置顶对象"
     },
     {
       "method": "app.status",

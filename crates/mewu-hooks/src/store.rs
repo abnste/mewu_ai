@@ -63,16 +63,17 @@ impl Store {
         let version: i64 = db_
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .map_err(db)?;
-        if version > 1 {
+        if version > 2 {
             return Err("事件触发器数据来自更新的软件版本".into());
         }
-        db_.execute_batch("PRAGMA foreign_keys=ON;
+        db_.execute_batch("PRAGMA foreign_keys=ON; BEGIN IMMEDIATE;
             CREATE TABLE IF NOT EXISTS hook_meta(singleton INTEGER PRIMARY KEY CHECK(singleton=1),revision INTEGER NOT NULL);
             INSERT OR IGNORE INTO hook_meta VALUES(1,0);
             CREATE TABLE IF NOT EXISTS hook_rules(id TEXT PRIMARY KEY,revision INTEGER NOT NULL,body TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS hook_runs(id TEXT PRIMARY KEY,rule_id TEXT NOT NULL,rule_revision INTEGER NOT NULL,event_id TEXT NOT NULL,event_name TEXT NOT NULL,started_at INTEGER NOT NULL,finished_at INTEGER,status TEXT NOT NULL,completed_actions INTEGER NOT NULL DEFAULT 0,error TEXT,UNIQUE(rule_id,event_id));
             CREATE INDEX IF NOT EXISTS hook_runs_started ON hook_runs(started_at DESC);
-            PRAGMA user_version=1;").map_err(db)?;
+            CREATE TABLE IF NOT EXISTS hook_imports(source TEXT PRIMARY KEY);
+            PRAGMA user_version=2; COMMIT;").map_err(db)?;
         // A prior process's uncertain effects must never be replayed on startup.
         db_.execute("UPDATE hook_runs SET status='interrupted',finished_at=?1,error='上次运行中断，未自动重试' WHERE status='running'",[chrono::Utc::now().timestamp_millis()]).map_err(db)?;
         Ok(Self { db: db_ })
@@ -137,6 +138,102 @@ impl Store {
             .map_err(db)?;
         s.map(|s| serde_json::from_str(&s).map_err(|_| "规则数据无效".into()))
             .transpose()
+    }
+    /// Import a former settings source exactly once. Imported entries are normal
+    /// editable/removable rules; the durable marker prevents resurrection after
+    /// deletion. Configuration and marker commit together, including an explicit
+    /// empty/disabled source. Existing user rules always take precedence.
+    pub fn imported(&self, source: &str) -> Result<bool> {
+        self.db
+            .query_row(
+                "SELECT 1 FROM hook_imports WHERE source=?1",
+                [source],
+                |r| r.get::<_, i32>(0),
+            )
+            .optional()
+            .map(|v| v.is_some())
+            .map_err(db)
+    }
+    pub fn import_once(&mut self, source: &str, rules: Vec<Rule>) -> Result<bool> {
+        if source.is_empty()
+            || source.len() > 120
+            || !source
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b".-_".contains(&b))
+        {
+            return Err("迁移来源无效".into());
+        }
+        for rule in &rules {
+            rule.validate()?;
+            if rule.revision != 0 {
+                return Err("导入规则版本无效".into());
+            }
+        }
+        let tx = self
+            .db
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(db)?;
+        if tx
+            .query_row(
+                "SELECT 1 FROM hook_imports WHERE source=?1",
+                [source],
+                |r| r.get::<_, i32>(0),
+            )
+            .optional()
+            .map_err(db)?
+            .is_some()
+        {
+            return Ok(false);
+        }
+        let mut existing = {
+            let mut q = tx.prepare("SELECT body FROM hook_rules").map_err(db)?;
+            let rows = q
+                .query_map([], |r| r.get::<_, String>(0))
+                .map_err(db)?
+                .collect::<std::result::Result<Vec<_>, _>>()
+                .map_err(db)?;
+            rows.into_iter()
+                .map(|s| serde_json::from_str::<Rule>(&s).map_err(|_| "规则数据无效".to_string()))
+                .collect::<Result<Vec<_>>>()?
+        };
+        let mut inserted = false;
+        for mut rule in rules {
+            if existing.iter().any(|r| r.id == rule.id) {
+                return Err("导入规则标识重复".into());
+            }
+            if rule.enabled&&existing.iter().any(|r|r.enabled&&matches!((&r.trigger,&rule.trigger),(crate::Trigger::Shortcut{accelerator:a},crate::Trigger::Shortcut{accelerator:b})if a==b)){continue;}
+            if existing.len() >= MAX_RULES {
+                return Err("事件触发器规则超出限制".into());
+            }
+            rule.revision = 1;
+            let body = serde_json::to_string(&rule).map_err(|_| "规则格式无效")?;
+            let bytes = existing.iter().try_fold(body.len(), |sum, r| {
+                serde_json::to_vec(r)
+                    .map(|s| sum + s.len())
+                    .map_err(|_| "规则格式无效")
+            })?;
+            if bytes > 2 * 1024 * 1024 {
+                return Err("规则配置总大小超过 2 MiB".into());
+            }
+            tx.execute(
+                "INSERT INTO hook_rules VALUES(?1,1,?2)",
+                params![rule.id, body],
+            )
+            .map_err(db)?;
+            existing.push(rule);
+            inserted = true;
+        }
+        tx.execute("INSERT INTO hook_imports VALUES(?1)", [source])
+            .map_err(db)?;
+        if inserted {
+            tx.execute(
+                "UPDATE hook_meta SET revision=revision+1 WHERE singleton=1",
+                [],
+            )
+            .map_err(db)?;
+        }
+        tx.commit().map_err(db)?;
+        Ok(true)
     }
     pub fn save(&mut self, expected: u64, mut rule: Rule) -> Result<Snapshot> {
         rule.validate()?;

@@ -104,34 +104,16 @@ pub async fn set_system_preferences(
                 }
             }
         };
-        let system_capture = match crate::system_capture_shortcut::Change::apply(
-            &app,
-            replace_system_capture_shortcut,
-        ) {
-            Ok(change) => change,
-            Err(error) => {
-                let mut errors = vec![error];
-                if let Err(rollback) = startup.rollback() {
-                    errors.push(rollback);
-                }
-                if let Err(rollback) = visibility.rollback() {
-                    errors.push(rollback);
-                }
-                return Err(errors.join("；"));
-            }
-        };
+        // Former shortcut flags are read only by the one-time Hooks import.
+        // Saving an unrelated preference must never revive a removed rule.
         let receipt = match task.commit(allowed) {
             Ok(receipt) => {
-                system_capture.commit();
                 startup.commit();
                 visibility.commit();
                 receipt
             }
             Err(error) => {
                 let mut errors = vec![error.to_string()];
-                if let Err(rollback) = system_capture.rollback() {
-                    errors.push(rollback);
-                }
                 if let Err(rollback) = startup.rollback() {
                     errors.push(rollback);
                 }

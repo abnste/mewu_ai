@@ -12,7 +12,7 @@ const source = await readFile(new URL('./components/HooksSettings.tsx', import.m
 const ast = parse(source, { sourceType: 'module', plugins: ['typescript', 'jsx'] });
 const component = ast.program.body.find(n => n.type === 'ExportDefaultDeclaration').declaration;
 const returned = component.body.body.find(n => n.type === 'ReturnStatement');
-const code = stripTypeScriptTypes(source.slice(0, returned.start) + 'return { arm, disarm, recording, error, add, edit, rule, ids, save, removeCapture, captureState, refresh, data, setTab }; }', { mode: 'transform' });
+const code = stripTypeScriptTypes(source.slice(0, returned.start) + 'return { arm, disarm, recording, error, add, edit, rule, ids, save, remove, refresh, data, setTab }; }', { mode: 'transform' });
 const synthetic = values => new SyntheticModule(Object.keys(values), function () { for (const [key, value] of Object.entries(values)) this.setExport(key, value); });
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const plain = value => JSON.parse(JSON.stringify(value));
@@ -32,6 +32,7 @@ async function fixture({ begin } = {}) {
     subscribeHooks: async (cb, recorded) => { hooks.push(cb); recordEvent=recorded; return () => { stopped++; }; },
     getHooks: async () => view,
     saveHook: async (revision, rule) => { assert.equal(revision, view.revision); view = { ...view, revision: revision + 1, rules: [{ ...plain(rule), revision: rule.revision + 1 }] }; return view; },
+    removeHook: async (revision,id,ruleRevision)=>{assert.equal(revision,view.revision);assert.equal(view.rules.find(r=>r.id===id)?.revision,ruleRevision);writes.push(id);view={...view,revision:revision+1,rules:view.rules.filter(r=>r.id!==id)};return view;},
   };
   const contracts = new SourceTextModule(stripTypeScriptTypes(await readFile(new URL('./hooks-contracts.ts', import.meta.url), 'utf8'), { mode: 'transform' }));
   await contracts.link(() => { throw Error('Unexpected dependency'); }); await contracts.evaluate();
@@ -92,11 +93,15 @@ test('native recording receipts and expiry can only affect their current editor 
     f.endRecord(current); await tick(); assert.equal(f.api.recording(),''); assert.equal(f.blurred(),1);
   } finally { await f.stop(); }
 });
-test('deleting the displayed capture binding updates the existing authoritative shortcut setting', async () => {
+test('a migrated capture binding uses the same editable rule and removal CAS as every shortcut', async () => {
   const f = await fixture();
   try {
-    await f.api.removeCapture(); assert.deepEqual(f.writes, [null]);
-    assert.equal(f.api.captureState().configured, null); assert.equal(f.api.captureState().revision, 6);
+    f.api.setTab('shortcut');f.api.add();const [id]=f.api.ids();
+    f.api.edit(id,{name:'唤起截图',trigger:{kind:'shortcut',accelerator:'F8'},actions:[{kind:'app',method:'capture.open',params:{}}]});
+    await f.api.save(id);assert.equal(f.api.rule(id).actions[0].method,'capture.open');
+    f.api.edit(id,{name:'打开设置',actions:[{kind:'app',method:'settings.open',params:{}}]});await f.api.save(id);
+    assert.equal(f.api.rule(id).actions[0].method,'settings.open');
+    await f.api.remove(id);assert.deepEqual(f.writes,[id]);assert.equal(f.api.ids().length,0);
   } finally { await f.stop(); }
 });
 test('saving preserves the rule identity and an older refresh cannot replace a newer view', async () => {

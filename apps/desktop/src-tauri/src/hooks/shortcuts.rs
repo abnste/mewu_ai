@@ -14,11 +14,11 @@ struct Entry {
 }
 #[derive(Clone, Serialize)]
 pub(super) struct Status {
-    status: &'static str,
+    pub(super) status: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
-    message: Option<String>,
+    pub(super) message: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    label: Option<String>,
+    pub(super) label: Option<String>,
 }
 #[derive(Default)]
 pub(super) struct Registry {
@@ -34,6 +34,11 @@ pub(super) struct Registry {
     #[cfg(target_os = "linux")]
     portal_serial: tokio::sync::Mutex<()>,
 }
+impl Registry {
+    pub(super) fn statuses_for_cache(&self) -> Option<HashMap<String, Status>> {
+        self.status.try_lock().ok().map(|s| s.clone())
+    }
+}
 fn parse(value: &str) -> Result<Shortcut> {
     let key = Shortcut::from_str(value).map_err(|_| "快捷键格式无效")?;
     let function = format!("{:?}", key.key)
@@ -48,6 +53,41 @@ fn parse(value: &str) -> Result<Shortcut> {
         return Err("全局快捷键需要 Control、Alt、Super，或使用功能键".into());
     }
     Ok(key)
+}
+// Windows reserves this physical chord. Its native transport feeds the same
+// generic rule registry; it has no capture action or special rule identity.
+#[cfg(windows)]
+fn reserved_transport(key: &Shortcut) -> bool {
+    key.mods == (Modifiers::SUPER | Modifiers::SHIFT) && format!("{:?}", key.key) == "KeyS"
+}
+fn register(r: &Shared, key: Shortcut) -> Result<()> {
+    #[cfg(windows)]
+    if reserved_transport(&key) {
+        crate::system_capture_shortcut::Change::apply(&r.app, true)?.commit();
+        return Ok(());
+    }
+    r.app
+        .global_shortcut()
+        .register(key)
+        .map_err(|_| "全局快捷键注册失败，可能已被系统或其他软件占用".into())
+}
+fn unregister(r: &Shared, key: Shortcut) -> Result<()> {
+    #[cfg(windows)]
+    if reserved_transport(&key) {
+        crate::system_capture_shortcut::Change::apply(&r.app, false)?.commit();
+        return Ok(());
+    }
+    r.app
+        .global_shortcut()
+        .unregister(key)
+        .map_err(|_| "快捷键注销失败".into())
+}
+#[cfg(windows)]
+pub(super) fn system_pressed(r: &Shared) {
+    if let Ok(key) = parse("Super+Shift+KeyS") {
+        route(r, &key, true);
+        route(r, &key, false);
+    }
 }
 pub(super) fn canonicalize(rule: &mut Rule) -> Result<()> {
     if let Trigger::Shortcut { accelerator } = &mut rule.trigger {
@@ -67,13 +107,17 @@ pub(super) fn canonicalize(rule: &mut Rule) -> Result<()> {
 pub(super) fn save(r: &Shared, expected: u64, mut rule: Rule) -> Result<mewu_hooks::Snapshot> {
     let _update = lock(&r.shortcuts.update)?;
     canonicalize(&mut rule)?;
+    #[cfg(target_os = "linux")]
     let previous;
     {
         let store = lock(&r.store)?;
         if store.revision() != Ok(expected) {
             return Err("规则已变更，请重新载入".into());
         }
-        previous = store.rule(&rule.id)?;
+        #[cfg(target_os = "linux")]
+        {
+            previous = store.rule(&rule.id)?;
+        }
         if rule.enabled {
             if let Trigger::Shortcut { accelerator } = &rule.trigger {
                 let wanted = parse(accelerator)?.id();
@@ -118,10 +162,7 @@ pub(super) fn save(r: &Shared, expected: u64, mut rule: Rule) -> Result<mewu_hoo
             if r.app.global_shortcut().is_registered(key) {
                 return Err("此快捷键已被 Mewu 的其他功能使用".into());
             }
-            r.app
-                .global_shortcut()
-                .register(key)
-                .map_err(|_| "全局快捷键注册失败，可能已被系统或其他软件占用")?;
+            register(r, key)?;
             reserved = Some(key);
         }
     }
@@ -129,7 +170,7 @@ pub(super) fn save(r: &Shared, expected: u64, mut rule: Rule) -> Result<mewu_hoo
         Ok(v) => v,
         Err(e) => {
             if let Some(key) = reserved {
-                let _ = r.app.global_shortcut().unregister(key);
+                let _ = unregister(r, key);
             }
             return Err(e);
         }
@@ -158,7 +199,7 @@ pub(super) fn save(r: &Shared, expected: u64, mut rule: Rule) -> Result<mewu_hoo
     }
     if let Some(old) = old {
         if wanted.is_none_or(|key| key.id() != old.key.id()) {
-            let _ = r.app.global_shortcut().unregister(old.key);
+            let _ = unregister(r, old.key);
         }
     }
     let mut statuses = lock(&r.shortcuts.status)?;
@@ -208,10 +249,7 @@ pub(super) fn remove(r: &Shared, expected: u64, id: &str, revision: u64) -> Resu
         key.and_then(|key| keys.remove(&key))
     };
     if let Some(entry) = removed {
-        r.app
-            .global_shortcut()
-            .unregister(entry.key)
-            .map_err(|_| "快捷键注销失败")?;
+        unregister(r, entry.key)?;
         lock(&r.shortcuts.pressed)?.remove(&entry.key.id());
     }
     lock(&r.shortcuts.status)?.remove(id);
@@ -230,7 +268,7 @@ pub(super) fn clear(r: &Shared) {
         .map(|mut keys| keys.drain().map(|(_, e)| e.key).collect::<Vec<_>>())
         .unwrap_or_default();
     for key in old {
-        let _ = r.app.global_shortcut().unregister(key);
+        let _ = unregister(r, key);
     }
     if let Ok(mut states) = r.shortcuts.status.lock() {
         states.clear();
@@ -252,7 +290,7 @@ pub(super) fn reconcile(r: &Shared) -> Result<()> {
     for rule in rules.into_iter().filter(|r| r.enabled) {
         if let Trigger::Shortcut { accelerator } = &rule.trigger {
             let key = parse(accelerator)?;
-            match r.app.global_shortcut().register(key) {
+            match register(r, key) {
                 Ok(()) => {
                     lock(&r.shortcuts.keys)?.insert(
                         key.id(),
@@ -376,6 +414,14 @@ pub(super) fn route(r: &Shared, key: &Shortcut, pressed: bool) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(windows)]
+    #[test]
+    fn reserved_windows_transport_has_no_feature_action_or_rule_identity() {
+        assert!(reserved_transport(&parse("Super+Shift+KeyS").unwrap()));
+        for key in ["Control+Shift+KeyS", "Super+KeyS", "Super+Shift+KeyA", "F8"] {
+            assert!(!reserved_transport(&parse(key).unwrap()));
+        }
+    }
     fn rule(trigger: serde_json::Value) -> Rule {
         serde_json::from_value(json!({"id":uuid::Uuid::new_v4().to_string(),"revision":0,"name":"Synthetic","enabled":true,"trigger":trigger,"condition":"","actions":[{"kind":"delay","milliseconds":0}],"cooldownMs":500,"timeoutMs":1000,"stopOnError":true})).unwrap()
     }

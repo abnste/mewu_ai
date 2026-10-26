@@ -577,14 +577,10 @@ pub fn initialize(app: &AppHandle, root: &Path) -> Result<(), String> {
     if app.try_state::<HostRuntime>().is_some() {
         return Err("快捷键状态已初始化".into());
     }
-    let (preferences, loaded) = match PreferencesFile::open(root) {
-        Ok(file) => {
-            let value = file.load();
-            (Some(file), value)
-        }
-        Err(error) => (None, Err(error)),
-    };
-    let model = ShortcutModel::new(loaded);
+    // Only the shared settings recorder remains here. Actual bindings are
+    // imported into Hooks once and registered/executed by that rule runtime.
+    let _=root;
+    let model = ShortcutModel::new(Ok(crate::host_preferences::LoadedPreferences::missing()));
     let runtime = HostRuntime(Arc::new(Inner {
         busy: AtomicBool::new(false),
         abort: AtomicBool::new(false),
@@ -595,25 +591,9 @@ pub fn initialize(app: &AppHandle, root: &Path) -> Result<(), String> {
         route: Mutex::new(Route::default()),
         editors: Mutex::new(Editors::default()),
         expiry_slots: Arc::new(Semaphore::new(2)),
-        preferences,
+        preferences:None,
     }));
     app.manage(runtime.clone());
-    // The recording lease is backend-independent. On Wayland, only the portal
-    // owns capture preferences/registration; this model never starts or writes.
-    #[cfg(target_os = "linux")]
-    if crate::capture_shortcut_wayland_host::is_wayland() {
-        return crate::capture_shortcut_portal_linux::Runtime::initialize(app, root);
-    }
-    {
-        let mut work = runtime.claim()?;
-        let mut backend = NativeBackend {
-            app: app.clone(),
-            inner: runtime.0.clone(),
-            owner: None,
-        };
-        // The Model is owned locally here; there is no mutex held across startup.
-        work.model.as_mut().unwrap().startup(&mut backend);
-    }
     Ok(())
 }
 fn start_expiry_timer(
@@ -647,9 +627,7 @@ pub fn get_capture_shortcut(
     if !matches!(window.label(), "settings" | "space") {
         return Err("此窗口不能读取截图快捷键".into());
     }
-    #[cfg(target_os = "linux")]
-    if let Some(runtime) = app.try_state::<crate::capture_shortcut_portal_linux::Runtime>() { return Ok(runtime.view()); }
-    Ok(app.state::<HostRuntime>().view())
+    crate::hooks::shortcut_state(&app,"capture.open")
 }
 
 #[tauri::command]
@@ -662,39 +640,19 @@ pub async fn set_capture_shortcut(
     if window.label() != "settings" {
         return Err("请在设置中修改截图快捷键".into());
     }
-    #[cfg(target_os = "linux")]
-    if app.try_state::<crate::capture_shortcut_portal_linux::Runtime>().is_some() {
-        if shortcut.is_some() { return Err("请通过系统授权设置截图快捷键".into()); }
-        return crate::capture_shortcut_wayland_host::disable(app, window, expected_revision).await;
-    }
     let runtime = app.state::<HostRuntime>().inner().clone();
     let owner = settings_owner(&app, &runtime.0, &window)?; // No shared mutex.
     if !admission(&app, &runtime.0, Some(owner)) {
         return Err("当前无法修改截图快捷键".into());
     }
-    let mut work = runtime.claim()?;
     // Begin checks the busy flag under the editor mutex. Either it was already
     // admitted and is ended here, or it observes this permit and is rejected.
     retire_editor(&app, "settings", Some(owner));
     if !gate(&app, &runtime.0, Some(owner)) {
         return Err("当前无法修改截图快捷键".into());
     }
-    let inner = runtime.0.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let mut backend = NativeBackend {
-            app,
-            inner,
-            owner: Some(owner),
-        };
-        let result = work
-            .model
-            .as_mut()
-            .unwrap()
-            .set(expected_revision, shortcut, &mut backend)
-            .map_err(|error| error.to_string());
-        // work restores Model then returns the permit before JoinHandle resolves.
-        drop(work);
-        result
+        crate::hooks::change_action_shortcut(&app,expected_revision,"capture.open",shortcut)
     })
     .await
     .map_err(|_| "快捷键设置任务中断，请重启后检查".to_string())?
@@ -794,11 +752,7 @@ pub(crate) fn end_editor(app:&AppHandle,lease_id:&str)->Result<(),String>{
 }
 
 pub fn active_display(app: &AppHandle) -> String {
-    #[cfg(target_os = "linux")]
-    if let Some(runtime) = app.try_state::<crate::capture_shortcut_portal_linux::Runtime>() { return runtime.view().actual_trigger_description.unwrap_or_default(); }
-    app.try_state::<HostRuntime>()
-        .and_then(|runtime| runtime.view().active.as_ref().map(display))
-        .unwrap_or_default()
+    crate::hooks::shortcut_label(app,"capture.open")
 }
 /// Shared settings recorder admission, also used by other registered actions.
 /// No UI/DB calls or feature-specific IDs on the native shortcut callback.

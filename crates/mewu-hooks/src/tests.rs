@@ -25,6 +25,78 @@ fn rule() -> Rule {
         stop_on_error: true,
     }
 }
+fn shortcut_rule() -> Rule {
+    let mut r = rule();
+    r.name = "唤起截图".into();
+    r.trigger = Trigger::Shortcut {
+        accelerator: "Control+Shift+KeyS".into(),
+    };
+    r.actions = vec![Action::App {
+        method: "capture.open".into(),
+        params: json!({}),
+    }];
+    r
+}
+#[test]
+fn imported_bindings_are_ordinary_editable_rules_and_never_return_after_deletion() {
+    let p = std::env::temp_dir().join(format!("mewu-hooks-import-{}.db", uuid::Uuid::new_v4()));
+    let original = shortcut_rule();
+    let id = original.id.clone();
+    {
+        let mut s = Store::open(&p).unwrap();
+        assert!(s
+            .import_once("legacy.shortcuts.v1", vec![original.clone()])
+            .unwrap());
+        let mut r = s.rule(&id).unwrap().unwrap();
+        assert_eq!(r.revision, 1);
+        r.name = "用户重命名".into();
+        r.actions = vec![Action::OpenUrl {
+            url: "https://example.com/".into(),
+        }];
+        let saved = s.save(s.revision().unwrap(), r).unwrap();
+        assert_eq!(saved.rules[0].name, "用户重命名");
+        let r = &saved.rules[0];
+        s.remove(saved.revision, &r.id, r.revision).unwrap();
+    }
+    {
+        let mut s = Store::open(&p).unwrap();
+        let revision = s.revision().unwrap();
+        assert!(!s
+            .import_once("legacy.shortcuts.v1", vec![original])
+            .unwrap());
+        assert_eq!(s.revision().unwrap(), revision);
+        assert!(s.rules().unwrap().is_empty());
+    }
+    std::fs::remove_file(p).unwrap();
+}
+#[test]
+fn an_explicit_empty_import_is_durable_and_conflicts_preserve_existing_user_rules() {
+    let mut s = Store::memory().unwrap();
+    assert!(s.import_once("disabled.source", vec![]).unwrap());
+    assert!(!s
+        .import_once("disabled.source", vec![shortcut_rule()])
+        .unwrap());
+    assert!(s.rules().unwrap().is_empty());
+    let mut user = shortcut_rule();
+    user.name = "我的自动化".into();
+    let saved = s.save(0, user).unwrap();
+    assert!(s
+        .import_once("other.source", vec![shortcut_rule()])
+        .unwrap());
+    assert_eq!(s.snapshot().unwrap().rules, saved.rules);
+    assert_eq!(s.revision().unwrap(), saved.revision);
+}
+#[test]
+fn import_rule_failure_rolls_back_the_whole_batch_and_its_marker() {
+    let mut s = Store::memory().unwrap();
+    let r = shortcut_rule();
+    let mut duplicate = r.clone();
+    duplicate.enabled = false;
+    assert!(s.import_once("source", vec![r, duplicate]).is_err());
+    assert!(!s.imported("source").unwrap());
+    assert!(s.rules().unwrap().is_empty());
+    assert_eq!(s.revision().unwrap(), 0);
+}
 #[test]
 fn pre_submit_rules_cannot_reenter_their_own_ui_submission_lane() {
     let mut r = rule();

@@ -6,6 +6,8 @@ import { newHookAction } from '../hooks-contracts';
 import { Row } from './SettingControls';
 import { t } from '../i18n';
 import HookInputEditor from './HookInputEditor';
+import operationCatalog from '../../control/catalog.json';
+const operations=operationCatalog.commands.filter(command=>command.execution==='operation'&&command.method!=='chat.send');
 const kinds: [HookAction['kind'], string][] = [['injectPrompt', '注入提示词'], ['sendPrompt', '发送提示词'], ['mcp', 'MCP'], ['command', '执行命令'], ['program', '运行程序'], ['openApp', '打开软件'], ['openUrl', '打开网站'], ['input', '键盘与鼠标'], ['script', 'JavaScript'], ['emit', '触发事件'], ['app', 'Mewu 操作'], ['delay', '等待']];
 function JsonField(props: { label: string; value: unknown; onChange: (value: unknown) => void; onInvalid: (value: boolean) => void }) {
   const [raw, setRaw] = createSignal(JSON.stringify(props.value, null, 2));
@@ -52,7 +54,8 @@ export default function HookActionEditor(props: { action: HookAction; index: num
         {field('事件名称','name',()=>action('emit').name)}<JsonField label="事件数据" value={action('emit').payload} onInvalid={props.onInvalid} onChange={v=>edit({payload:v})}/>
       </Match>
       <Match when={props.action.kind==='app'}>
-        {field('操作名称','method',()=>action('app').method)}<JsonField label="参数" value={action('app').params} onInvalid={props.onInvalid} onChange={v=>{if(v&&typeof v==='object'&&!Array.isArray(v))edit({params:v});else props.onInvalid(true);}}/>
+        <label class="field-label">{t('操作')}<select aria-label={t('Mewu 操作')} value={action('app').method} onChange={e=>{props.onInvalid(false);edit({method:e.currentTarget.value,params:{}});}}><Show when={!operations.some(c=>c.method===action('app').method)}><option value={action('app').method}>{action('app').method}</option></Show><For each={operations}>{command=><option value={command.method}>{t(command.title||command.method)}</option>}</For></select></label>
+        <Show when={Object.keys(operations.find(c=>c.method===action('app').method)?.inputSchema.properties||{}).some(key=>key!=='context')||Object.keys(action('app').params).length}><JsonField label="参数" value={action('app').params} onInvalid={props.onInvalid} onChange={v=>{if(v&&typeof v==='object'&&!Array.isArray(v))edit({params:v});else props.onInvalid(true);}}/></Show>
       </Match>
       <Match when={props.action.kind==='delay'}><Row title={t('等待毫秒')}><input type="number" min="0" max="10000" value={action('delay').milliseconds} onInput={e=>edit({milliseconds:e.currentTarget.valueAsNumber})}/></Row></Match>
     </Switch>

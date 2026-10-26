@@ -3,6 +3,7 @@
 //! grants effects only to current local user configuration, never event text.
 mod actions;
 mod input;
+mod legacy_shortcuts;
 mod shortcuts;
 use mewu_hooks::{Action, Event, Rule, Store, Trigger};
 use serde::Serialize;
@@ -41,6 +42,8 @@ pub(super) struct Shared {
     run_ancestry: Mutex<HashMap<String, Lineage>>,
     prompt_origins: Mutex<HashMap<String, PromptOrigin>>,
     last_scene: Mutex<Option<String>>,
+    startup_warning: Option<String>,
+    operation_shortcuts: Mutex<HashMap<String, String>>,
 }
 #[derive(Clone)]
 pub(crate) struct Runtime(Arc<Shared>);
@@ -110,7 +113,54 @@ fn settings(app: &AppHandle, window: &WebviewWindow) -> Result<Arc<Shared>> {
     Ok(r)
 }
 pub(super) fn changed(r: &Shared) {
+    // Snapshot publication (including every pen/undo receipt) reads only this
+    // cache. Never parse the automation store on the drawing hot path.
+    let labels = (|| {
+        let store = r.store.try_lock().ok()?;
+        let rules = store.rules().ok()?;
+        let states = r.shortcuts.statuses_for_cache()?;
+        let mut values: HashMap<String, Vec<String>> = HashMap::new();
+        for rule in rules.into_iter().filter(|rule| rule.enabled) {
+            if let Some(label) = states
+                .get(&rule.id)
+                .and_then(|s| s.label.clone())
+                .filter(|_| states[&rule.id].status == "active")
+            {
+                for action in rule.actions {
+                    if let Action::App { method, .. } = action {
+                        let entries = values.entry(method).or_default();
+                        if !entries.contains(&label) {
+                            entries.push(label.clone());
+                        }
+                    }
+                }
+            }
+        }
+        Some(
+            values
+                .into_iter()
+                .map(|(method, labels)| (method, labels.join(" / ")))
+                .collect(),
+        )
+    })();
+    if let Ok(mut cache) = r.operation_shortcuts.lock() {
+        *cache = labels.unwrap_or_default();
+    }
     let _ = r.app.emit_to("settings", "hooks-changed", ());
+}
+pub(crate) fn shortcut_label(app: &AppHandle, method: &str) -> String {
+    if !enabled(app) {
+        return String::new();
+    }
+    runtime(app)
+        .ok()
+        .and_then(|r| {
+            r.operation_shortcuts
+                .lock()
+                .ok()
+                .and_then(|v| v.get(method).cloned())
+        })
+        .unwrap_or_default()
 }
 impl Runtime {
     pub(crate) fn initialize(
@@ -118,7 +168,8 @@ impl Runtime {
         root: &Path,
         snapshot: &crate::plugins::PluginSnapshot,
     ) -> Result<()> {
-        let store = Store::open(&root.join("hooks.db"))?;
+        let mut store = Store::open(&root.join("hooks.db"))?;
+        let startup_warning = legacy_shortcuts::import(app, root, &mut store).err();
         let (sender, receiver) = mpsc::channel(64);
         let last_scene = app
             .state::<crate::Host>()
@@ -148,6 +199,8 @@ impl Runtime {
             run_ancestry: Mutex::new(HashMap::new()),
             prompt_origins: Mutex::new(HashMap::new()),
             last_scene: Mutex::new(last_scene),
+            startup_warning,
+            operation_shortcuts: Mutex::new(HashMap::new()),
         });
         app.manage(Self(shared.clone()));
         reconcile(app, snapshot);
@@ -165,6 +218,135 @@ pub(crate) fn ready(app: &AppHandle) {
             emit(app, Event::new("app.started"));
         }
     }
+}
+#[cfg(windows)]
+pub(crate) fn system_shortcut_pressed(app: &AppHandle) {
+    if let Ok(r) = runtime(app) {
+        shortcuts::system_pressed(&r)
+    }
+}
+
+/// Compatibility query for the former single-shortcut settings API. The rule
+/// store is the sole source; no second shortcut preference or OS binding exists.
+pub(crate) fn shortcut_state(
+    app: &AppHandle,
+    method: &str,
+) -> Result<crate::capture_shortcut::CaptureShortcutState> {
+    use crate::capture_shortcut::{CaptureShortcutState, ShortcutChord, ShortcutStatus};
+    use tauri_plugin_global_shortcut::Modifiers;
+    let r = runtime(app)?;
+    let snapshot = lock(&r.store)?.snapshot()?;
+    let rule = snapshot.rules.iter().find(|rule| {
+        matches!(rule.trigger, Trigger::Shortcut { .. })
+            && rule
+                .actions
+                .iter()
+                .any(|a| matches!(a,Action::App{method:m,..}if m==method))
+    });
+    let configured = rule.and_then(|r| {
+        if let Trigger::Shortcut { accelerator } = &r.trigger {
+            accelerator
+                .parse::<tauri_plugin_global_shortcut::Shortcut>()
+                .ok()
+        } else {
+            None
+        }
+    });
+    let chord = configured.as_ref().and_then(|k| {
+        let chord = ShortcutChord {
+            code: format!("{:?}", k.key),
+            ctrl: k.mods.contains(Modifiers::CONTROL),
+            alt: k.mods.contains(Modifiers::ALT),
+            shift: k.mods.contains(Modifiers::SHIFT),
+        };
+        (!k.mods.contains(Modifiers::SUPER) && chord.validate().is_ok()).then_some(chord)
+    });
+    let statuses = shortcuts::statuses(&r);
+    let state = rule.and_then(|v| statuses.get(&v.id));
+    let wanted = rule.is_some_and(|v| v.enabled) && enabled(app);
+    let active = wanted && state.is_some_and(|s| s.status == "active");
+    let label = state.and_then(|s| s.label.clone());
+    Ok(CaptureShortcutState {
+        revision: snapshot.revision,
+        sequence: snapshot.revision,
+        configured: chord.clone(),
+        active: active.then_some(chord).flatten(),
+        status: if active {
+            ShortcutStatus::Active
+        } else if wanted {
+            ShortcutStatus::Unavailable
+        } else {
+            ShortcutStatus::Disabled
+        },
+        editable: enabled(app),
+        message: state.and_then(|s| s.message.clone()),
+        backend: Some("native"),
+        actual_trigger_description: active.then_some(label).flatten(),
+        configuration_pending: None,
+        system_settings_available: None,
+        configuration_request_id: None,
+        portal_enabled: None,
+    })
+}
+pub(crate) fn change_action_shortcut(
+    app: &AppHandle,
+    expected: u64,
+    method: &str,
+    chord: Option<crate::host_preferences::ShortcutChord>,
+) -> Result<crate::capture_shortcut::CaptureShortcutState> {
+    let r = runtime(app)?;
+    require(&r)?;
+    let rule = lock(&r.store)?.rules()?.into_iter().find(|rule| {
+        matches!(rule.trigger, Trigger::Shortcut { .. })
+            && rule
+                .actions
+                .iter()
+                .any(|a| matches!(a,Action::App{method:m,..}if m==method))
+    });
+    match (rule, chord) {
+        (Some(rule), None) => shortcuts::remove(&r, expected, &rule.id, rule.revision)?,
+        (None, None) => {
+            if lock(&r.store)?.revision()? != expected {
+                return Err("规则已变更，请重新载入".into());
+            }
+        }
+        (previous, Some(chord)) => {
+            chord.validate().map_err(|e| e.to_string())?;
+            let accelerator = [
+                chord.ctrl.then_some("Control"),
+                chord.shift.then_some("Shift"),
+                chord.alt.then_some("Alt"),
+                Some(chord.code.as_str()),
+            ]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join("+");
+            let mut rule = previous.unwrap_or_else(|| Rule {
+                id: uuid::Uuid::new_v4().to_string(),
+                revision: 0,
+                name: method.into(),
+                enabled: true,
+                trigger: Trigger::Shortcut {
+                    accelerator: accelerator.clone(),
+                },
+                condition: String::new(),
+                actions: vec![Action::App {
+                    method: method.into(),
+                    params: json!({}),
+                }],
+                cooldown_ms: 500,
+                timeout_ms: 30000,
+                stop_on_error: true,
+            });
+            rule.trigger = Trigger::Shortcut { accelerator };
+            rule.enabled = true;
+            shortcuts::save(&r, expected, rule)?;
+        }
+    }
+    r.wake.notify_one();
+    changed(&r);
+    shortcut_state(app, method)
 }
 pub(crate) fn reconcile(app: &AppHandle, snapshot: &crate::plugins::PluginSnapshot) {
     let Some(r) = app.try_state::<Runtime>() else {
@@ -330,6 +512,16 @@ pub(crate) fn lifecycle(app: &AppHandle, name: &str, scene: Option<&str>, payloa
     let mut e = Event::new(name);
     e.scene_id = scene.map(str::to_owned);
     e.payload = payload;
+    // Feature events emitted while an authorized operation is claimed retain
+    // its causal chain. Otherwise capture.open -> capture.opened -> capture.open
+    // could lose ancestry and run forever. Queued/completed operations and
+    // unrelated background Agent replies never lend their origin.
+    if scene.is_some() {
+        if let Some(origin) = crate::app_control_host::native_event_origin(app) {
+            e.ancestors = origin.ancestors;
+            e.depth = origin.depth;
+        }
+    }
     emit(app, e);
 }
 pub(crate) fn observe_scene(app: &AppHandle, id: &str) {
@@ -507,8 +699,21 @@ async fn app_action(work: &Execution, method: &str, params: Value) -> Result<()>
     work.check()?;
     let fence = actions::Fence::new(work);
     let gate = Arc::new(move || fence.check());
-    crate::app_control_host::execute_native(&work.shared.app, method, params, gate, work.deadline)
-        .await?;
+    let mut ancestors = work.event.ancestors.clone();
+    ancestors.push(work.rule.id.clone());
+    let origin = crate::app_control_host::NativeEventOrigin {
+        ancestors,
+        depth: work.event.depth + 1,
+    };
+    crate::app_control_host::execute_native(
+        &work.shared.app,
+        method,
+        params,
+        gate,
+        work.deadline,
+        Some(origin),
+    )
+    .await?;
     Ok(())
 }
 pub(crate) fn begin_run(app: &AppHandle, scene: &str, run: &str, context: &PromptContext) {
@@ -885,6 +1090,7 @@ pub(crate) struct View {
     events: Vec<Value>,
     mcp_servers: Vec<Value>,
     platform: &'static str,
+    warning: Option<String>,
 }
 fn view(r: &Shared) -> Result<View> {
     let snapshot = lock(&r.store)?.snapshot()?;
@@ -919,6 +1125,7 @@ fn view(r: &Shared) -> Result<View> {
             .collect(),
         mcp_servers: servers,
         platform: std::env::consts::OS,
+        warning: r.startup_warning.clone(),
     })
 }
 const EVENTS: &[(&str, &str)] = &[

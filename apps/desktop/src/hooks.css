@@ -19,8 +19,6 @@
 .hooks-input-steps>.secondary-button { justify-self:start; }
 .hooks-actions-spacer { flex:1; }
 .hooks-settings summary { cursor:pointer; color:var(--muted); font-size:11px; padding-block:6px; }
-.hooks-test { display:flex; gap:8px; padding:0 16px 12px; }
-.hooks-test input { min-width:0; flex:1; }
 .hooks-runs { padding:0 16px 12px; }
 .hooks-run { display:grid; grid-template-columns:auto 1fr auto; align-items:center; gap:8px; padding-block:6px; font-size:11px; }
 .hooks-run p { grid-column:1/-1; margin:0; }
@@ -30,3 +28,12 @@
 .hooks-settings .connection-editor .field-label { margin:0; }
 .hooks-settings .connection-editor .settings-section-heading { margin-bottom:0; }
 .hooks-settings .connection-list+.setting-row { margin-block:12px; }
+.hooks-rule-title { display:grid;gap:3px;flex:1;min-width:0; }
+.hooks-rule-description { color:var(--muted);font-size:10px;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0; }
+.hooks-disclosure { flex-shrink:0; }
+.hooks-match-row { display:flex;align-items:flex-end;flex-wrap:wrap;gap:12px; }
+.hooks-match-row>.field-label { flex:1;min-width:100px; }
+.hooks-match-row>.field-label:first-child { flex:0 0 112px; }
+.hooks-case-option { display:grid;justify-items:end;gap:var(--settings-gap);font-size:var(--settings-control-font);color:var(--secondary);align-self:stretch;align-content:space-between;padding-block:0 8px; }
+.hooks-advanced-fields { display:grid;gap:12px;padding-top:10px; }
+.hooks-advanced-fields .setting-row { margin:0; }

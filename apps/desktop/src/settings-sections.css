@@ -32,6 +32,12 @@
 .settings-dialog .settings-content .field-label input:not([type="checkbox"]):not([type="range"]):not([type="color"]),
 .settings-dialog .settings-content select { min-height:var(--settings-field-height);padding:8px 10px;border-radius:var(--settings-control-radius);font-size:12px;line-height:18px; }
 .settings-dialog .settings-content .field-label textarea { padding:8px 10px;border-radius:var(--settings-control-radius);font-size:12px;line-height:1.7; }
+/* Editable row headings are titles, not a second full form field. */
+.settings-dialog .settings-content input.settings-inline-title { width:100%;min-width:0;height:26px;padding:2px 5px;margin-left:-6px;border:1px solid transparent;border-radius:6px;background:transparent;color:var(--text);font-size:12px;font-weight:500;line-height:20px;box-shadow:none; }
+.settings-dialog .settings-content input.settings-inline-title:hover { border-color:var(--line); }
+.settings-dialog .settings-content input.settings-inline-title:focus { outline:none;border-color:var(--accent);background:var(--surface); }
+.hook-shortcut-setting { display:flex;flex-wrap:wrap;align-items:center;gap:6px; }
+.hook-shortcut-setting .hook-shortcut-disabled { color:var(--muted);text-decoration:line-through; }
 .settings-dialog .settings-content .settings-actions { gap:var(--settings-gap); }
 .settings-page-heading { display:flex;align-items:center;gap:12px;min-height:34px;margin:0 0 var(--settings-section-gap); }
 .settings-dialog .settings-content .settings-page-heading h2 { flex:1;margin:0;font-size:18px;line-height:24px; }
