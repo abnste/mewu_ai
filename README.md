@@ -1,257 +1,209 @@
 <div align="center">
   <img src="./Assets/MewuAI.Icon.png" width="88" alt="MewuAI" />
-  <h1>MewuAI — Capture and AI Space</h1>
-  <h1>BUT！It's still in beta</h1>
-  
-  <p>An open-source desktop space for screenshots, conversations, annotations and interactive AI results.</p>
+  <h1>MewuAI · 喵呜AI</h1>
+  <p><strong>An open-source, LLM-powered desktop Agent application</strong></p>
+  <p>Personal Agent · AI creative canvas · Visual annotations · Desktop tools and automation</p>
   <p>
-    <a href="https://github.com/abnste/mewu_ai/releases/tag/v1.0.8"><img src="https://img.shields.io/badge/Stable-1.0.8-7C6CF0?style=flat-square" alt="1.0.8" /></a>
+    <a href="https://github.com/abnste/mewu_ai/releases/latest"><img src="https://img.shields.io/github/v/release/abnste/mewu_ai?style=flat-square&color=7C6CF0" alt="Latest stable release" /></a>
     <img src="https://img.shields.io/badge/Windows-x64-0078D4?style=flat-square" alt="Windows x64" />
-    <img src="https://img.shields.io/badge/macOS-ARM64-555555?style=flat-square" alt="macOS ARM64" />
+    <img src="https://img.shields.io/badge/macOS-Apple_Silicon-555555?style=flat-square" alt="macOS Apple Silicon" />
     <img src="https://img.shields.io/badge/Linux-x64-E95420?style=flat-square" alt="Linux x64" />
     <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MPL--2.0-blue?style=flat-square" alt="MPL-2.0" /></a>
   </p>
   <p>
-    <a href="https://github.com/abnste/mewu_ai/releases/download/v1.0.8/MewuAI-Setup-1.0.8-win-x64.exe"><strong>Windows installer</strong></a>
-    &nbsp;·&nbsp; <a href="https://github.com/abnste/mewu_ai/releases/download/v1.0.8/MewuAI-Portable-1.0.8-win-x64.zip">Windows portable ZIP</a>
-    &nbsp;·&nbsp; <a href="https://github.com/abnste/mewu_ai/releases/download/v1.0.8/MewuAI-1.0.8-mac-arm64.dmg">macOS ARM64</a>
-    &nbsp;·&nbsp; <a href="https://github.com/abnste/mewu_ai/releases/download/v1.0.8/MewuAI-1.0.8-linux-x64.AppImage">Linux x64</a>
+    <a href="https://www.mewu.ai/"><strong>Website & demos</strong></a>
+    &nbsp;·&nbsp; <a href="https://github.com/abnste/mewu_ai/releases/latest"><strong>Download MewuAI</strong></a>
+    &nbsp;·&nbsp; <a href="https://github.com/abnste/mewu-plugins">Plugin marketplace</a>
+    &nbsp;·&nbsp; <a href="https://github.com/abnste/mewu_ai/issues">Issues & ideas</a>
   </p>
-  <p><a href="./README.zh-CN.md">简体中文</a> · <strong>English</strong> · <a href="./docs/release-notes-1.0.8.md">Release notes</a> · <a href="https://github.com/abnste/mewu_ai/issues">Report an issue</a></p>
+  <p><a href="./README.zh-CN.md">简体中文</a> · <strong>English</strong></p>
 </div>
 
-**MewuAI (喵呜AI)** is an open-source **capture and AI space for Windows, macOS and Linux**. A shortcut opens the capture overlay itself: select regions, draw, pin images, add files and ask questions in the conversation bar. Interactive HTML/SVG/Canvas results can live alongside screenshots and videos on the same surface.
+**MewuAI is a personal Agent application for Windows, macOS and Linux.** Talk to AI with screenshots, videos, files and hand-drawn annotations as context. Generate interactive HTML tools, use the results on your canvas, or add plugins to operate an authorized screen region, retrieve memories and automate tasks.
 
-**喵呜AI（MewuAI）将快捷键唤起的截图界面作为 AI 空间**，保留截图与绘制操作，通过可选 Agent、长期记忆和插件连接更多能力。中文介绍见[中文首页](./README.zh-CN.md)。
+**Mewu with you** means working together. Point to a detail, draw a connection, or reference several images to explain exactly what you mean. Keep the resulting content in the same workspace to revise and use.
 
-| At a glance | Details |
-| --- | --- |
-| Platforms | Windows x64, macOS ARM64, Linux x64; English and Simplified Chinese |
-| Core workflow | Capture → annotate/copy/save, or reference content → ask AI → interact with results |
-| Without an AI key | Capture and built-in drawing/recording remain available; the conversation bar appears after configuring a model or explicitly binding an independent Agent provider |
-| AI and plugins | Your model connections, permission-checked executable plugins, independent Agent and memory providers |
-| Source and downloads | [1.0.8](https://github.com/abnste/mewu_ai/releases/tag/v1.0.8) · [Community plugin market](https://github.com/abnste/mewu-plugins) |
-| License | [MPL-2.0](./LICENSE); [full third-party notices](./apps/desktop/THIRD-PARTY-NOTICES) |
-
-**MewuAI 1.0.8** adds macOS and GNOME Wayland backends for the independent region-operation plugin, moves Hindsight into its own extension, and improves selection confirmation, toolbox drop, video replay and translation progress. See the [release notes](./docs/release-notes-1.0.8.md).
-
-MewuAI is maintained on **[master](https://github.com/abnste/mewu_ai/tree/master)**. The original Windows **.NET/WPF 0.7.x** code and documentation remain on **[dotnet](https://github.com/abnste/mewu_ai/tree/dotnet)**. MewuAI uses **Rust + Tauri 2 + Solid/TypeScript + SQLite** and the system webview; it does not use Electron.
-
-<p align="center">
-  <a href="./docs/images/mewuai-cover-web-en.png"><img src="./docs/images/mewuai-cover-web-en.png" width="100%" alt="MewuAI concept cover: capture, ask and annotate on a Windows desktop" /></a>
-  <br /><sub>AI-generated concept cover from the .NET version. The gallery below contains historical .NET demonstrations, not current 1.0 screenshots.</sub>
-</p>
-
+[Features](#features) · [Use cases](#use-cases) · [Get started](#get-started) · [AI connections](#ai-connections-and-personal-agents) · [CLI](#cli-share-the-desktop-space-with-other-agents) · [Hooks](#hooks-event-automation) · [Plugins](#plugin-marketplace) · [Development](#development-and-contributing)
 
 ## Features
 
-- **Capture first:** Open the capture space, select regions or supported windows, draw, copy, save or pin content. Fresh installations need no model key for this workflow. Scrolling capture has a live side preview; automatic application snapshots depend on Windows UI Automation support.
-- **Drawing and media objects:** Pens, adaptive arrows, shapes, text, numbered markers and highlights share two compact toolbars. Screenshot/blackboard erasers offer pixel and object modes, Undo/Redo and three fixed color slots, initially red, yellow and blue. Click to select, then click the selected color to edit. Imported images and videos remain movable objects; HTML/SVG/Canvas content stays interactive.
-- **Text and tables:** Official capability plugins provide OCR, translation and table extraction. OCR is local; translation and AI table results need an appropriate connected model. Actionable recognition for links, email addresses, phone numbers and QR/barcodes is currently supported on Windows and macOS; it does not automatically send messages or make calls.
-- **Recording and trimming:** Built-in region recording uses computer audio by default, with pause/resume, video annotations and MP4/MP3/GIF export. Actions sit above the video and the seek/trim bar below it. Trims preserve the original source; encoded output follows the video frame grid rather than promising sub-frame cuts.
-- **Model connections:** Model discovery can try common API roots when only a service origin is entered. A working address appears in the settings draft and takes effect only when saved; explicit custom paths stay unchanged.
-- **Conversation in the capture space:** Reference screenshots, videos or files with @ mentions, then follow up in the ordinary conversation bar. Multiple conversations, minimized sessions, history, Markdown, formulas and collapsible public reasoning are supported. The bar hides when the pointer leaves and preserves the draft when recalled.
-- **Optional Agent and blackboard:** These are official plugins that can be disabled or removed; drawing and recording stay built in. With no ready model or explicitly bound independent Agent, Mewu shows capture controls. An independent provider may operate without a host API key when explicitly configured.
-- **Executable plugins and a real market:** API ES Modules run in separate QuickJS processes. Plugins can register tools, Agent engines, memory providers, models, channels, renderers and UI services through permission-checked host APIs. The [GitHub market](https://github.com/abnste/mewu-plugins) installs real Release ZIPs and shows screenshots, project repositories, versions and package hashes. JSON declaration packages are no longer accepted; existing user data and built-in module preferences are preserved.
-- **Long-term memory as an extension:** Choose Agent and memory providers independently. The official Agent supports persistent local SQLite/FTS5 memory. Hindsight is a separate plugin with its own server, credentials and bank selector; disabling it removes its settings entry and provider. Community providers can supply their own stores.
+### Personal Agents and conversations
 
-- **Hooks:** Default-enabled native event automation with Cron, prompt/reply matching, global shortcuts, lifecycle/custom events, prompt injection, MCP, commands and keyboard/mouse actions. [Configuration and execution rules](./docs/hooks.md).
+Create Agents for different tasks, with a name, instructions, default model and memory provider. Select an Agent and model in the conversation bar, reference regions, images, videos or files, and keep the conversation going. Multiple conversations, history, streaming replies, Markdown, math and tool execution records are supported.
 
-Build extensions with the [SDK](./packages/sdk/README.md), [extension guide](./docs/extensions.md) and [packaging tools](./tools/extension-market/README.md). Independent examples include the [region Agent](https://github.com/abnste/mewu-plugin-region-agent), [journal memory](https://github.com/abnste/mewu-plugin-journal-memory) and [interactive ruler](https://github.com/abnste/mewu-plugin-interactive-widget). Reference a region and send an instruction in the existing conversation bar. Native region input supports Windows, macOS, and GNOME 50 Wayland x64 with [Mewu Desktop Witness](./tools/linux-desktop-witness/README.md) and system authorization; other Linux desktops are not yet supported for region input.
+Configure the Agent, model connection and memory separately. Use Mewu's Agent or connect an existing Agent runtime through a plugin. MCP and plugin tools can participate in the same task.
 
-The development SDK adds isolated client surfaces and plugin-owned object storage.
-See the [plugin boundary audit](./docs/plugin-boundaries.md) for implemented interfaces,
-remaining native coupling, and limits; service registration alone does not imply full product integration.
+### AI creative canvas and interactive tools
 
-**CLI:** The default-enabled official CLI plugin lets local agents operate Mewu through `mewu schema` and fixed JSON commands, sharing the existing screenshot, conversation, drawing and recording paths. See the [CLI guide](./docs/cli.md) and [machine-readable catalog](./apps/desktop/control/catalog.json). Available starting with 1.0.3; earlier installers do not contain this interface.
+Describe an **HTML / SVG / Canvas interactive object** you want: a small game, calculator, adjustable chart or teaching aid. Move and resize the result in the workspace, interact with it, and ask for further changes.
 
-<details>
-<summary>Original .NET 0.7.x feature reference</summary>
+Screenshots, images, videos, blackboards and generated objects can share one space. The blackboard provides freehand drawing, text, shapes, undo and redo. With the Toolbox plugin, save materials and tools and drag them into another conversation for reuse.
 
-The following descriptions belong to the original Windows version on [dotnet](https://github.com/abnste/mewu_ai/tree/dotnet). They are retained as project history, not a claim that every integration and interaction has been migrated into the current version.
+### Selections, annotations and visual communication
 
-- **Papers and assignments:** Reference exam screenshots in the ordinary conversation bar for explanations and annotations. Reference multiple screenshots to discuss shared problems and generate practice questions; readings and grading still need human review.
+- **Single and multiple regions:** Select several areas in succession. Completed selections automatically become conversation references; the surrounding screen is dimmed to make the task's scope clear.
+- **Manual markup:** Use pens, arrows, shapes, text, numbered markers, highlights and mosaic, with selection, erasers, undo and redo to explain locations, changes or relationships.
+- **In-place AI answers:** Ask AI to mark important areas, add explanations or draw diagrams on screenshots and images, or answer using several references. Annotations are stored separately from the original image.
+- **Capture tools:** Copy, save, pin and capture scrolling content. Automatic application snapshots depend on Windows UI Automation and the target application's support.
 
-- **Screenshots and scrolling capture:** Select a region or window, capture across monitors, and capture long pages without a fixed segment limit. The compact inspector shows a hex color such as #FFFFFF above a borderless pixel magnifier with a central crosshair, and screen coordinates below it. Window-snapped selections offer app snapshots that capture supported scroll areas, restore their position, then pin and reference the result. Availability depends on the application's rendering and scrolling support.
-- **Annotations and pinned images:** Choose pens, shapes, text, numbered markers, and mosaic from the first toolbar row; the second holds properties, undo, redo, clear, and done. The Select tool moves and edits existing objects; the number tool lets you set the next number. Highlights tint the background while protecting underlying text and detail. Hold Shift to constrain lines, arrows and shapes; moving or resizing the capture region preserves manual annotations. Done copies the annotated image automatically.
-- **Transparent content lift and local repair:** Seamless lift repairs the original background and places the extracted text or artwork on a transparent layer that you can move, resize, or delete. The healing brush repairs content along a brush stroke. Both support undo and redo and work locally; they estimate nearby background and are intended for screenshot text and simple graphics, not general-purpose subject cutouts or generative photo editing.
-- **Text and tables:** Copy text with offline OCR, translate screenshots while preserving each source line and separate columns, and use AI to extract tables for Excel. Long single-line translations fit their available line space by adjusting text size.
-- **QR codes and memory fill:** Selected QR codes and barcodes show copy/open actions automatically; browse several codes in one compact card. Configure keyword/value mappings in Memory settings, then right-click the capture toolbar's Text button to scan and fill a form. Values are encrypted locally and each proposed field can be confirmed before filling.
-- **Screen recording and trimming:** Record a region with computer audio and an optional microphone. Trim the start and end directly below the preview, seek, undo changes, or restore the full video without overwriting the source. Save, copy, pin, and AI references use the same retained clip, including its audio and timeline annotations. Previews use the original resolution by default; Recording settings offer a smaller preview without affecting saved video resolution. Export MP4 video, MP3 audio, or a GIF.
-- **Ask about images and videos:** Reference several screenshots or attachments, ask follow-up questions, and click a time in an answer to jump to the relevant video scene.
-- **Choose your AI:** Connect API services, Hermes, ChatGPT Work / Codex, WorkBuddy, or MiniMax Code. Switch between them and keep your last selection.
-- **Screen actions and MCP services:** Recognize links, email addresses, and phone numbers; connect QQ Mail, NetEase Mail, DingTalk, Feishu, ima, or Obsidian for supported mail, sharing, and note workflows. See the [integration setup guide](https://github.com/abnste/mewu_ai/blob/dotnet/docs/mcp-integrations.md#english).
+### Video annotations and screen recording
 
-Screenshots, manual annotations, pinned images, text recognition, and recording work without an AI account. Translation, table extraction, and AI questions require a connected service.
+Import a video or record a screen region, then play, trim, reference and discuss it in the same workspace. AI can add rectangles and text for specific time intervals. Click a time segment in its answer to navigate to the relevant footage.
 
-</details>
+Recording supports computer audio, microphone input and pause/resume. Trimming preserves the original source, with **MP4, MP3 and GIF** export. Video understanding and AI annotations depend on the selected model's visual capabilities.
 
-## In development / TODO
+### Text, tables and charts
 
-- Broader Agent, memory, model and communication-channel plugins.
-- Region-input support for additional Linux desktops and more cross-platform parity.
-- NVIDIA Instant Replay hardware compatibility checks and an application-wide live diagnostic log view.
-- Dedicated image/video generation and richer multimodal/audio workflows.
-- AIGC canvas editing and additional interactive renderers.
-- More languages, lower resource use and better response efficiency.
-- Further migration of original .NET integrations; their existing documentation remains on [dotnet](https://github.com/abnste/mewu_ai/tree/dotnet).
+- **Offline OCR:** Recognize text in screenshots, select the portion you need and copy it.
+- **In-place translation:** Read translated text where the source text appears.
+- **Table extraction:** Turn a screenshot table into structured rows and columns you can copy into a spreadsheet.
+- **Chart understanding:** Reference a chart and ask about values, trends and differences, or ask AI to mark areas of interest.
+- **QR codes and barcodes:** Recognize codes in a selection and use copy/open actions.
 
-## Preview
+Capture, manual drawing, recording and local OCR do not need a model account. Translation, AI table extraction, chart understanding and content generation require a suitable model or Agent.
 
-**Historical gallery — original .NET version.** All eight demonstrations below are retained from the original README. They show the project's established feature direction and old interface, not current 1.0 screenshots or a guarantee of current feature parity.
+### Region AI operations
 
-<table>
-<tr>
-<td width="50%" valign="top">
-<h3>Highlight details</h3>
-<p>Ask AI to circle items, add checkmarks, or leave notes on a screenshot. Continue with follow-up questions.</p>
-<a href="./docs/images/ai-checkmarks.jpg"><img src="./docs/images/ai-checkmarks.jpg" width="100%" alt="AI highlights details and adds checkmarks to a screenshot" /></a>
-</td>
-<td width="50%" valign="top">
-<h3>Recognize tables</h3>
-<p>Turn a table screenshot into a structured answer, then use Copy table to paste it into Excel.</p>
-<a href="./docs/images/table-recognition.png"><img src="./docs/images/table-recognition.png" width="100%" alt="A table screenshot recognized as rows and columns with a Copy table button" /></a>
-</td>
-</tr>
-<tr>
-<td width="50%" valign="top">
-<h3>Analyze videos</h3>
-<p>Click a time in an answer to jump to a scene. Annotations follow the subject while a marked segment plays.</p>
-<a href="./docs/media/MewuAI-video-annotations.gif"><img src="./docs/media/MewuAI-video-annotations.gif" width="100%" alt="Jumping to a video scene from an answer and playing it with tracking annotations" /></a>
-</td>
-<td width="50%" valign="top">
-<h3>Annotate data</h3>
-<p>Ask AI to identify and mark objects in an image, such as visible vehicles in a traffic scene.</p>
-<a href="./docs/images/data-annotations.png"><img src="./docs/images/data-annotations.png" width="100%" alt="AI circles visible vehicles in a traffic image and explains the limits of recognition" /></a>
-</td>
-</tr>
-<tr>
-<td width="50%" valign="top">
-<h3>Translate screenshots</h3>
-<p>Read translations where the original text appears, then select text to copy it.</p>
-<a href="./docs/images/in-place-translation.jpg"><img src="./docs/images/in-place-translation.jpg" width="100%" alt="Translated text appears in the original positions within a screenshot" /></a>
-</td>
-<td width="50%" valign="top">
-<h3>Draw and annotate</h3>
-<p>Ask AI to add a diagram, or add your own notes with pens, shapes, and text.</p>
-<a href="./docs/images/draw-and-annotate-latest.jpg"><img src="./docs/images/draw-and-annotate-latest.jpg" width="100%" alt="AI drawings and annotations on a screenshot" /></a>
-</td>
-</tr>
-<tr>
-<td width="50%" valign="top">
-<h3>Understand code</h3>
-<p>Select a piece of code and ask for an explanation tied to the lines you are reading.</p>
-<a href="./docs/images/understand-code-20260921.png"><img src="./docs/images/understand-code-20260921.png" width="100%" alt="Explanations beside a code screenshot point to the relevant lines" /></a>
-</td>
-<td width="50%" valign="top">
-<h3>Annotate papers</h3>
-<p>Reference exam screenshots for explanations and annotations, or compare several pages to discuss shared errors and create practice.</p>
-<a href="./docs/images/exam-annotation-latest.jpg"><img src="./docs/images/exam-annotation-latest.jpg" width="100%" alt="Geometry explanations and in-place annotations on an exam screenshot" /></a>
-</td>
-</tr>
-</table>
+With the [region-operation plugin](https://github.com/abnste/mewu-plugin-region-agent), reference and authorize a region in the existing conversation bar, then describe the task. The Agent observes the screenshot, clicks or types, and uses a fresh screenshot to decide what to do next. You can stop it during the task.
 
-<details>
-<summary>About the paper demonstration</summary>
+Native input supports Windows, macOS, and **GNOME 50 / Wayland / x64** with [Mewu Desktop Witness](./tools/linux-desktop-witness/README.md). macOS needs screen recording and Accessibility permissions; Linux needs Portal authorization. Other Linux desktops are not yet supported for region input.
 
-The example shows explanations and in-place annotations for a geometry question. Check AI answers and annotations against the original question.
+## Use cases
 
-</details>
+These are example requests to use with your own content. Answers and generated results depend on the model you choose.
 
+| Scenario | What to do or ask |
+| --- | --- |
+| Interface review | Select a button and its explanatory text, draw an arrow between them, and ask: “These repeat the same information. Suggest a clearer layout and annotate the changes.” |
+| Code and error explanations | Reference code and an error message together: “Explain how these relate and mark the places I should check.” |
+| Papers and learning | Reference a question and the working: “Find the incorrect step, explain it on the image, and give me a similar practice problem.” |
+| Video review | Reference meaningful footage: “Mark key moments and explain what happens in each interval.” Jump from the answer back to the video to check. |
+| Research | Select text, tables and charts to extract data, translate passages or compare trends. Save conclusions and references in a note. |
+| Interactive tools | Ask for an adjustable demonstration or turn a calculation into a calculator. Use it on the canvas, then request revisions. |
+| Desktop tasks | Authorize the target region and ask the Agent to click, fill in fields and check results, continuing from fresh screenshot feedback. |
+| Repeated workflows | Use Hooks schedules, keyword rules or shortcuts to connect prompts, MCP tools and local operations. |
+
+See interface and workflow demonstrations at [mewu.ai](https://www.mewu.ai/). Check teaching, recognition and analysis results against the original material.
 
 ## Get started
 
-> **Related project:** Our partner [**kangarooking/Ta**](https://github.com/kangarooking/Ta) is also an AI screenshot tool for macOS, with OCR, translation, scrolling capture and annotations. Mewu also provides a macOS ARM64 package.
+### Download and install
 
-1. **Install and open.** Use one of the four downloads above. Windows requires Windows 10 2004 or later and WebView2; macOS uses WKWebView and Linux uses WebKitGTK. No separate .NET installation is required for MewuAI.
-2. **Capture a region.** Click the tray icon or use the capture shortcut; the Windows default is <kbd>Shift</kbd> + <kbd>Alt</kbd> + <kbd>S</kbd>. Select an area, then copy, save, annotate or record. Change the shortcut in Settings; Wayland may require desktop permission and shortcut setup.
-3. **Connect AI when needed.** Configure a model under **Settings → Agent and connections**, or install and bind an independent Agent plugin. Agent and model selection are separate controls. Add a region reference or a file in the input to ask about it.
+Installers and release notes are published on the [latest stable GitHub Release](https://github.com/abnste/mewu_ai/releases/latest).
 
-Linux Wayland capture/recording uses the desktop portal. After recording permission is granted, select the region again in the refreshed preview. Move recording controls outside the region; GNOME may not keep them on top. Linux needs system `libnghttp2.so.14`; local OCR needs Tesseract 4.1/5 and English language data (`libnghttp2-14` and `tesseract-ocr-eng` on Ubuntu).
+| Platform | Package | Requirements |
+| --- | --- | --- |
+| [Windows x64](https://github.com/abnste/mewu_ai/releases/latest) | `Setup…exe` installer / `Portable…zip` | Windows 10 2004 or later, using WebView2 |
+| [macOS Apple Silicon](https://github.com/abnste/mewu_ai/releases/latest) | `mac-arm64.dmg` | Move the app into Applications and grant the permissions requested by macOS |
+| [Linux x64](https://github.com/abnste/mewu_ai/releases/latest) | `linux-x64.AppImage` | Make it executable, then launch; uses WebKitGTK and desktop portals |
 
-New data defaults to `~/.mewu`. Existing installations keep their configured location; **Settings → Data** supports moving it and separate cleanup/space statistics for files, images and conversations. Back up important data before switching between the original and current versions.
+1. **Open a space.** Launch MewuAI and click its tray icon or use the capture shortcut shown in Settings. Select an area to annotate, copy or save; you can also open a blackboard or import materials.
+2. **Connect AI.** Configure a model under **Settings → Agent and connections → Connections**, or install an external Agent plugin, configure its connection and bind it to an Agent.
+3. **Explain the task.** Select an Agent, capture the relevant regions or add files, and type your request. You can draw annotations before sending.
+4. **Add tools.** Install extensions under **Settings → Plugins**, and create event rules in **Hooks**.
 
-## AI connections
+Linux needs system `libnghttp2.so.14`. Local OCR requires Tesseract 4.1/5 and English language data: `libnghttp2-14` and `tesseract-ocr-eng` on Ubuntu. Wayland capture and recording require desktop authorization; after recording permission is granted, confirm the region again in the refreshed preview. See [Linux OCR](./docs/linux-native-ocr.md), [recording](./docs/linux-native-recording.md) and [package permissions](./docs/linux-appimage-permissions.md).
 
-| Connection | Current support |
+## AI connections and personal Agents
+
+| Connection | Purpose |
 | --- | --- |
-| API | Chat Completions, OpenAI Responses and Anthropic Messages, with multiple saved connections and model templates. The selected service determines image/video support, cost and limits. |
-| Independent Agent | API Agent-provider plugins can use their own runtime, with memory chosen separately. Host-model access uses the current connection and granted permissions. |
-| MCP | Configure local MCP services under **Agent and connections → MCP**; installed plugin tools also join the existing Agent conversation. |
+| Model APIs | Chat Completions, OpenAI Responses and Anthropic Messages. Save multiple connections, use provider presets or custom URLs, discover models and switch between them. |
+| External Agents | Connect **Codex, Hermes, MiniMax Code, WorkBuddy / CodeBuddy** through the [External Agents plugin](https://github.com/abnste/mewu-plugin-agent-connectors) and use them in the existing conversation bar. |
+| MCP | Configure services under **Agent and connections → MCP** to make their tools available to the current Agent. |
+| Long-term memory | Choose local SQLite/FTS5 memory or an independent provider such as Hindsight or Journal Memory for each Agent. |
 
-The development [External Agents plugin](./extensions/official/agent-connectors/README.md) adds a settings entry and adapters for Codex App Server and ACP clients, including Hermes, MiniMax Code CLI and CodeBuddy. It requires the new host interfaces; public 1.0.3 cannot run it. Compatibility with a desktop application's bundled CLI must be tested separately. Dedicated image/video-generation APIs and device synchronization are also not included. Actual AI annotations depend on model output and need review.
+The external Agent plugin uses Codex App Server or ACP and relies on a compatible installed client's login and runtime configuration. Conversation, image input and session restoration are provided according to each adapter's support. Provider-specific video upload and a complete tool-approval interface are not yet integrated. See the [plugin documentation](https://github.com/abnste/mewu-plugin-agent-connectors#平台接口) for individual client requirements.
 
-<details>
-<summary>Original .NET desktop-client connection guide</summary>
+Select the model, Agent and memory provider independently. Save distinct instructions for different roles, keep each role's memory, and switch models to suit the task.
 
-These instructions apply to [dotnet](https://github.com/abnste/mewu_ai/tree/dotnet), not the current connection controls.
+## CLI: share the desktop space with other Agents
 
-| Connection | What you need |
+The official CLI plugin ships with MewuAI and is enabled by default. Start MewuAI, then open a terminal:
+
+```sh
+mewu
+mewu chat "Help me break this task into steps"
+mewu status
+mewu schema
+mewu call capture.open --json '{}' --wait
+mewu scene list
+```
+
+Run `mewu` for interactive Agent chat. Local Agents can also use the CLI to **open capture, create regions, set references, draw annotations, export images, run OCR and control recording**. The CLI and desktop share conversations, models, memory and tools.
+
+Automation clients should read `mewu schema`, then use the actual scene, region and revision data returned by the host. Writes return operation receipts; `--wait` waits for that operation, not necessarily an entire AI response. Terminal chat sends text by default; image references must be set explicitly.
+
+Open a new terminal after installing on Windows. On macOS/Linux, starting an installed app attempts user-level CLI integration. The Linux AppImage's local CLI connection requires Linux 6.5+. See the [bilingual CLI guide](./docs/cli.md) and [interface catalog](./apps/desktop/control/catalog.json).
+
+## Hooks: event automation
+
+Hooks is an official native plugin shipped and enabled by default. Manage rules in the settings sidebar, with independent enable/disable controls, editing and execution history.
+
+| Trigger | Example use |
 | --- | --- |
-| API | Your provider's API key and a model. Search built-in China/global service templates, load their model catalogs, and save multiple independent connections. [Supported services and setup](https://github.com/abnste/mewu_ai/blob/dotnet/docs/api-providers.md). |
-| Hermes | A configured Hermes installation on your PC. Choose a profile and model in settings. |
-| ChatGPT Work / Codex | A signed-in ChatGPT Work / Codex installation on your PC. Choose a model and reasoning level in settings. |
-| WorkBuddy | Install and sign in to WorkBuddy desktop, then connect and choose a model in settings. |
-| MiniMax Code | Sign in to MiniMax Code desktop. You can open it from settings; no separate command-line installation is required. |
+| Schedule / Cron | Send a task to an Agent or run a local workflow at a specified time, with time-zone support. |
+| Prompt | Add instructions to the current request using keyword, exact or regular-expression matching. |
+| AI reply | Match a completed reply and perform follow-up actions. |
+| Global shortcut | Open capture, create a blackboard or start a custom workflow. |
+| Lifecycle / custom event | Respond to application, scene, Agent, tool or plugin events with conditional actions. |
 
-With multiple connections saved, click the **model button after Upload** in the conversation bar to choose one. Your configurations are kept, and the app remembers your last selection.
+Combine **prompt injection, messages, MCP, commands and programs, websites, keyboard/mouse input, JavaScript and Mewu operations**. Capture shortcuts are ordinary Hooks rules too. Rules include cooldown, timeout and stop controls; operating-system permissions still apply.
 
-Image and video support depends on the selected model. MiniMax M3 is available through API or Hermes. Codex and WorkBuddy may need video-processing tools already installed on your PC to inspect videos. Check AI answers and annotations against the original content.
+See the [Hooks guide](./docs/hooks.md) for configuration and examples.
 
-</details>
+## Plugin marketplace
 
-## FAQ
+Use **Settings → Plugins** to browse the marketplace, manage installed extensions and toggle native features. Community plugins are installed from their own GitHub Releases, with source, permissions and version information available for review.
 
-<details>
-<summary>Does it cost anything?</summary>
+| Plugin | Purpose |
+| --- | --- |
+| [External Agents](https://github.com/abnste/mewu-plugin-agent-connectors) | Connect Codex, Hermes, MiniMax Code and WorkBuddy / CodeBuddy. |
+| [Region AI operations](https://github.com/abnste/mewu-plugin-region-agent) | Observe, click, type and verify results within an authorized region; listed as “区域操作 Agent” in the marketplace. |
+| [Hindsight](https://github.com/abnste/mewu-plugin-hindsight) | Connect a long-term memory service, select existing banks, and save or retrieve memories. |
+| [Journal Memory](https://github.com/abnste/mewu-plugin-journal-memory) | Persist and search memories separately for each Agent. |
+| [Toolbox](https://github.com/abnste/mewu-plugin-object-toolbox) | Save images, videos, generated objects and blackboards for reuse across conversations. |
+| [Research Notes](https://github.com/abnste/mewu-plugin-research-notes) | Edit floating notes and retain their text and attached object references. |
+| [Interactive ruler](https://github.com/abnste/mewu-plugin-interactive-widget) | A movable, interactive transparent SVG tool and an example of an interactive-object plugin. |
 
-Capture, built-in drawing and recording need no AI account. Official optional capabilities such as OCR can work locally. AI requests use the service or Agent provider you configure; that provider sets charges and usage limits.
+[Community marketplace](https://github.com/abnste/mewu-plugins) · [Mewu API / SDK](./packages/sdk/README.md) · [Extension guide](./docs/extensions.md) · [Packaging and publishing](./tools/extension-market/README.md#from-an-independent-project-to-a-market-pr)
 
-</details>
+Plugins can provide tools, Agents, memory, settings pages and workspace objects. JavaScript plugins run in separate QuickJS processes through authorized host interfaces; users do not need Node.js to install them. Plugins that launch external clients still require those clients. Disabling a plugin revokes its interfaces and execution capabilities while retaining its saved data.
 
-<details>
-<summary>Why are my selections and annotations missing from a screen share?</summary>
+Planned directions include reference-image generation and broader image/video workflows, desktop pets, circle-to-search, more plugins and additional Linux desktop support. These are roadmap items; release notes and published marketplace packages describe what is available.
 
-MewuAI has **Settings → General → Allow screen sharing to see selections and annotations**. Visibility still depends on the operating system and sharing application. The original .NET teaching-mode behavior and F8 instructions are documented on [dotnet](https://github.com/abnste/mewu_ai/blob/dotnet/README.md); they should not be assumed identical on every new platform.
+## Data, permissions and updates
 
-</details>
+- **Local data:** New installations default to `~/.mewu`. Use **Settings → Data** to inspect storage, move the data directory or clean up content.
+- **AI requests:** Capture and manual drawing happen locally. Sending an AI request passes its references and relevant context to the selected model or Agent service. Plugins access the capabilities you authorize.
+- **Platform differences:** Region input, recording and OCR depend on system capabilities and permissions. QR/barcodes and actionable link, email and phone recognition currently support Windows/macOS. Native formula rendering on images currently supports Windows; chat formulas use the shared renderer on all three platforms.
+- **Screen sharing:** Adjust **Settings → General → Allow screen sharing to see selections and annotations**. Visibility also depends on the operating system and sharing application.
+- **Updates:** Check **Settings → About** for updates from stable GitHub Releases. Automatic updates of Windows portable builds run the installer and switch to an installed build; download a new portable ZIP to remain portable.
+- **Installation help:** Windows packages do not yet have an Authenticode certificate. Windows N/KN recording may require the Media Feature Pack. Include the system, version and reproduction steps when reporting an [issue](https://github.com/abnste/mewu_ai/issues).
 
-<details>
-<summary>Are screenshots and conversations uploaded automatically?</summary>
+## Development and contributing
 
-Capture and manual drawing are local. Using AI sends the referenced content and applicable context to your chosen service; plugins use the capabilities you grant them. Keys are stored through the native credential store. A connected service or Agent may use cloud processing.
+MewuAI uses **Rust + Tauri 2 + Solid + TypeScript + SQLite**, with the system WebView. Current source is on `master`.
 
-</details>
+| Directory | Contents |
+| --- | --- |
+| [apps/desktop](./apps/desktop) | Desktop frontend and native Tauri host |
+| [crates](./crates) | Core data, control protocol, Hooks and extension runtime |
+| [tools/mewu-cli](./tools/mewu-cli) | Local command-line client |
+| [packages/sdk](./packages/sdk) | Extension development SDK |
+| [extensions](./extensions) | Plugin source and examples |
+| [docs](./docs) | Feature, platform and release documentation |
 
-<details>
-<summary>How do I update? What if an older version cannot update?</summary>
+Use `npm ci` and `npm run dev` for frontend development, and `npm run desktop:dev` for native development. Browser previews do not provide system capture, native recording or real desktop input. Native development requires the platform's Rust/Tauri toolchain; Linux builds use the project's complete Docker workflow.
 
-Use **Settings → About** to check and install updates. MewuAI reads the [latest stable GitHub Release](https://github.com/abnste/mewu_ai/releases/latest) directly and selects the installer for your system. No separate update-feed or signature file is required. Downloaded packages retain version, size and cryptographic verification. Windows portable updates run the installer and switch to the installed application.
+[Desktop development guide](./apps/desktop/README.md) · [Linux builds and testing](./docs/linux-testing.md) · [Release process](./docs/releasing.md)
 
-Earlier **0.7.4, 1.0.0 and preview installations** may still request an old feed or installer name. Install this version once from the official release without uninstalling first; subsequent updates use GitHub Releases directly.
+Issues, use cases, translations, documentation, code and plugins are welcome. Thank you to [all project contributors](https://github.com/abnste/mewu_ai/graphs/contributors).
 
-Supported legacy API connections are imported once; legacy files remain, but old conversation history is not converted into the new history UI and preferences are not fully migrated. See the [1.0 upgrade notes](./docs/release-notes-1.0.3.md) and [earlier compatibility-entry details](./docs/legacy-updates.md). Release assets expose SHA-256 digests; no separate checksum file is required. The [old changelog](https://github.com/abnste/mewu_ai/blob/dotnet/CHANGELOG.md) remains available.
+## License and acknowledgments
 
-</details>
-
-<details>
-<summary>Having trouble installing or recording?</summary>
-
-Windows packages have no Authenticode certificate yet; updater signature verification is separate. Download from the versioned [1.0.3 release](https://github.com/abnste/mewu_ai/releases/tag/v1.0.3). Windows N/KN may require the Media Feature Pack. On Linux, check portal permissions and the runtime requirements above. Report the platform, version and reproduction steps in [Issues](https://github.com/abnste/mewu_ai/issues).
-
-</details>
-
-## Contributing
-
-Bug reports, suggestions, code, plugins and documentation improvements are welcome. The [desktop guide](./apps/desktop/README.md), [extension SDK](./packages/sdk/README.md) and [release guide](./docs/releasing.md) describe the current Rust/Tauri/Solid project. Browser development previews do not provide native capture or recording.
-
-The original [contributing guide](https://github.com/abnste/mewu_ai/blob/dotnet/CONTRIBUTING.md), [code of conduct](https://github.com/abnste/mewu_ai/blob/dotnet/CODE_OF_CONDUCT.md) and [security policy](https://github.com/abnste/mewu_ai/blob/dotnet/SECURITY.md) are retained with the .NET branch.
-
-## License
-<a href="https://github.com/abnste"><img src="https://github.com/abnste.png?size=150" width="50px" alt="Abner Stephen"></a><a href="https://github.com/pyxyd"><img src="https://github.com/pyxyd.png?size=150" width="50px" alt="Yandi"></a><a href="https://github.com/shuziyuxingxing-stack"><img src="https://github.com/shuziyuxingxing-stack.png?size=150" width="50px" alt="数字与星星"></a><a href="https://github.com/AndeDrCobb"><img src="https://github.com/AndeDrCobb.png?size=150" width="50px" alt="Cobb"></a><a href="https://github.com/tljsj"><img src="https://github.com/tljsj.png?size=150" width="50px" alt="tljsj"></a>
-
-Project-owned source remains licensed under [MPL-2.0](./LICENSE). Commercial use is permitted under the license. When distributing covered software, provide the covered source and retain copyright and license notices as required. Full [third-party notices](./apps/desktop/THIRD-PARTY-NOTICES) ship with the packages; released source is linked from each version tag. The original [license and source information](https://github.com/abnste/mewu_ai/blob/dotnet/SOURCE.md) remains on dotnet.
-
-## Acknowledgments
+MewuAI is licensed under [MPL-2.0](./LICENSE). Dependency and font licenses are included in the [third-party notices](./apps/desktop/THIRD-PARTY-NOTICES).
 
 Thanks to teachers **Lin Wenjie** for subject-matter guidance and **Zhang Wenbiao** for feature development suggestions, and to [**blueling0**](https://github.com/blueling0) for testing assistance.
+
+Related project: [**kangarooking/Ta (拓)**](https://github.com/kangarooking/Ta), an AI screenshot tool for macOS.
