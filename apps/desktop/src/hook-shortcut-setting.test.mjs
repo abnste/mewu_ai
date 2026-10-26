@@ -62,3 +62,20 @@ test('hidden, disabled and expired recording leases cannot change drafts or regi
 test('cancel and blur reject stale native keys without changing persisted configuration',async()=>{
   const f=await fixture();try{await f.api.arm(f.id);const old=f.leases[0];f.api.record('F9');f.api.cancel();await f.api.arm(f.id);f.record(old,'F10');assert.equal(f.api.draft().value,'shift+alt+KeyS');f.enabled(false);await tick();assert.equal(f.api.draft(),undefined);assert.equal(f.writes.length,0);}finally{await f.stop();}
 });
+test('disabled operation bindings stay in Hooks but are absent from the inline shortcut editor',async()=>{
+  const f=await fixture();try{
+    const active=f.state().rules[0],disabled={...copy(active),id:'58d095cc-23fc-4b1a-a6b3-2c484e565aca',enabled:false,trigger:{kind:'shortcut',accelerator:'F8'}};
+    f.external({rules:[disabled,active]});await tick();
+    assert.deepEqual(copy(f.api.ids()),[active.id]);assert.equal(f.state().rules.length,2);assert.equal(f.writes.length,0);
+    f.external({rules:[disabled]});await tick();assert.deepEqual(copy(f.api.ids()),['']);assert.equal(f.writes.length,0);
+  }finally{await f.stop();}
+});
+test('disabling an edited rule in Hooks cancels its lease and rejects late keys without recreating it',async()=>{
+  const f=await fixture();try{
+    await f.api.arm(f.id);const lease=f.leases[0];f.api.record('F9');
+    f.external({revision:5,rules:f.state().rules.map(r=>({...r,revision:r.revision+1,enabled:false}))});await tick();
+    assert.equal(f.api.draft(),undefined);assert.equal(f.api.recording(),'');assert.ok(f.ends.includes(lease));
+    f.record(lease,'F10');await f.api.save();assert.equal(f.writes.length,0);assert.equal(f.state().rules[0].enabled,false);
+    f.external({revision:6,rules:f.state().rules.map(r=>({...r,enabled:true}))});await tick();assert.deepEqual(copy(f.api.ids()),[f.id]);
+  }finally{await f.stop();}
+});

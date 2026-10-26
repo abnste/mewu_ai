@@ -18,7 +18,7 @@ export default function HookShortcutSetting(props:{active:boolean;enabled:boolea
   const available=()=>props.active&&props.enabled&&Boolean(view()?.enabled)&&!pending();
   const accept=(v:HookSnapshot)=>{if(!disposed)setView(old=>!old||v.revision>=old.revision?v:old);};
   async function reload(){if(disposed||!props.active||!props.enabled)return;if(flight){dirty=true;return;}flight=true;try{do{dirty=false;accept(await bridge.getHooks());}while(dirty&&!disposed);}catch(e){if(!disposed)setError(String(e));}finally{flight=false;}}
-  const rules=createMemo(()=>view()?.rules.filter(r=>r.trigger.kind==='shortcut'&&r.actions.some(a=>a.kind==='app'&&a.method===props.method))||[]);
+  const rules=createMemo(()=>view()?.rules.filter(r=>r.enabled&&r.trigger.kind==='shortcut'&&r.actions.some(a=>a.kind==='app'&&a.method===props.method))||[]);
   // Empty is a local placeholder, never an automatically persisted rule.
   const ids=createMemo(()=>rules().length?rules().map(r=>r.id):['']);
   const rule=(id:string)=>rules().find(r=>r.id===id);
@@ -75,6 +75,7 @@ export default function HookShortcutSetting(props:{active:boolean;enabled:boolea
   onMount(()=>window.addEventListener('blur',blur));
   createEffect(()=>{if(props.active&&props.enabled)void reload();else cancel();});
   createEffect(()=>{if(view()&&!view()!.enabled)cancel();});
+  createEffect(()=>{const d=draft();if(d?.rule.revision&&!rules().some(r=>r.id===d.rule.id))cancel();});
   onCleanup(()=>{disposed=true;void disarm();stop?.();stopShortcuts?.();window.removeEventListener('blur',blur);});
   return <div class="hook-shortcut-setting capture-shortcut-field"><For each={ids()}>{id=><div class="capture-shortcut-controls">
     <input data-operation-shortcut readOnly aria-label={t(props.label)} classList={{recording:Boolean(recording())&&editing(id),'hook-shortcut-disabled':rule(id)?.enabled===false}} value={displayed(id)} placeholder={t(props.enabled?'未设置':'插件未启用')} title={view()?.shortcuts[id]?.message||t('按组合键，Delete 清空')} disabled={!available()} onFocus={()=>void arm(id)} onBlur={()=>void disarm()} onKeyDown={keyboard}/>
