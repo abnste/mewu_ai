@@ -238,12 +238,27 @@ pub(super) fn key(text: &str) -> Result<Key> {
         "F23" => Key::F23,
         #[cfg(not(target_os = "macos"))]
         "F24" => Key::F24,
-        s if s.chars().count() == 1 => Key::Unicode(s.chars().next().unwrap()),
+        // A key label such as Control+A names the A key, not an uppercase
+        // character. Case belongs to an explicit Shift or the Text action.
+        s if s.chars().count() == 1 => {
+            Key::Unicode(s.chars().next().unwrap().to_ascii_lowercase())
+        }
         s if s.starts_with("Key") && s.len() == 4 && s.as_bytes()[3].is_ascii_uppercase() => {
             Key::Unicode((s.as_bytes()[3] as char).to_ascii_lowercase())
         }
         _ => return Err("不支持的按键名称".into()),
     })
+}
+#[cfg(test)]
+mod key_tests {
+    use super::*;
+    #[test]
+    fn letter_key_labels_do_not_add_implicit_shift() {
+        assert_eq!(key("A").unwrap(), Key::Unicode('a'));
+        assert_eq!(key("a").unwrap(), key("KeyA").unwrap());
+        assert_eq!(key("Shift").unwrap(), Key::Shift);
+        assert_eq!(key("中").unwrap(), Key::Unicode('中'));
+    }
 }
 #[cfg(target_os = "linux")]
 use x11::PhysicalInput;

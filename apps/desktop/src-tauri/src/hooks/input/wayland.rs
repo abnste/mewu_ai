@@ -167,7 +167,9 @@ fn keys(value: &str) -> Result<Vec<i32>> {
             {
                 0xffbd + s[1..].parse::<i32>().map_err(|_| "按键无效")?
             }
-            s if s.chars().count() == 1 => unicode(s.chars().next().unwrap()),
+            // Shortcut labels are case-insensitive; only an explicit Shift
+            // may request the shifted level. Text keeps its exact characters.
+            s if s.chars().count() == 1 => unicode(s.chars().next().unwrap().to_ascii_lowercase()),
             s if s.starts_with("Key") && s.len() == 4 && s.as_bytes()[3].is_ascii_uppercase() => {
                 i32::from(s.as_bytes()[3].to_ascii_lowercase())
             }
@@ -208,6 +210,10 @@ mod tests {
     use super::*;
     #[test]
     fn keys_follow_portal_xkb_keysyms_and_preserve_unicode() {
+        assert_eq!(keys("Control+A").unwrap(), vec![0xffe3, 97]);
+        assert_eq!(keys("Control+Shift+A").unwrap(), vec![0xffe3, 0xffe1, 97]);
+        assert_eq!(keys("A").unwrap(), keys("KeyA").unwrap());
+        assert_eq!(unicode('A'), 65);
         assert_eq!(
             keys("Control+Shift+KeyA").unwrap(),
             vec![0xffe3, 0xffe1, 97]
