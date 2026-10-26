@@ -14,6 +14,11 @@ test('shortcut labels stay human-readable without changing stored accelerators',
   assert.equal(format('Super+Shift+KeyS','windows'),'Win + Shift + S');
   assert.equal(format('Super+Digit1','macos'),'⌘ + 1');
   assert.equal(format('Control+F8'),'Ctrl + F8');
+  assert.equal(format('shift+super+KeyS','windows'),'Shift + Win + S');
+  assert.equal(format('shift+alt+KeyS','windows'),'Shift + Alt + S');
+  assert.equal(format('control+shift+Digit1','windows'),'Ctrl + Shift + 1');
+  assert.equal(format('super+alt+KeyS','macos'),'⌘ + ⌥ + S');
+  assert.equal(format('super+KeyS','linux'),'Super + S');
 });
 const key = values => ({code:'',key:'',ctrlKey:false,altKey:false,shiftKey:false,metaKey:false,isComposing:false,...values});
 test('remote logical keys work when no physical code is available', () => {

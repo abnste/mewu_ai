@@ -98,6 +98,28 @@ fn import_rule_failure_rolls_back_the_whole_batch_and_its_marker() {
     assert_eq!(s.revision().unwrap(), 0);
 }
 #[test]
+fn retirement_only_removes_unchanged_rows_and_never_repeats() {
+    let mut s = Store::memory().unwrap();
+    let first = s.save(0, shortcut_rule()).unwrap().rules[0].clone();
+    let mut user = first.clone();
+    user.name = "用户修改".into();
+    let changed = s.save(1, user).unwrap();
+    assert!(s
+        .retire_import_once("retirement.concurrent", &[first])
+        .unwrap());
+    assert_eq!(s.rules().unwrap(), changed.rules);
+    let current = changed.rules[0].clone();
+    assert!(!s
+        .retire_import_once("retirement.concurrent", &[current.clone()])
+        .unwrap());
+    assert_eq!(s.revision().unwrap(), changed.revision);
+    assert!(s
+        .retire_import_once("retirement.unchanged", &[current])
+        .unwrap());
+    assert!(s.rules().unwrap().is_empty());
+    assert_eq!(s.revision().unwrap(), changed.revision + 1);
+}
+#[test]
 fn pre_submit_rules_cannot_reenter_their_own_ui_submission_lane() {
     let mut r = rule();
     for action in [

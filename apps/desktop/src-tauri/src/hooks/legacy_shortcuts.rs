@@ -6,6 +6,7 @@ use crate::host_preferences::PreferencesFile;
 
 pub(super) fn import(app: &AppHandle, root: &Path, store: &mut Store) -> Result<()> {
     if store.imported("legacy.global-shortcuts.v1")? {
+        retire_extra_system_binding(store)?;
         return Ok(());
     }
     let loaded = PreferencesFile::open(root)
@@ -36,21 +37,48 @@ pub(super) fn import(app: &AppHandle, root: &Path, store: &mut Store) -> Result<
         shortcuts::canonicalize(&mut rule)?;
         rules.push(rule);
     }
-    #[cfg(windows)]
-    {
-        let mut rule = binding("系统截图", "Super+Shift+KeyS".into());
-        rule.enabled = app
-            .state::<crate::Host>()
-            .system_preferences
-            .view()
-            .map_err(|e| e.to_string())?
-            .replace_system_capture_shortcut;
-        shortcuts::canonicalize(&mut rule)?;
-        rules.push(rule);
-    }
     let _ = app;
     let _ = &loaded.stamp;
     store.import_once("legacy.global-shortcuts.v1", rules)?;
+    // New imports never manufacture a second binding from the old OS toggle.
+    store.retire_import_once("legacy.extra-system-shortcut.v1", &[])?;
+    Ok(())
+}
+
+fn retire_extra_system_binding(store: &mut Store) -> Result<()> {
+    const SOURCE: &str = "legacy.extra-system-shortcut.v1";
+    if store.imported(SOURCE)? {
+        return Ok(());
+    }
+    let rules = store.rules()?;
+    let mut expected = binding("系统截图", "Super+Shift+KeyS".into());
+    shortcuts::canonicalize(&mut expected)?;
+    let candidates: Vec<Rule> = rules
+        .iter()
+        .filter(|rule| {
+            // Only the exact unedited 1.0.8 import and only when another usable
+            // screenshot binding remains. Never drop a user's sole shortcut.
+            if rule.revision != 1 {
+                return false;
+            }
+            let mut baseline = expected.clone();
+            baseline.id = rule.id.clone();
+            baseline.revision = 1;
+            baseline.enabled = rule.enabled;
+            serde_json::to_value(rule).ok() == serde_json::to_value(&baseline).ok()
+                && rules.iter().any(|other| {
+                    other.id != rule.id
+                        && other.enabled
+                        && matches!(other.trigger, Trigger::Shortcut { .. })
+                        && other
+                            .actions
+                            .iter()
+                            .any(|a| matches!(a,Action::App {method,..} if method=="capture.open"))
+                })
+        })
+        .cloned()
+        .collect();
+    store.retire_import_once(SOURCE, &candidates)?;
     Ok(())
 }
 pub(super) fn binding(name: &str, accelerator: String) -> Rule {
@@ -68,5 +96,46 @@ pub(super) fn binding(name: &str, accelerator: String) -> Rule {
         cooldown_ms: 500,
         timeout_ms: 30000,
         stop_on_error: true,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn imported() -> Store {
+        let mut s = Store::memory().unwrap();
+        let mut primary = binding("唤起截图", "Alt+Shift+KeyS".into());
+        let mut extra = binding("系统截图", "Super+Shift+KeyS".into());
+        shortcuts::canonicalize(&mut primary).unwrap();
+        shortcuts::canonicalize(&mut extra).unwrap();
+        s.import_once("legacy.global-shortcuts.v1", vec![primary, extra])
+            .unwrap();
+        s
+    }
+    #[test]
+    fn retires_only_the_unedited_extra_and_does_not_recreate_it() {
+        let mut s = imported();
+        let primary = s.rules().unwrap()[0].clone();
+        retire_extra_system_binding(&mut s).unwrap();
+        assert_eq!(s.rules().unwrap(), vec![primary]);
+        let revision = s.revision().unwrap();
+        retire_extra_system_binding(&mut s).unwrap();
+        assert_eq!(s.revision().unwrap(), revision);
+    }
+    #[test]
+    fn edited_or_sole_shortcut_is_preserved() {
+        let mut s = imported();
+        let mut extra = s.rules().unwrap()[1].clone();
+        extra.name = "我的截图".into();
+        let saved = s.save(s.revision().unwrap(), extra).unwrap();
+        retire_extra_system_binding(&mut s).unwrap();
+        assert_eq!(s.rules().unwrap(), saved.rules);
+        let mut s = imported();
+        let primary = s.rules().unwrap()[0].clone();
+        s.remove(s.revision().unwrap(), &primary.id, primary.revision)
+            .unwrap();
+        let before = s.rules().unwrap();
+        retire_extra_system_binding(&mut s).unwrap();
+        assert_eq!(s.rules().unwrap(), before);
     }
 }

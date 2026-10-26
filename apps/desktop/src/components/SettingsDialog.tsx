@@ -82,7 +82,6 @@ export default function SettingsDialog(props: Props) {
   onCleanup(() => { extensionDisposed = true; stopExtensions?.(); });
   const [tab, setTab] = createSignal(props.initialTab);
   const [hooksVisited, setHooksVisited] = createSignal(props.initialTab === 'hooks');
-  const [hookRequest,setHookRequest]=createSignal<{category:'shortcut';id?:string;nonce:number}>();
   createEffect(() => { if (tab() === 'hooks') setHooksVisited(true); if (tab() === 'hooks' && optional.installed().revision >= 0 && !hooksEnabled()) setTab('plugins'); });
   const activePluginPage = createMemo(() => pluginPages().find(choice => tab() === `extension:${extensionServiceKey(choice)}`));
   createEffect(() => { if (extensionDiscoveryReady() && tab().startsWith('extension:') && !activePluginPage()) setTab('plugins'); });
@@ -98,7 +97,7 @@ export default function SettingsDialog(props: Props) {
       if (tab() === 'agent' && (optional() !== undefined || hostAgentInstalled() === false)) setTab('plugins');
     }
   });
-  let dialog!: HTMLElement, closeButton!: HTMLButtonElement;
+  let dialog!: HTMLElement;
   const nav = [
     { id: 'general' as const, label: '通用', icon: Settings2 },
     { id: 'capture' as const, label: '截图与录屏', icon: ScanLine },
@@ -107,7 +106,8 @@ export default function SettingsDialog(props: Props) {
     { id: 'plugins' as const, label: '插件', icon: Puzzle },
     { id: 'data' as const, label: '数据', icon: Database },
   ];
-  onMount(() => closeButton.focus());
+  // Initial focus belongs to the dialog, not the destructive close control.
+  onMount(() => dialog.focus({preventScroll:true}));
   const keyboard = (event: KeyboardEvent) => {
     if (event.defaultPrevented || event.isComposing || event.target instanceof Element && event.target.closest('[data-settings-inner-dialog]')) return;
     // The recorder owns Escape, including IME and lease admission. Do not let
@@ -117,19 +117,19 @@ export default function SettingsDialog(props: Props) {
     if (event.key === 'Escape') { event.stopPropagation(); props.onClose(); }
     if (event.key !== 'Tab') return;
     const elements = [...dialog.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled),select,textarea,summary,[tabindex="0"]')].filter(el => el.getClientRects().length > 0);
-    if (event.shiftKey && document.activeElement === elements[0]) { event.preventDefault(); elements.at(-1)?.focus(); }
+    if (event.shiftKey && (document.activeElement === dialog || document.activeElement === elements[0])) { event.preventDefault(); elements.at(-1)?.focus(); }
     else if (!event.shiftKey && document.activeElement === elements.at(-1)) { event.preventDefault(); elements[0]?.focus(); }
   };
   document.addEventListener('keydown', keyboard);
   onCleanup(() => { document.removeEventListener('keydown', keyboard); });
   return <div class="modal-backdrop" onPointerDown={event => { if (event.target === event.currentTarget) props.onClose(); }}>
-    <section ref={dialog} class="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title">
-      <header class="settings-header" data-tauri-drag-region={props.draggable ? true : undefined}><h1 id="settings-title" data-tauri-drag-region={props.draggable ? true : undefined}>{t("设置")}</h1><button ref={closeButton} class="icon-button" title={t("关闭")} aria-label={t("关闭设置")} onClick={props.onClose}><X size={18} /></button></header>
+    <section ref={dialog} class="settings-dialog" role="dialog" tabIndex={-1} aria-modal="true" aria-labelledby="settings-title">
+      <header class="settings-header" data-tauri-drag-region={props.draggable ? true : undefined}><h1 id="settings-title" data-tauri-drag-region={props.draggable ? true : undefined}>{t("设置")}</h1><button class="icon-button" title={t("关闭")} aria-label={t("关闭设置")} onClick={props.onClose}><X size={18} /></button></header>
       <div class="settings-body">
         <nav class="settings-nav" aria-label={t("设置分类")}><div class="settings-nav-pages"><For each={nav.filter(entry => (entry.id !== 'agent' || agentEnabled()) && (entry.id !== 'hooks' || hooksEnabled()))}>{entry => <button classList={{ selected: tab() === entry.id }} onClick={() => setTab(entry.id)}><entry.icon size={16} /><span>{t(entry.label)}</span></button>}</For><For each={pluginPages()}>{choice => <button classList={{ selected: tab() === `extension:${extensionServiceKey(choice)}` }} onClick={() => setTab(`extension:${extensionServiceKey(choice)}`)}><PluginIcon plugin={choice.record.manifest} size={16}/><span>{choice.service.title}</span></button>}</For></div><button class="settings-nav-about" classList={{ selected: tab() === 'about' }} onClick={() => setTab('about')}><Info size={16}/><span>{t('关于')}</span><Show when={updater.status()?.availableVersion}><small class="settings-update-badge">{t('检测到新版本')}</small></Show></button></nav>
         <div class="settings-content">
           <div hidden={tab() !== 'general'}><GeneralSettings active={tab() === 'general'} agentEnabled={anyAgentEnabled()} preferences={props.preferences} onPreferences={props.onPreferences} platform={facts.info()?.platform} /></div>
-          <div hidden={tab() !== 'capture'}><CaptureSettings active={tab() === 'capture'} preferences={props.preferences} onPreferences={props.onPreferences} platform={facts.info()?.platform} hooksEnabled={hooksEnabled()} onOpenHooks={id=>{setHookRequest(old=>({category:'shortcut',id,nonce:(old?.nonce||0)+1}));setTab('hooks');}} /></div>
+          <div hidden={tab() !== 'capture'}><CaptureSettings active={tab() === 'capture'} preferences={props.preferences} onPreferences={props.onPreferences} platform={facts.info()?.platform} hooksEnabled={hooksEnabled()} /></div>
           <Show when={agentEnabled()}><div hidden={tab() !== 'agent'}><header class="settings-page-heading"><h2>{t("Agent 与连接")}</h2></header>
             <div class="segmented"><Show when={agentEnabled()}><button aria-pressed={agentPane() === 'identity'} classList={{ selected: agentPane() === 'identity' }} onClick={() => setAgentPane('identity')}><UserRound size={13} />Agent</button></Show><button aria-pressed={agentPane() === 'connection'} classList={{ selected: agentPane() === 'connection' }} onClick={() => setAgentPane('connection')}><Link2 size={13} />{t("连接")}</button><Show when={agentEnabled()}><button aria-pressed={agentPane() === 'tools'} classList={{ selected: agentPane() === 'tools' }} onClick={() => setAgentPane('tools')}><Wrench size={13} />MCP</button></Show></div>
             <div hidden={agentPane() !== 'identity'}>
@@ -139,7 +139,7 @@ export default function SettingsDialog(props: Props) {
             <div hidden={agentPane() !== 'tools'}><Show when={agentEnabled()}><ToolsPanel snapshot={props.snapshot} agentId={agentId()} onAgent={setAgentId} onDiscover={props.onDiscoverMcpServer} onCommand={props.onMcpCommand} /></Show></div>
           </div></Show>
           <div hidden={tab() !== 'plugins'}><PluginsPanel active={tab() === 'plugins'} /></div>
-          <Show when={hooksEnabled() && hooksVisited()}><div hidden={tab() !== 'hooks'}><HooksSettings active={tab() === 'hooks'} openRule={hookRequest()} /></div></Show>
+          <Show when={hooksEnabled() && hooksVisited()}><div hidden={tab() !== 'hooks'}><HooksSettings active={tab() === 'hooks'} /></div></Show>
           <div hidden={tab() !== 'data'}><DataSettings data={facts} active={tab() === 'data'} /></div>
           <div hidden={tab() !== 'about'}><AboutSettings data={facts} active={tab() === 'about'} updater={updater} /></div>
           <Show when={activePluginPage()} keyed>{choice => <ExtensionSettings choice={choice} onEscape={props.onClose}/>}</Show>

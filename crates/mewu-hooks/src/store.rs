@@ -235,6 +235,58 @@ impl Store {
         tx.commit().map_err(db)?;
         Ok(true)
     }
+    /// Retire unchanged entries from a superseded import in one transaction.
+    /// Callers supply complete observed rows; concurrent edits must survive.
+    /// The marker also covers an empty migration, so future user rules are never
+    /// reconsidered just because they happen to resemble an old default.
+    pub fn retire_import_once(&mut self, source: &str, rules: &[Rule]) -> Result<bool> {
+        if source.is_empty()
+            || source.len() > 120
+            || !source
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b".-_".contains(&b))
+        {
+            return Err("迁移来源无效".into());
+        }
+        let tx = self
+            .db
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(db)?;
+        if tx
+            .query_row(
+                "SELECT 1 FROM hook_imports WHERE source=?1",
+                [source],
+                |r| r.get::<_, i32>(0),
+            )
+            .optional()
+            .map_err(db)?
+            .is_some()
+        {
+            return Ok(false);
+        }
+        let mut removed = 0;
+        for rule in rules {
+            let revision: i64 = rule.revision.try_into().map_err(|_| "规则版本无效")?;
+            let body = serde_json::to_string(rule).map_err(|_| "规则格式无效")?;
+            removed += tx
+                .execute(
+                    "DELETE FROM hook_rules WHERE id=?1 AND revision=?2 AND body=?3",
+                    params![rule.id, revision, body],
+                )
+                .map_err(db)?;
+        }
+        tx.execute("INSERT INTO hook_imports VALUES(?1)", [source])
+            .map_err(db)?;
+        if removed > 0 {
+            tx.execute(
+                "UPDATE hook_meta SET revision=revision+1 WHERE singleton=1",
+                [],
+            )
+            .map_err(db)?;
+        }
+        tx.commit().map_err(db)?;
+        Ok(true)
+    }
     pub fn save(&mut self, expected: u64, mut rule: Rule) -> Result<Snapshot> {
         rule.validate()?;
         let tx = self

@@ -45,7 +45,8 @@ export function newHookAction(kind: HookAction['kind'], platform = ''): HookActi
   }
 }
 export function formatHookShortcut(value:string,platform=''):string {
-  return value.split('+').map(part=>{const key=part.trim();if(/^Key[A-Z]$/.test(key))return key.slice(3);if(/^Digit\d$/.test(key))return key.slice(5);if(key==='Control')return 'Ctrl';if(key==='Super')return platform==='macos'?'⌘':platform==='windows'?'Win':'Super';return key;}).join(' + ');
+  const names:Record<string,string>={control:'Ctrl',ctrl:'Ctrl',shift:'Shift',alt:platform==='macos'?'⌥':'Alt',super:platform==='macos'?'⌘':platform==='windows'?'Win':'Super',meta:platform==='macos'?'⌘':platform==='windows'?'Win':'Super'};
+  return value.split('+').map(part=>{const key=part.trim();if(/^Key[A-Z]$/i.test(key))return key.slice(3).toUpperCase();if(/^Digit\d$/i.test(key))return key.slice(5);return names[key.toLowerCase()]||(/^[a-z]$/i.test(key)?key.toUpperCase():key);}).join(' + ');
 }
 export function hookAccelerator(event: Pick<KeyboardEvent, 'code' | 'ctrlKey' | 'altKey' | 'shiftKey' | 'metaKey' | 'isComposing'> & Partial<Pick<KeyboardEvent, 'key'>>): string | undefined {
   let code = event.code;

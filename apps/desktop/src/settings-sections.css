@@ -4,6 +4,11 @@
 .settings-dialog .settings-nav-pages>button,.settings-dialog .settings-nav-about { display:flex;align-items:center;gap:10px;text-align:left;font-size:11px;color:var(--secondary);border-radius:9px;padding:11px 10px;white-space:nowrap;flex-shrink:0; }
 .settings-dialog .settings-nav-pages>button:hover,.settings-dialog .settings-nav-about:hover { background:var(--surface-subtle);color:var(--text); }
 .settings-dialog .settings-nav-pages>button.selected,.settings-dialog .settings-nav-about.selected { background:var(--accent-soft);color:var(--accent); }
+/* Keep keyboard focus inside the control: outside rings were clipped by the
+   scrolling navigation and looked like broken selection borders. */
+.settings-dialog button:focus,.settings-dialog summary:focus { outline:none; }
+.settings-dialog button:focus-visible,.settings-dialog summary:focus-visible { outline:1px solid var(--accent);outline-offset:-3px; }
+.settings-dialog:focus { outline:none; }
 .settings-dialog .settings-nav-about { margin-top:auto;flex-shrink:0;min-width:0; }
 .settings-dialog .settings-update-badge { margin-left:auto;font-size:9px;font-weight:400;color:var(--accent);white-space:normal;line-height:1.3; }
 .settings-dialog {
@@ -36,7 +41,7 @@
 .settings-dialog .settings-content input.settings-inline-title { width:100%;min-width:0;height:26px;padding:2px 5px;margin-left:-6px;border:1px solid transparent;border-radius:6px;background:transparent;color:var(--text);font-size:12px;font-weight:500;line-height:20px;box-shadow:none; }
 .settings-dialog .settings-content input.settings-inline-title:hover { border-color:var(--line); }
 .settings-dialog .settings-content input.settings-inline-title:focus { outline:none;border-color:var(--accent);background:var(--surface); }
-.hook-shortcut-setting { display:flex;flex-wrap:wrap;align-items:center;gap:6px; }
+.hook-shortcut-setting { display:flex;flex-direction:column;align-items:flex-end;gap:6px;max-width:100%; }
 .hook-shortcut-setting .hook-shortcut-disabled { color:var(--muted);text-decoration:line-through; }
 .settings-dialog .settings-content .settings-actions { gap:var(--settings-gap); }
 .settings-page-heading { display:flex;align-items:center;gap:12px;min-height:34px;margin:0 0 var(--settings-section-gap); }
