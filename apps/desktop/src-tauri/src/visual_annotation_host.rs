@@ -77,17 +77,11 @@ impl RunScope {
         self.minimax_wire = matches!(
             profile.model.as_str(),
             "MiniMax-M3" | "MiniMax-M3.1-Flash-Preview" | "MiniMax-M3.1-Flash"
-        ) && profile.advanced.protocol
-            == mewu_core::ConnectionProtocol::ChatCompletions
-            && crate::provider_transport::endpoint(profile).is_ok_and(|url| {
-                url.scheme() == "https"
-                    && url.port().is_none()
-                    && url.path() == "/v1/chat/completions"
-                    && matches!(
-                        url.host_str(),
-                        Some("api.minimax.cn" | "api.minimaxi.com" | "api.minimax.io")
-                    )
-            });
+        ) && profile.advanced.protocol == mewu_core::ConnectionProtocol::ChatCompletions;
+        // Serialization follows the selected model/protocol, including a user's
+        // custom gateway or local deployment. Endpoint trust is enforced by the
+        // transport, not by this lossless decoder. This grants no authority:
+        // the current target, exact schema and geometry are still validated.
         self
     }
     fn parse_plan(&self, arguments: &str) -> Result<ParsedBatch, String> {

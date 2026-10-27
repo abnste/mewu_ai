@@ -154,7 +154,7 @@ fn minimax_wire_keeps_field_units_target_numeric_and_point_limits_fail_closed() 
 }
 
 #[test]
-fn minimax_wire_is_bound_to_the_preflight_model_protocol_and_official_endpoint() {
+fn minimax_wire_follows_preflight_model_and_protocol_across_custom_endpoints() {
     let input = super::tests::normalized_input();
     let wire = observed(&input).to_string();
     for model in [
@@ -167,30 +167,26 @@ fn minimax_wire_is_bound_to_the_preflight_model_protocol_and_official_endpoint()
             "https://api.minimaxi.com/v1",
             "https://api.minimax.io/v1",
             "https://api.minimax.cn:443/v1",
+            "http://127.0.0.1:49643/v1",
+            "http://localhost:8000/v1",
+            "https://gateway.example/models/minimax/v1",
+            "https://gateway.example:8443/v1",
         ] {
             let mut p = profile();
             p.model = model.into();
             p.base_url = address.into();
-            assert!(super::tests::scope(input.clone())
-                .for_connection(&p)
-                .parse_plan(&wire)
-                .is_ok());
-        }
-        for address in [
-            "http://localhost/v1",
-            "http://api.minimax.cn/v1",
-            "https://api.minimax.cn.example/v1",
-            "https://example.com/v1",
-            "https://api.minimax.cn/custom",
-            "https://api.minimax.cn:444/v1",
-        ] {
-            let mut p = profile();
-            p.model = model.into();
-            p.base_url = address.into();
-            assert!(super::tests::scope(input.clone())
-                .for_connection(&p)
-                .parse_plan(&wire)
-                .is_err());
+            let scope = super::tests::scope(input.clone()).for_connection(&p);
+            assert!(scope.parse_plan(&wire).is_ok(), "{address}");
+            for (path, value) in [
+                ("/groups/0/target", json!("foreign-target")),
+                ("/groups/0/coordinateSpace", json!("pixels")),
+                ("/groups/0/objects/0/fontSize", json!("NaN")),
+                ("/groups/0/objects/0/points", json!({"item":{"x":"1","y":"2"},"extra":true})),
+            ] {
+                let mut bad = observed(&input);
+                *bad.pointer_mut(path).unwrap() = value;
+                assert!(scope.parse_plan(&bad.to_string()).is_err(), "{address}: {path}");
+            }
         }
         for protocol in [
             mewu_core::ConnectionProtocol::AnthropicMessages,
