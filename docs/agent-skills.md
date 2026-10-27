@@ -35,6 +35,12 @@ network, processes or native actions. Failed checks return to the Agent for
 correction and block preparing those exact source bytes. Passing these checks
 does not prove GUI or platform compatibility; installation and actual interaction
 still need verification. Changing the source invalidates its previous results.
+Service inputs and assertion expectations use explicit JSON text fields
+`inputJson` and `equalsJson`. This preserves arbitrary nested arrays and value
+types across model providers without guessing or coercing malformed values.
+For example, `equalsJson: "true"` asserts a boolean; `equalsJson: "\"true\""`
+asserts a string. Reports show the received input and actual/expected types,
+including the distinction between a missing path and JSON null.
 The native workflow permits 12 model rounds and 32 executed tool calls within
 the existing time and output budgets. The execution loop and durable journal
 share the round limit; work already saved remains available if a run stops.
