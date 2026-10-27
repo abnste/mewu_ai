@@ -11,7 +11,7 @@ import { updateLanguage } from './i18n';
 import { createEffect, createMemo, createSignal, lazy, on, onCleanup, onMount, Show, untrack } from 'solid-js';
 import { CircleAlert, LoaderCircle, Pencil, Redo2, Undo2, X } from 'lucide-solid';
 import { createOptionalFeatureState } from './optional-feature-state';
-import { optionalAgentAvailable, optionalAgentReady, sameOptionalGrant } from './optional-capabilities';
+import { optionalAgentAvailable, optionalAgentReady, sameOptionalGrant, settleOptionalAgentReadiness } from './optional-capabilities';
 import { isBlackboard } from './blackboard';
 import { coreDrawingGrant } from './core-drawing';
 import { isCoreReplacementPlugin } from './plugin-core';
@@ -1227,6 +1227,13 @@ export default function App() {
     recordingSelection.completed(region.id);
   }
   async function send(strict = false, controlInput?: AppControlParameters['chat.send']) {
+    if (!agentReady()) {
+      const readiness = await settleOptionalAgentReadiness(scene, agentReady, capabilities.refresh);
+      if (disposed || readiness !== 'ready') {
+        if (strict) throw new AppControlError(readiness === 'changed' ? 'CONFLICT' : 'NOT_READY', readiness === 'changed' ? '会话或模型已变化' : 'Agent 或模型尚未就绪');
+        return;
+      }
+    }
     const current = scene();
     if (!agentReady() || !current || busy() || recording() || scroll() || sending() || exitPreparing() || current.run?.status === 'running' || (!(controlInput?.text ?? draft()).trim() && (controlInput?.refs ?? refs()).length === 0)) { if (strict) throw new AppControlError('BUSY', '当前无法发送消息'); return; }
     const candidateGrant = visualAnnotationGrant();

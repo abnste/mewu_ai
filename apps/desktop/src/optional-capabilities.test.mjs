@@ -4,10 +4,36 @@ import { readFile } from 'node:fs/promises';
 import { stripTypeScriptTypes } from 'node:module';
 import test from 'node:test';
 const code=stripTypeScriptTypes(await readFile(new URL('./optional-capabilities.ts',import.meta.url),'utf8'),{mode:'transform'});
-const {currentOptionalCapabilities,optionalCapabilityKey,optionalAgentAvailable,optionalAgentReady}=await import(`data:text/javascript;base64,${Buffer.from(code).toString('base64')}`);
+const {currentOptionalCapabilities,optionalCapabilityKey,optionalAgentAvailable,optionalAgentReady,settleOptionalAgentReadiness}=await import(`data:text/javascript;base64,${Buffer.from(code).toString('base64')}`);
 const installed={revision:4,plugins:[{manifest:{id:'mewu.agent',contributions:[{id:'agent',kind:'agent.runtime'}]},revision:2,state:'enabled'}]};
 const connections=[{id:'local',revision:3,hasKey:false},{id:'cloud',revision:9,hasKey:true}];
 const receipt={pluginRevision:4,connectionRevisions:{local:3,cloud:9},agent:{pluginId:'mewu.agent',revision:2,contributionId:'agent'},blackboard:null,configuredConnectionIds:['local'],readyAgentIds:[],boundAgentIds:[]};
+
+test('explicit send awaits delayed capability metadata once, without any model or mutation replay',async()=>{
+ let ready=false,reads=0,release;const scene={id:'scene',agentId:'agent',connectionId:'local'};
+ const pending=settleOptionalAgentReadiness(()=>scene,()=>ready,()=>{reads++;return new Promise(resolve=>release=()=>{ready=true;resolve();});});
+ let settled=false;void pending.then(()=>settled=true);await Promise.resolve();assert.equal(settled,false);assert.equal(reads,1);
+ release();assert.equal(await pending,'ready');assert.equal(reads,1);
+ assert.equal(await settleOptionalAgentReadiness(()=>scene,()=>ready,async()=>{reads++;}),'ready');assert.equal(reads,1);
+});
+test('a send metadata refresh cannot redirect the original request to another scene, Agent, model or capture',async()=>{
+ for(const patch of [{id:'other'},{agentId:'other'},{connectionId:'other'},{background:{id:'other'}}]){
+  let scene={id:'scene',agentId:'agent',connectionId:'local',background:{id:'capture'}},ready=false;
+  assert.equal(await settleOptionalAgentReadiness(()=>scene,()=>ready,async()=>{scene={...scene,...patch};ready=true;}),'changed');
+ }
+});
+test('revoked or unavailable capabilities remain unavailable after one bounded read',async()=>{
+ let reads=0;const scene={id:'scene',agentId:'agent',connectionId:'local'};
+ assert.equal(await settleOptionalAgentReadiness(()=>scene,()=>false,async()=>{reads++;}),'unavailable');assert.equal(reads,1);
+ assert.equal(await settleOptionalAgentReadiness(()=>undefined,()=>false,async()=>{reads++;}),'unavailable');assert.equal(reads,1);
+ await assert.rejects(settleOptionalAgentReadiness(()=>scene,()=>false,async()=>{throw Error('metadata failed');}),/metadata failed/);
+});
+test('real send settles metadata before claiming a send and still rechecks all runtime guards',async()=>{
+ const app=await readFile(new URL('./App.tsx',import.meta.url),'utf8');const send=app.slice(app.indexOf('  async function send('),app.indexOf('  async function cancel('));
+ assert.ok(send.indexOf('await settleOptionalAgentReadiness(')<send.indexOf('setSending(true)'));
+ assert.ok(send.indexOf('await settleOptionalAgentReadiness(')<send.indexOf('const current = scene()'));
+ assert.match(send,/if \(!agentReady\(\) \|\| !current \|\| busy\(\)/);
+});
 test('host readiness accepts an explicitly configured keyless provider; UI never infers readiness from hasKey',()=>{
  assert.equal(currentOptionalCapabilities(receipt,installed,connections),true);
  assert.deepEqual(receipt.configuredConnectionIds,['local']);

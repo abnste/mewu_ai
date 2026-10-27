@@ -178,7 +178,14 @@ impl Reader{
 }
 fn sample_time(sample:&gst::Sample)->Result<(u64,u64),ClipError>{
     let buffer=sample.buffer().ok_or(ClipError::InvalidMedia)?;
-    let pts=buffer.pts().ok_or(ClipError::InvalidMedia)?.nseconds()/100;
+    // MP4 edit lists (including H.264 B-frame delay) place buffer PTS in the
+    // segment clock. All public media operations use source playback time.
+    // Full conversion also retains positive preroll before an accurate seek;
+    // subtracting the first decoded PTS would instead reset every trim to zero.
+    let segment=sample.segment().and_then(|s|s.downcast_ref::<gst::ClockTime>()).ok_or(ClipError::InvalidMedia)?;
+    if segment.rate()!=1.0||segment.applied_rate()!=1.0{return Err(ClipError::InvalidMedia);}
+    let Some(gst::Signed::Positive(pts))=segment.to_stream_time_full(buffer.pts().ok_or(ClipError::InvalidMedia)?)else{return Err(ClipError::InvalidMedia);};
+    let pts=pts.nseconds()/100;
     let duration=buffer.duration().ok_or(ClipError::InvalidMedia)?.nseconds()/100;
     if duration==0{Err(ClipError::InvalidMedia)}else{Ok((pts,duration))}
 }
@@ -423,6 +430,23 @@ pub(super) fn execute(job:&ClipJob,cancel:&AtomicBool,on_progress:&dyn Fn(u8))->
 #[cfg(test)]mod tests{
     use super::*;
     use std::sync::atomic::Ordering;
+    #[test]fn sample_timestamps_use_segment_playback_clock_including_seek_preroll(){
+        gst::init().unwrap();
+        let sample=|pts:u64,start:u64,time:u64,rate:f64|{
+            let mut buffer=gst::Buffer::new();let b=buffer.get_mut().unwrap();
+            b.set_pts(gst::ClockTime::from_mseconds(pts));b.set_duration(gst::ClockTime::from_mseconds(100));
+            let mut segment=gst::FormattedSegment::<gst::ClockTime>::new();
+            segment.set_start(gst::ClockTime::from_mseconds(start));segment.set_time(gst::ClockTime::from_mseconds(time));segment.set_rate(rate);
+            gst::Sample::builder().buffer(&buffer).segment(&segment).build()
+        };
+        assert_eq!(sample_time(&sample(200,200,0,1.0)),Ok((0,1_000_000)));
+        assert_eq!(sample_time(&sample(1200,200,0,1.0)),Ok((10_000_000,1_000_000)));
+        assert_eq!(sample_time(&sample(2400,2500,2300,1.0)),Ok((22_000_000,1_000_000)));
+        assert_eq!(sample_time(&sample(2500,2500,2300,1.0)),Ok((23_000_000,1_000_000)));
+        assert_eq!(sample_time(&sample(100,200,0,1.0)),Err(ClipError::InvalidMedia));
+        assert_eq!(sample_time(&sample(200,200,0,2.0)),Err(ClipError::InvalidMedia));
+        assert_eq!(sample_time(&gst::Sample::builder().build()),Err(ClipError::InvalidMedia));
+    }
     #[test]fn large_reduced_frame_rate_keeps_exact_time_without_overflow(){
         // Near1fps, already reduced, and inside the admitted source duration.
         // Golden values are exact rational long division, not float rounding.
@@ -471,6 +495,29 @@ pub(super) fn execute(job:&ClipJob,cancel:&AtomicBool,on_progress:&dyn Fn(u8))->
         let annotated_gif=root.join("annotated.gif");assert!(matches!(execute(&ClipJob::RenderGifAnnotated{source:path.clone(),output:annotated_gif.clone(),expected:expected.clone(),range:Some(range.clone()),overlays},&cancel,&|_|{}).unwrap(),ClipJobResult::GifRendered(_)));
         assert_eq!(Source::open(&path,&cancel).unwrap().hash,hash);
         println!("Linux native metadata/trim/AAC/GIF/extracted JPEG/annotated MP4/GIF all decoded; real interval pixels; source unchanged");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    #[ignore = "explicit synthetic H.264 B-frame fixture with a 200ms edit; no user media"]
+    fn supplied_synthetic_segment_playback(){
+        let path=PathBuf::from(std::env::var_os("MEWU_SYNTHETIC_VIDEO").expect("synthetic video path"));
+        let cancel=AtomicBool::new(false);let mut source=Source::open(&path,&cancel).unwrap();
+        let expected=inspect(&mut source,&cancel).unwrap();
+        assert_eq!((expected.width,expected.height,expected.duration_ticks),(960,640,60_000_000));
+        let root=std::env::temp_dir().join(format!("mewu-edited-timeline-{}",uuid::Uuid::new_v4()));std::fs::create_dir(&root).unwrap();
+        for (name,start,end) in [("whole",0,60_000_000),("trim",12_345_678,32_345_678)]{
+            let output=root.join(name);std::fs::create_dir(&output).unwrap();
+            let range=VideoRange{start_ticks:start,end_ticks:end};let requested=vec![start,start+1_000_000,end-1];
+            let result=execute(&ClipJob::ExtractFrames{source:path.clone(),output_directory:output.clone(),expected:expected.clone(),window:range.clone(),requested_ticks:requested.clone()},&cancel,&|_|{}).unwrap();
+            let ClipJobResult::FramesExtracted{frames}=result else{panic!("actual frames");};
+            crate::video_annotation_render::validate_extracted_files(&output,&expected,&range,&requested,&frames,&cancel).unwrap();
+            assert_eq!(frames[0].actual_pts_ticks,start/1_000_000*1_000_000);
+            assert_eq!(frames[2].actual_pts_ticks,(end-1)/1_000_000*1_000_000);
+        }
+        let range=VideoRange{start_ticks:12_345_678,end_ticks:32_345_678};
+        let result=execute(&ClipJob::Render{source:path,output:root.join("trim.mp4"),expected:expected.clone(),range:range.clone()},&cancel,&|_|{}).unwrap();
+        let ClipJobResult::Rendered(actual)=result else{panic!("actual trim");};
+        video_clip_contract::validate_rendered(&expected,&range,&actual).unwrap();
         std::fs::remove_dir_all(root).unwrap();
     }
     #[test]fn actual_linux_source_and_cancel_keep_output_private_and_unchanged(){

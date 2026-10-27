@@ -50,3 +50,17 @@ export function optionalAgentReady(value: OptionalCapabilities | undefined, scen
 export function optionalAgentAvailable(value: OptionalCapabilities | undefined): boolean {
   return Boolean(value && (value.readyAgentIds.length || (value.agent && value.configuredConnectionIds.length)));
 }
+
+/** One authoritative metadata read before an explicit send, never a mutation retry. */
+export async function settleOptionalAgentReadiness(
+  current: () => Pick<Scene, 'id' | 'agentId' | 'connectionId' | 'background'> | undefined,
+  ready: () => boolean, refresh: () => Promise<void>,
+): Promise<'ready' | 'unavailable' | 'changed'> {
+  const identity = () => { const scene = current(); return scene
+    ? JSON.stringify([scene.id, scene.agentId, scene.connectionId ?? null, scene.background?.id ?? null]) : undefined; };
+  const before = identity();
+  if (before === undefined) return 'unavailable';
+  if (!ready()) await refresh();
+  if (identity() !== before) return 'changed';
+  return ready() ? 'ready' : 'unavailable';
+}

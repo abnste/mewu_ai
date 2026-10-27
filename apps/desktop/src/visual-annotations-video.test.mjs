@@ -52,8 +52,28 @@ function actualApp() {
       sendMessage: async (sceneId, annotation, regionId) => { f.calls.push({ type: 'send', sceneId, annotation: structuredClone(annotation), regionId }); const next = structuredClone(f.scene); next.draft = ''; return { scenes: [next] }; },
     },
   };
+  scope.capabilities.refresh = async () => { await f.refreshCapabilities?.(); };
   vm.createContext(scope); vm.runInContext(stripTypeScriptTypes(predicateSource,{mode:'transform'})+'\n'+sendBody, scope); return { f, scope };
 }
+
+test('actual send awaits current capability metadata once without retrying a message', async () => {
+  const { f, scope } = actualApp(), ready = f.capabilities, wait = deferred();
+  f.capabilities = undefined; let reads = 0;
+  f.refreshCapabilities = async () => { reads++; await wait.promise; f.capabilities = ready; };
+  const sending = scope.send(); await turn();
+  assert.equal(reads, 1); assert.equal(f.calls.length, 0);
+  wait.resolve(); await sending;
+  assert.equal(f.calls.filter(call => call?.type === 'send').length, 1);
+});
+
+test('actual send cancels if the selected model changes during capability refresh', async () => {
+  const { f, scope } = actualApp(), ready = f.capabilities, wait = deferred();
+  f.capabilities = undefined;
+  f.refreshCapabilities = async () => { await wait.promise; f.capabilities = ready; };
+  const sending = scope.send(); await turn(); f.scene.connectionId = 'other';
+  wait.resolve(); await sending;
+  assert.equal(f.calls.length, 0); assert.ok(f.scene.draft);
+});
 
 test('the existing send carries the selected referenced region and annotation capability together without changing the question', async () => {
   const { f, scope } = actualApp(); const question = f.scene.draft;
