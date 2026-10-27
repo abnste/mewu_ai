@@ -6,6 +6,10 @@ These assets include MewuAI website component demos, a new code-explanation reco
 
 ## 文件 / Files
 
+README 首图使用重新制作的[中文封面](../../images/mewuai-cover-current-zh.png)与[英文封面](../../images/mewuai-cover-current-en.png)。它们沿用原封面的笔记本构图，以 1.0.11 正式版界面为参考生成，属于宣传示意图。界面来源、制作方式与提示词见[封面制作记录](./cover-generation.md)。原先的 `agent-overview.gif` 仍保留在素材目录。
+
+The README hero uses regenerated [Chinese](../../images/mewuai-cover-current-zh.png) and [English](../../images/mewuai-cover-current-en.png) promotional covers, retaining the original laptop composition with references from the released 1.0.11 UI. See the [generation record](./cover-generation.md) for provenance and prompts. The previous `agent-overview.gif` remains in the media directory.
+
 | 文件 | 内容 | 尺寸 | 时长 |
 | --- | --- | --- | --- |
 | [code-explanation.gif](./code-explanation.gif) | 代码讲解与原位批注 / Code explanation and inline annotation | 1280 × 720 | 11.00 s |

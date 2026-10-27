@@ -25,8 +25,8 @@
 | Official sources | [Latest release](https://github.com/abnste/mewu_ai/releases/latest) · [Plugin marketplace](https://github.com/abnste/mewu-plugins) |
 
 <p align="center">
-  <a href="./docs/media/readme/agent-overview.gif"><img src="./docs/media/readme/agent-overview.gif" width="100%" alt="Select references, talk to an Agent, and use generated tools in the same workspace." /></a>
-  <br /><sub>Select references, talk to an Agent, and use generated tools in the same workspace.</sub>
+  <a href="./docs/images/mewuai-cover-current-en.png"><img src="./docs/images/mewuai-cover-current-en.png" width="100%" alt="MewuAI cover: capture an image, ask a question, and annotate in place." /></a>
+  <br /><sub>Capture, ask, and annotate in place.</sub>
 </p>
 
 ## Features

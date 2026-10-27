@@ -192,6 +192,32 @@
       "source": "Original project README exam annotation screenshot, reused unchanged at user request",
       "gitBlob": "f61eddd52bfcbe54693b38e0723c24227bf4c7dc",
       "cropped": false
+    },
+    {
+      "file": "../../images/mewuai-cover-current-zh.png",
+      "bytes": 1878754,
+      "dimensions": [
+        1774,
+        887
+      ],
+      "sha256": "c0bbeaed68e84689adca1687f6894d1a34382351f58adc68a8dfe1698427c6ac",
+      "source": "Built-in imagegen; original cover composition plus current UI reference",
+      "uiSourceCommit": "47a87dae26b700efa46edc2153f9cce46c219f28",
+      "kind": "generated-promotional-cover",
+      "provenance": "cover-generation.md"
+    },
+    {
+      "file": "../../images/mewuai-cover-current-en.png",
+      "bytes": 1811103,
+      "dimensions": [
+        1774,
+        887
+      ],
+      "sha256": "4493e2f5e5056f95079d2d983b7db70de64537cc83861db957db7582f4025311",
+      "source": "Built-in imagegen; original cover composition plus current UI reference",
+      "uiSourceCommit": "47a87dae26b700efa46edc2153f9cce46c219f28",
+      "kind": "generated-promotional-cover",
+      "provenance": "cover-generation.md"
     }
   ]
 }
