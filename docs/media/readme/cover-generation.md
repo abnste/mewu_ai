@@ -1,6 +1,6 @@
 # README 封面制作记录
 
-2026-10-27：沿用原封面的品牌、左右构图与笔记本展示方式，使用当前正式版界面参考重新生成中文、英文封面。原封面文件保留。
+2026-10-27 制作，2026-10-28 发布：沿用原封面的品牌、左右构图与笔记本展示方式，使用当前正式版界面参考重新生成中文、英文封面。原封面文件保留。
 
 - UI 来源：[MewuAI 1.0.11](https://github.com/abnste/mewu_ai/tree/47a87dae26b700efa46edc2153f9cce46c219f28)，原始 App、Composer、SpaceCanvas、DrawingLayer 及样式未改动。
 - 在隔离的浏览器预览中提供交通照片与预置回复，通过界面框选、自动引用和发送取得中英文参考画面。未调用真实模型或原生系统操作。
@@ -22,4 +22,3 @@ Create the English-language counterpart of REFERENCE 1, the approved MewuAI READ
 ## 英文工具条校正提示词
 
 Precise tiny correction to this approved English MewuAI cover. Keep EVERY other pixel/composition/headline/laptop/photo/chat exactly the same as reference 1. Correct only the capture toolbar inside the laptop near the top of the selected traffic photo. Reference 2 shows the real toolbar. It has exactly twelve buttons, with these glyphs and captions in this order: @ / 'Reference'; plus / 'Add region'; trash can / 'Delete'; pen / 'Draw'; table grid / 'Table'; dashed rectangle with text / 'Text'; translation glyph / 'Translate'; tall scrolling frame / 'Long capture'; red record circle / 'Record'; overlapping documents / 'Copy'; down arrow into tray / 'Save'; pin / 'Pin'. Each button caption small but crisp, no scrambled repeated words. Keep original toolbar dimensions and location, use compact captions as needed while remaining readable. Preserve every other part of the cover unchanged, including all headline text, icon, brand, six vehicle ellipses, chat bubbles, lower-left toolbar, desktop and platform line. Output the same high-resolution 2:1 image.
-
