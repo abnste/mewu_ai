@@ -25,8 +25,8 @@
 | 官方来源 | [最新发行](https://github.com/abnste/mewu_ai/releases/latest) · [插件市场](https://github.com/abnste/mewu-plugins) |
 
 <p align="center">
-  <a href="./docs/media/readme/agent-overview.gif"><img src="./docs/media/readme/agent-overview.gif" width="100%" alt="框选参考、与 Agent 对话，在同一空间中使用生成的工具。" /></a>
-  <br /><sub>框选参考、与 Agent 对话，在同一空间中使用生成的工具。</sub>
+  <a href="./docs/images/mewuai-cover-current-zh.png"><img src="./docs/images/mewuai-cover-current-zh.png" width="100%" alt="MewuAI 封面：框选图片、提问并在原位标注。" /></a>
+  <br /><sub>截图、提问、原位标注。</sub>
 </p>
 
 ## 功能
