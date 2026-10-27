@@ -20,6 +20,16 @@ user modifications remain intact. SDK references are generated from the same
 source as the host. `plugin_project.describe` remains the authority for the
 currently running host's contract.
 
+The native Agent also bundles `mewu-image-annotation` (image/worksheet, drawing,
+formula and table workflows), `mewu-video-annotation` (sampled-frame evidence and
+timed annotations), and `mewu-task-verification` (observable completion, error
+correction and continuation). These are ordinary portable skill folders, installed
+through the same factory-hash mechanism. They load on demand, not as a full prompt
+on every turn. Current tool schemas still own target handles, coordinate units,
+atomic validation and permissions; a skill cannot add a missing annotation grant.
+Editable visual tools remain native so manual drawing and existing exports work
+even without a model or without reading a skill.
+
 `plugin_project` supports describe, list, read, write, test and prepare. Writes use
 the prior project SHA-256 and an atomic replacement, and validate the manifest
 and complete JavaScript module graph without executing it. Errors return to

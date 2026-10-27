@@ -12,12 +12,23 @@ const SDK: &str = include_str!("../../../../packages/sdk/index.d.ts");
 const CLIENT: &str = include_str!("../../../../packages/sdk/client.d.ts");
 const LAYOUT: &str = include_str!("../../../../docs/plugin-toolbar-layout.md");
 static WORKSPACE_GATE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+const WORKFLOW_SKILLS: &[(&str, &str)] = &[
+    ("mewu-image-annotation", include_str!("../../../../skills/mewu-image-annotation/SKILL.md")),
+    ("mewu-video-annotation", include_str!("../../../../skills/mewu-video-annotation/SKILL.md")),
+    ("mewu-task-verification", include_str!("../../../../skills/mewu-task-verification/SKILL.md")),
+];
+
+fn seed_workflows(ws: &Workspace) -> Result<(), String> {
+    for (name, content) in WORKFLOW_SKILLS { ws.seed_skill(name, &[("SKILL.md", content)])?; }
+    Ok(())
+}
 
 fn workspace(host: &Host) -> Result<Workspace, String> {
     let ws = Workspace::open(&host.root)?;
     if let Err(error)=ws.seed_skill("mewu-plugin-authoring", &[("SKILL.md", SKILL), ("references/sdk.d.ts", SDK), ("references/ui-client.d.ts", CLIENT), ("references/toolbar-layout.md", LAYOUT)]) {
         eprintln!("[agent-skills] bundled skill update skipped: {error}");
     }
+    if let Err(error)=seed_workflows(&ws) { eprintln!("[agent-skills] workflow update skipped: {error}"); }
     Ok(ws)
 }
 pub fn handles(name: &str) -> bool { matches!(name, "skills_list" | "skill_read" | "plugin_project" | "session_read") }
@@ -185,6 +196,29 @@ mod tests {
         assert_eq!(perform(&ws,&call("plugin_project",test)).unwrap()["result"]["passed"],true);
         let ready=perform(&ws,&call("plugin_project",json!({"op":"prepare","projectId":"check-flow","expectedSha256":fixed_sha}))).unwrap();
         assert_eq!(ready["serviceTests"]["passed"],true);assert_eq!(ready["guiVerified"],false);assert_eq!(ready["installed"],false);
+    }
+    #[test]
+    fn bundled_workflows_are_discoverable_readable_and_preserve_user_edits() {
+        let root=tempfile::tempdir().unwrap();
+        let ws=Workspace::open(root.path()).unwrap();
+        seed_workflows(&ws).unwrap();
+        let listed=perform(&ws,&call("skills_list",json!({}))).unwrap();
+        assert_eq!(listed["skills"].as_array().unwrap().len(),WORKFLOW_SKILLS.len());
+        assert!(listed["invalidSkills"].as_array().unwrap().is_empty());
+        for (name,content) in WORKFLOW_SKILLS {
+            let read=perform(&ws,&call("skill_read",json!({"name":name}))).unwrap();
+            assert_eq!(read["content"],*content);
+            assert_eq!(read["availableFiles"],json!(["SKILL.md"]));
+        }
+        let path=root.path().join("skills/mewu-image-annotation/SKILL.md");
+        let edited=format!("{}\n用户自定义：保持我的配色。",WORKFLOW_SKILLS[0].1);
+        std::fs::write(&path,&edited).unwrap();
+        let reopened=Workspace::open(root.path()).unwrap();
+        seed_workflows(&reopened).unwrap();
+        assert_eq!(std::fs::read_to_string(path).unwrap(),edited);
+        // Loading instructions never invents a tool or grants visual authority.
+        assert!(!handles("video_annotate"));
+        assert!(binding("screenshot_annotate").is_none());
     }
     #[test]
     fn tools_are_independent_of_memory_and_do_not_offer_auto_install_or_shell(){
