@@ -35,7 +35,7 @@ const ready=(async()=>{
 })();ready.catch(()=>{});
 const input=readline.createInterface({input:process.stdin,crlfDelay:Infinity});
 input.on('line',line=>{let value;try{if(Buffer.byteLength(line)>16777216)throw Error();value=JSON.parse(line);}catch{process.exitCode=1;input.close();return;}
- void(async()=>{await ready;let answered=false;await request('POST','/api/v1/acp',value,message=>{if(value.method!==undefined&&message.id===value.id&&Object.hasOwn(message,'result')||message.id===value.id&&Object.hasOwn(message,'error'))answered=true;output(message);});if(value.method!==undefined&&value.id!==undefined&&!answered)throw Error('WorkBuddy response missing');})().catch(()=>{if(value.id!==undefined&&value.method!==undefined)output({jsonrpc:'2.0',id:value.id,error:{code:-32000,message:'WorkBuddy desktop request failed'}});});
+ void(async()=>{await ready;let answered=false;await request('POST','/api/v1/acp',value,message=>{if(value.method!==undefined&&message.id===value.id&&Object.hasOwn(message,'result')||message.id===value.id&&Object.hasOwn(message,'error'))answered=true;output(message);});if(value.method!==undefined&&value.id!==undefined&&!answered)throw Error('WorkBuddy response missing');})().catch(()=>{if(value.id!==undefined&&value.method!==undefined)output({jsonrpc:'2.0',id:value.id,error:{code:-32603,message:'WorkBuddy desktop request failed'}});});
 });
 input.on('close',()=>{stopped=true;for(const call of calls)call.destroy();child?.kill();setTimeout(()=>process.exit(0),200).unref();});
 `;

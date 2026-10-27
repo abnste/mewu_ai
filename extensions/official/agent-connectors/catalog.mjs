@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 import {validateConfig,resolveConfig} from './profiles.mjs';
-import {connectCodex,connectAcp} from './adapters.mjs';
+import {connectCodex,connectAcp,selectAcpModel} from './adapters.mjs';
 
 const selectionKey=(profile,context)=>{
   if(!context?.agentId||!context?.sceneId)throw Error('请从当前对话选择模型');
@@ -23,7 +23,16 @@ export function registerCatalog(ctx,profile){
       const key=selectionKey(profile,call.context),config=await configured(ctx,profile);
       // Listing must recover when an earlier configured model has been retired.
       const connection=await (profile.protocol==='codex'?connectCodex:connectAcp)(ctx,{...config,model:''});
-      let models;try{models=connection.models;}finally{await connection.peer.close();}
+      let models;
+      try{
+        models=connection.models;
+        if(input.type==='select'){
+          if(typeof input.modelId!=='string'||(input.modelId&&!models.some(m=>m.id===input.modelId)))throw Error('所选模型当前不可用，请刷新模型列表');
+          // Validate with the real client before persisting. This disposable
+          // session never sends a task or changes an existing conversation.
+          if(profile.protocol!=='codex')await selectAcpModel(connection,input.modelId);
+        }
+      }finally{await connection.peer.close();}
       const current=await ctx.storage.get(key);
       if(input.type==='select'){
         if(typeof input.modelId!=='string'||(input.modelId&&!models.some(m=>m.id===input.modelId)))throw Error('所选模型当前不可用，请刷新模型列表');

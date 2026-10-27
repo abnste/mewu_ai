@@ -86,17 +86,32 @@ export async function connectAcp(ctx,config,previous){
     return {peer,initialized,session,models,resumed};
   }catch(error){await peer.close();throw error;}
 }
+export async function selectAcpModel(connection,model){
+  if(!model)return;
+  const {peer,session,models}=connection;
+  if(!models.some(value=>value.id===model))throw Error('该 Agent 未提供所选模型');
+  const option=session.configOptions?.find(value=>value.category==='model');
+  // Some clients reject even a redundant model change. The advertised current
+  // selection already satisfies the request; do not mutate it unnecessarily.
+  if((option?.currentValue??session.models?.currentModelId)===model)return;
+  try{
+    const result=option
+      ?await peer.request('session/set_config_option',{sessionId:session.sessionId,configId:option.id,value:model})
+      :await peer.request('session/set_model',{sessionId:session.sessionId,modelId:model});
+    const current=result.configOptions?.find(value=>value.category==='model')?.currentValue;
+    if(current!==undefined&&current!==model)throw Error('selection not applied');
+  }catch{
+    // Never leak an upstream error body (which can contain credentials/paths),
+    // silently switch models or retry a prompt after an uncertain failure.
+    throw Error('该 Agent 无法切换到所选模型，请选择默认模型或更新官方客户端');
+  }
+}
 export async function runAcp(ctx,config,input,previous,checkpoint=async()=>{}){
   const {peer,initialized,session,models,resumed}=await connectAcp(ctx,config,previous);
   try{
     const sessionId=session.sessionId;
     await checkpoint({id:sessionId});
-    if(config.model){
-      const option=session.configOptions?.find(v=>v.category==='model');
-      if(option)await peer.request('session/set_config_option',{sessionId,configId:option.id,value:config.model});
-      else if(models.some(m=>m.id===config.model))await peer.request('session/set_model',{sessionId,modelId:config.model});
-      else throw Error('该 Agent 未提供所选模型');
-    }
+    await selectAcpModel({peer,session,models},config.model);
     const images=imagesForTurn(input,resumed);
     if(images.length&&initialized.agentCapabilities?.promptCapabilities?.image!==true)throw Error('该 Agent 未声明图片支持');
     const context=resumed&&soul(input)?`[Mewu 角色设定]\n${soul(input)}\n\n`:'';

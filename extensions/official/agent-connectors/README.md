@@ -31,16 +31,17 @@
 - 目前适配 ACP v1 和 Codex App Server；未宣称支持所有未来协议版本。
 - 测试连接会完成握手和模型/会话检测，可能在第三方创建一个空测试会话；不会发送模型提示词。“服务可连接”表示协议可用，不能证明账户额度或每个模型均可执行。对话中的登录失败会明确提示。
 - 外部 Agent 请求客户端文件系统、终端或额外操作授权时，当前客户端返回不支持或拒绝，不会自动批准。已有服务自身的工具仍遵守其自身配置。
+- 选择 ACP 模型时先由客户端确认；拒绝的选择不会覆盖原模型。对话中的登录、额度和服务错误使用不含敏感信息的提示，不将客户端连接成功等同于模型可用。
 - 单次执行预算最多 300 秒。进程/协议错误会关闭进程并报告失败，不自动重发已发送的任务。
 - 普通对话、图片和公开思考流已接入；未实现第三方专用视频上传和完整原生工具审批界面。
-- Windows 本机 Codex、Hermes 已通过真实运行时的握手、文字回复、关闭进程后的两轮会话恢复与图片传递。WorkBuddy 当前桌面 CLI 的 stdio 不工作，HTTP ACP 桥已连通；本机模型调用返回需要登录，因此尚未通过完整对话验收。MiniMax CLI 和 Mac/Linux 尚未实机验收，不能以协议测试替代。
+- Windows 已实测 Codex、MiniMax Code 的原对话条发送、动态模型选择和实际回复；真实进程测试另覆盖两轮图像输入与会话恢复。macOS、Ubuntu 已实测 MiniMax Code 原对话条发送与实际回复，macOS 另验证了模型权限失败提示。Hermes 与 WorkBuddy 的既有覆盖范围保持原样：Hermes 在 Windows 通过两轮图像及恢复；WorkBuddy 桌面 HTTP ACP 已连通，但当前测试账号未完成模型登录，不能据此声称完整对话通过。
 
 ## 开发与打包
 
 入口为 `index.mjs`，无需 Node 依赖随插件安装。使用项目 SDK 打包器生成安装 ZIP，README 和测试文件不放入运行包。
 
 ```sh
-node tools/extension-market/cli.mjs pack extensions/official/agent-connectors --out out/agent-connectors-0.1.3.zip --file profiles.mjs --file rpc.mjs --file adapters.mjs --file view.mjs --file workbuddy.mjs --file catalog.mjs --validator /path/to/mewu-plugin-validator
+node tools/extension-market/cli.mjs pack extensions/official/agent-connectors --out out/agent-connectors-0.1.6.zip --file profiles.mjs --file rpc.mjs --file adapters.mjs --file view.mjs --file workbuddy.mjs --file catalog.mjs --validator /path/to/mewu-plugin-validator
 ```
 
 一手参考：[ACP v1](https://agentclientprotocol.com/protocol/v1/overview)、[Codex App Server](https://developers.openai.com/codex/app-server)、[MiniMax Code](https://github.com/MiniMax-AI/minimax-code)、[CodeBuddy ACP](https://www.codebuddy.ai/docs/cli/acp)、[Hermes ACP](https://hermes-agent.nousresearch.com/docs/user-guide/features/acp/)。

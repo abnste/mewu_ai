@@ -37,7 +37,16 @@ export async function openPeer(ctx, config, jsonrpc = true){
       while(Date.now()<until){
         const message=await peer.poll();
         if(!message||message.id!==id)continue;
-        if(message.error)throw Error(`${method}: ${String(message.error.message??'请求失败').slice(0,400)}`);
+        if(message.error){
+          // Classify locally; upstream bodies can include credentials or paths.
+          const detail=String(message.error.message??'');
+          const publicMessage=(jsonrpc&&message.error.code===-32000)||/authenticat|unauthori[sz]ed|not logged|login required/i.test(detail)
+            ?'请先在该 Agent 的官方客户端或 CLI 中登录'
+            :/rate.?limit|quota|insufficient|429/i.test(detail)
+              ?'外部 Agent 的请求额度不足或已限流，请检查官方客户端账户'
+              :'外部 Agent 拒绝了请求，请检查所选模型的权限及官方客户端的服务状态';
+          const error=Error(publicMessage);error.publicMessage=publicMessage;throw error;
+        }
         if(!Object.hasOwn(message,'result'))throw Error(`${method}: 响应不完整`);
         return message.result;
       }

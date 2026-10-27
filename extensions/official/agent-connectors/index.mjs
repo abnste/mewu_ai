@@ -47,7 +47,9 @@ export default definePlugin(async ctx=>{
     }catch(error){
       // Explicit public diagnostics, never arbitrary exceptions, paths or stacks.
       const publicErrors=['请先在该 Agent 的官方客户端或 CLI 中登录','请先在 Codex 官方客户端登录','请选择已安装的运行程序','所选 Codex 模型不可用','该 Agent 未声明图片支持','请先在外部 Agent 设置中检测并保存连接','未找到已安装的官方客户端，请在外部 Agent 设置中重新检测','无法启动外部程序，请检查运行程序和启动参数'];
-      if(publicErrors.includes(error?.message))await ctx.events.emit('agent.text',error.message);
+      const message=publicErrors.includes(error?.message)||['该 Agent 无法切换到所选模型，请选择默认模型或更新官方客户端','该 Agent 未提供所选模型'].includes(error?.message)
+        ?error.message:error?.publicMessage??'外部 Agent 未能完成请求，请检查官方客户端的连接和模型设置';
+      await ctx.events.emit('agent.text',message);
       throw error;
     }
   });}

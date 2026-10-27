@@ -50,7 +50,11 @@ http.createServer(async(req,res)=>{
     const events=[];peer.notification=async(method,params)=>events.push({method,params});
     assert.equal((await peer.request('prompt',{})).stopReason,'end_turn');
     assert.equal(events[0].params.update.content.text,'中文✓');
-    await assert.rejects(peer.request('malformed',{}),/WorkBuddy desktop request failed/);
+    await assert.rejects(peer.request('malformed',{}),error=>{
+      assert.match(error.publicMessage,/模型的权限及官方客户端的服务状态/);
+      assert.doesNotMatch(error.message,/登录|WorkBuddy desktop request failed/);
+      return true;
+    });
     await peer.close();
   }finally{
     if(!closed&&child){child.stdin.end();await exit;}

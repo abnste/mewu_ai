@@ -237,3 +237,50 @@ test('Codex default uses the live catalog instead of a stale CLI preference',asy
  await runCodex(f.ctx,config,{task:'hello'});
  assert.equal(f.writes.find(w=>w.message.method==='thread/start').message.params.model,'current');
 });
+
+function configurableAcp(message,queue){
+ if(message.method==='session/new')return {sessionId:'configured',configOptions:[{id:'models',category:'model',currentValue:'working',options:[{value:'working',name:'Working'},{value:'broken',name:'Broken'}]}]};
+ if(message.method==='session/set_config_option'){
+  queue.push({id:message.id,error:{code:-32603,message:'Internal error',data:{details:'private provider body'}}});return;
+ }
+ return acp(message,queue);
+}
+test('ACP keeps an already selected model without a redundant unsupported mutation',async()=>{
+ const f=fixture(configurableAcp);await runAcp(f.ctx,{...config,model:'working'},{task:'hello'});
+ assert.equal(f.writes.some(v=>v.message.method==='session/set_config_option'),false);
+ assert.equal(f.writes.filter(v=>v.message.method==='session/prompt').length,1);
+});
+test('ACP model picker validates with the client before saving and preserves a working choice on failure',async()=>{
+ const f=fixture(configurableAcp);f.data.set('config/connections',{minimax:config});await activate(f.ctx);
+ const handler=f.services.get('models-minimax').handler,context={context:{agentId:'a',sceneId:'one'}};
+ const chosen=await handler({type:'select',modelId:'working',expected:null},context);assert.equal(chosen.ok,true);
+ const rejected=await handler({type:'select',modelId:'broken',expected:chosen.selection},context);
+ assert.equal(rejected.ok,false);assert.match(rejected.error,/无法切换/);assert.doesNotMatch(rejected.error,/private/);
+ assert.deepEqual(f.data.get('model-selection/minimax/one'),{modelId:'working'});
+ assert.equal(f.writes.some(v=>v.message.method==='session/prompt'),false);assert.equal(f.closed(),2);
+});
+test('ACP failed model changes stop before the prompt and expose only a public diagnostic',async()=>{
+ const f=fixture(configurableAcp);f.data.set('config/connections',{minimax:{...config,model:'broken'}});await activate(f.ctx);
+ await assert.rejects(f.services.get('minimax').handler({task:'hello'},{context:{agentId:'a',sceneId:'one'}}),/无法切换/);
+ assert.equal(f.writes.some(v=>v.message.method==='session/prompt'),false);assert.equal(f.closed(),1);
+ assert.deepEqual(f.events,[{name:'agent.text',value:'该 Agent 无法切换到所选模型，请选择默认模型或更新官方客户端'}]);
+});
+
+test('upstream prompt failures emit safe actionable diagnostics without replaying a task',async()=>{
+ for(const [code,message,expected] of [
+  [-32000,'private credential content',/登录/],
+  [-32603,'429 rate limit private credential content',/额度/],
+  [-32603,'private credential content',/模型.*权限/]
+ ]){
+  const f=fixture((m,q)=>{
+   if(m.method==='session/prompt'){q.push({id:m.id,error:{code,message}});return;}
+   return acp(m,q);
+  });
+  f.data.set('config/connections',{minimax:config});await activate(f.ctx);
+  await assert.rejects(f.services.get('minimax').handler({task:'hello'},{context:{agentId:'a',sceneId:'one'}}));
+  assert.equal(f.writes.filter(v=>v.message.method==='session/prompt').length,1);
+  assert.equal(f.closed(),1);
+  assert.equal(f.events.filter(v=>v.name==='agent.text').length,1);
+  assert.match(f.events[0].value,expected);assert.doesNotMatch(JSON.stringify(f.events),/private|credential/);
+ }
+});
