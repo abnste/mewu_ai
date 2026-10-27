@@ -104,7 +104,10 @@ export default function CommunityExtensions(props: Props) {
     if (value.sourceMigration && (value.sourceMigration.schemaVersion !== 1 || !['migrate', 'migrate-and-install'].includes(value.sourceMigration.operation))) { setError(t('插件迁移协议版本不受支持')); return; }
     await operate(value.manifest.id, async () => { accept(await api.installExtension(value.id, value.sourceMigration?.id)); if (!disposed && proposal()?.id === value.id) setProposal(undefined); });
   }
+  const draftBlocked = (draft: PluginDraft) => draft.validation === 'failed' || draft.validation === 'unavailable';
+  const draftStatus = (draft: PluginDraft) => t(draft.validation === 'passed' ? '服务检查通过' : draft.validation === 'failed' ? '检查未通过' : draft.validation === 'unavailable' ? '检查记录不可用' : '尚未验证');
   async function prepareDraft(draft: PluginDraft) {
+    if (draftBlocked(draft)) return;
     const current = navigation;
     await operate(draft.manifest.id, async () => { const value = await api.preparePluginProject(draft.projectId, draft.sha256); if (!disposed && current === navigation) { setProposal(value); setSelected(value.manifest.id); setConfirmRemoval(false); } });
   }
@@ -122,7 +125,7 @@ export default function CommunityExtensions(props: Props) {
     <Show when={loading()}><div class="plugin-loading"><LoaderCircle size={14} class="spin"/>{t('加载中')}</div></Show>
     <Show when={detail()} fallback={<>
       <Show when={props.pane === 'installed'}><div class="plugins-category-tags" role="group" aria-label={t('插件来源')}><button aria-pressed={origin() === 'community'} onClick={() => setOrigin('community')}>{t('社区')}</button><button aria-pressed={origin() === 'selfmade'} onClick={() => setOrigin('selfmade')}>{t('自制')}</button></div></Show>
-      <Show when={visibleDrafts().length}><div class="plugin-list"><For each={visibleDrafts()}>{draft => <article class="plugin-row"><span class="plugin-glyph"><PluginIcon plugin={draft.manifest} size={24}/></span><div class="plugin-summary"><button class="plugin-name" onClick={() => void prepareDraft(draft)}>{draft.manifest.name}<ChevronRight size={13}/></button><p>{draft.manifest.description}</p></div><button class="secondary-button" disabled={Boolean(busy())} onClick={() => void prepareDraft(draft)}>{t('安装')}</button></article>}</For></div></Show>
+      <Show when={visibleDrafts().length}><div class="plugin-list"><For each={visibleDrafts()}>{draft => <article class="plugin-row"><span class="plugin-glyph"><PluginIcon plugin={draft.manifest} size={24}/></span><div class="plugin-summary"><button class="plugin-name" disabled={draftBlocked(draft)} onClick={() => void prepareDraft(draft)}>{draft.manifest.name}<ChevronRight size={13}/></button><p class="plugin-description">{draft.manifest.description}</p><div class="plugin-tags"><span>{draft.manifest.version}</span><span>{draft.projectId}</span><span>{draftStatus(draft)}</span></div></div><button class="secondary-button" disabled={Boolean(busy()) || draftBlocked(draft)} onClick={() => void prepareDraft(draft)}>{t('安装')}</button></article>}</For></div></Show>
       <div class="plugin-list"><For each={entries()}>{entry => <article class="plugin-row">
         <span class="plugin-glyph"><PluginIcon plugin={entry} source={record(entry.id)?.source} sha256={record(entry.id)?.sha256} size={24}/></span><div class="plugin-summary">
           <button class="plugin-name" onClick={() => open(entry.id)}><span>{entry.name}</span><ChevronRight size={13}/></button>

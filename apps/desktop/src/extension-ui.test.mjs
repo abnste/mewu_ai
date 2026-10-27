@@ -294,6 +294,28 @@ test('failed install retains the reviewed proposal and never reports installed',
   assert.equal(value.proposal().id, 'proposal'); assert.equal(value.records().length, 0); assert.equal(value.error(), 'activation failed'); dispose();
 });
 
+test('self-made drafts expose service checks and cannot prepare failed or unreadable receipts', async () => {
+  const calls=[];
+  const api={extensionNative:true,subscribeExtensions:async()=>()=>{},getExtensions:async()=>[],getExtensionCatalog:async()=>({schemaVersion:2,plugins:[]}),
+    preparePluginProject:async(id,sha)=>{calls.push([id,sha]);return{id:'review',manifest,source:record().source};}};
+  const {value,dispose}=await controller('./components/CommunityExtensions.tsx',api,['prepareDraft','draftStatus','draftBlocked','proposal'],{active:true,pane:'installed',query:'',filter:'',addRequest:0,refreshRequest:0,onDetail(){}});
+  try {
+    await tick();
+    for(const [validation,label] of [['failed','检查未通过'],['unavailable','检查记录不可用']]) {
+      const draft={projectId:'generated',sha256:'a'.repeat(64),manifest,validation};
+      assert.equal(value.draftStatus(draft),label);assert.equal(value.draftBlocked(draft),true);
+      await value.prepareDraft(draft);
+    }
+    assert.equal(calls.length,0);assert.equal(value.proposal(),undefined);
+    for(const [validation,label] of [['untested','尚未验证'],['passed','服务检查通过']]) {
+      const draft={projectId:'generated',sha256:'b'.repeat(64),manifest,validation};
+      assert.equal(value.draftStatus(draft),label);assert.equal(value.draftBlocked(draft),false);
+      await value.prepareDraft(draft);assert.equal(value.proposal().id,'review');
+    }
+    assert.equal(calls.length,2);
+  } finally {dispose();}
+});
+
 test('installed plugins leave the market, disabled plugins stay installed, and removal restores discovery', async () => {
   let receive; const [pane, setPane] = reactive.createSignal('discover');
   const api = { extensionNative: true, subscribeExtensions: async callback => { receive = callback; return () => {}; },

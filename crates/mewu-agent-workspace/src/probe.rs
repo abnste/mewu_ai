@@ -20,6 +20,8 @@ pub struct ProbeCase {
 #[serde(deny_unknown_fields)]
 #[serde(rename_all="camelCase")]
 pub struct ProbeAssertion {
+    /// RFC 6901 JSON Pointer. Empty selects the whole result; /items/0 selects
+    /// an array element. Arrays have no /length property; compare the full array.
     pub path:String,
     /// Exact JSON text: true for a boolean, [1,2] for an array, "text" for a string.
     pub equals_json:String,
@@ -144,11 +146,19 @@ mod tests {
     #[test]fn failed_checks_are_bound_to_exact_project_bytes(){
         let root=tempfile::tempdir().unwrap();let ws=crate::Workspace::open(root.path()).unwrap();
         let saved=ws.save("probe",project("export default ctx=>ctx.services.register({id:'state',title:'State'},()=>false);"),None).unwrap();
+        assert_eq!(saved.validation,crate::DraftValidation::Untested);
         ws.probe_project("probe",&saved.sha256,&cases(json!([{"serviceId":"state","input":{},"assertions":[{"path":"","equals":true}]}])),BTreeMap::new(),json!({}),json!({})).unwrap();
         assert_eq!(ws.service_checks("probe",&saved.sha256).unwrap().unwrap()["passed"],false);
+        assert_eq!(ws.drafts().unwrap()[0].validation,crate::DraftValidation::Failed);
         assert!(ws.package("probe",&saved.sha256).is_err());
         let updated=ws.save("probe",project("export default ctx=>ctx.services.register({id:'state',title:'State'},()=>true);"),Some(&saved.sha256)).unwrap();
         assert!(ws.service_checks("probe",&updated.sha256).unwrap().is_none());
+        assert_eq!(ws.drafts().unwrap()[0].validation,crate::DraftValidation::Untested);
+        ws.probe_project("probe",&updated.sha256,&cases(json!([{"serviceId":"state","input":{},"assertions":[{"path":"","equals":true}]}])),BTreeMap::new(),json!({}),json!({})).unwrap();
+        assert_eq!(ws.drafts().unwrap()[0].validation,crate::DraftValidation::Passed);
+        std::fs::write(root.path().join("plugin-projects/probe/service-checks.json"),json!({"projectSha256":updated.sha256,"result":{"passed":"true"}}).to_string()).unwrap();
+        assert_eq!(ws.drafts().unwrap()[0].validation,crate::DraftValidation::Unavailable);
+        assert!(ws.package("probe",&updated.sha256).is_err());
         assert!(!root.path().join("extensions.db").exists());
     }
     #[test]fn configuration_null_matches_the_production_insert_only_contract(){

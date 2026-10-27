@@ -28,4 +28,4 @@ export interface ExtensionProposal { id: string; manifest: ExtensionManifest; sh
 export interface ExtensionInvocation { pluginId: string; revision: number; serviceId: string; input: unknown; sceneId?: string; regionId?: string; surface?: {action:'mount'} | {action:'call'|'close';id:string}; objectSource?: import('./extension-object-drag').ObjectSource }
 export interface ExtensionBinding { agentId: string; kind: 'agent' | 'memory'; pluginId: string | null; serviceId: string | null; revision: number }
 export type ExtensionControl = 'enable' | 'disable' | 'remove' | 'rollback';
-export interface PluginDraft { projectId: string; sha256: string; manifest: ExtensionManifest }
+export interface PluginDraft { projectId: string; sha256: string; manifest: ExtensionManifest; validation: 'untested' | 'passed' | 'failed' | 'unavailable' }

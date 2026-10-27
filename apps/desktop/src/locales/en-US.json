@@ -1264,5 +1264,9 @@
   "保存快捷键": "Save shortcut",
   "自制": "Self-made",
   "社区": "Community",
-  "插件来源": "Plugin source"
+  "插件来源": "Plugin source",
+  "服务检查通过": "Service checks passed",
+  "检查未通过": "Checks failed",
+  "检查记录不可用": "Check record unavailable",
+  "尚未验证": "Not verified"
 }

@@ -106,7 +106,11 @@ pub struct Draft {
     pub project_id: String,
     pub sha256: String,
     pub manifest: ExtensionManifest,
+    pub validation: DraftValidation,
 }
+#[derive(Debug, Serialize, PartialEq)]
+#[serde(rename_all="lowercase")]
+pub enum DraftValidation { Untested, Passed, Failed, Unavailable }
 #[derive(Debug, Serialize)]
 pub struct SkillFiles { pub files: Vec<String>, pub truncated: bool }
 pub struct Workspace { root: PathBuf }
@@ -221,13 +225,18 @@ impl Workspace {
         let previous = if path.exists() { Some(hash(&read(&path, MAX_PROJECT)?)) } else { None };
         if previous.as_deref() != expected { return Err("工程已变化：先 read，再使用返回的 sha256 作为 expectedSha256".into()); }
         atomic(&path, &bytes)?;
-        Ok(Draft { project_id: id.into(), sha256: hash(&bytes), manifest: project.manifest })
+        let sha256=hash(&bytes);
+        let validation=self.draft_validation(id,&sha256);
+        Ok(Draft { project_id: id.into(), sha256, manifest: project.manifest, validation })
     }
     pub fn drafts(&self) -> Result<Vec<Draft>> {
         let mut drafts = Vec::new();
         for entry in fs::read_dir(self.root.join("plugin-projects")).map_err(|_| "无法读取工程目录")?.take(MAX_PROJECTS) {
             let id = entry.map_err(|_| "无法读取工程")?.file_name().to_string_lossy().into_owned();
-            if let Ok((project, sha256)) = self.read_project(&id) { drafts.push(Draft { project_id: id, sha256, manifest: project.manifest }); }
+            if let Ok((project, sha256)) = self.read_project(&id) {
+                let validation=self.draft_validation(&id,&sha256);
+                drafts.push(Draft { project_id: id, sha256, manifest: project.manifest, validation });
+            }
         }
         drafts.sort_by(|a, b| a.project_id.cmp(&b.project_id)); Ok(drafts)
     }
@@ -257,7 +266,16 @@ impl Workspace {
         let path=self.project_dir(id,false)?.join("service-checks.json");
         if !path.exists(){return Ok(None);}
         let receipt:serde_json::Value=serde_json::from_slice(&read(&path,MAX_PROJECT)?).map_err(|_|"测试记录无效")?;
-        Ok((receipt["projectSha256"]==expected).then_some(receipt["result"].clone()))
+        if receipt["projectSha256"]!=expected{return Ok(None);}
+        if !receipt["result"]["passed"].is_boolean(){return Err("测试记录无效".into());}
+        Ok(Some(receipt["result"].clone()))
+    }
+    fn draft_validation(&self,id:&str,expected:&str)->DraftValidation {
+        match self.service_checks(id,expected) {
+            Ok(None)=>DraftValidation::Untested,
+            Ok(Some(value))=>match value["passed"].as_bool(){Some(true)=>DraftValidation::Passed,Some(false)=>DraftValidation::Failed,None=>DraftValidation::Unavailable},
+            Err(_)=>DraftValidation::Unavailable,
+        }
     }
 }
 
