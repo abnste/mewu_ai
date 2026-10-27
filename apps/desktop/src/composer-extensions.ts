@@ -46,10 +46,13 @@ export function createComposerExtensions(props: { sceneId: () => string; agentId
     if (!known() || pending() || props.busy()) return false;
     const choice = engines().find(v => extensionServiceKey(v) === key);
     if (key && (!choice || choice.unavailableReason)) return false;
-    const current = epoch, agentId = props.agentId(); setPending(true); setError('');
+    const current = epoch, agentId = props.agentId(), sceneId = props.sceneId(); setPending(true); setError('');
     try {
       const values = await api.setExtensionBinding(agentId, 'agent', binding()?.revision, choice ? { pluginId: choice.record.manifest.id, serviceId: choice.service.id } : undefined);
-      if (disposed || epoch !== current) return false;
+      if (disposed || agentId !== props.agentId() || sceneId !== props.sceneId()) return false;
+      // The native event can acknowledge this exact change before the command
+      // resolves. Do not mistake that acknowledgement for another conversation.
+      if (epoch !== current) return selected() === key;
       accept(values); return true;
     } catch (cause) { if (!disposed && epoch === current) setError(cause instanceof Error ? cause.message : String(cause)); return false; }
     finally { if (!disposed && epoch === current) setPending(false); }

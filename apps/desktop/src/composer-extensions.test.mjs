@@ -12,8 +12,8 @@ const deferred=()=>{let resolve;const promise=new Promise(r=>resolve=r);return {
 const record={manifest:{id:'community.engine'},revision:1,state:'enabled',services:[{kind:'agent',id:'engine',title:'Independent',metadata:{modelsService:'models'}},{kind:'service',id:'models'}]};
 const bound={agentId:'a',kind:'agent',pluginId:'community.engine',serviceId:'engine',revision:1};
 const catalog={ok:true,models:[{id:'fast',name:'Fast'}],selectedModelId:'fast',selection:{modelId:'fast'}};
-async function fixture(){
- let events, stopped=false,calls=[],invoke=async()=>catalog;const api={extensionNative:true,subscribeExtensionBindings:async f=>{events=f;return()=>{stopped=true;}},getExtensionBindings:async()=>[bound],setExtensionBinding:async(...args)=>{calls.push(args);return [{...bound,revision:2,pluginId:args[3]?.pluginId??null,serviceId:args[3]?.serviceId??null}];},invokeExtension:async v=>{calls.push(v);return invoke(v);}};
+async function fixture(eventBeforeReply=false){
+ let events, stopped=false,calls=[],invoke=async()=>catalog;const api={extensionNative:true,subscribeExtensionBindings:async f=>{events=f;return()=>{stopped=true;}},getExtensionBindings:async()=>[bound],setExtensionBinding:async(...args)=>{calls.push(args);const result=[{...bound,revision:2,pluginId:args[3]?.pluginId??null,serviceId:args[3]?.serviceId??null}];if(eventBeforeReply)events(result);return result;},invokeExtension:async v=>{calls.push(v);return invoke(v);}};
  const state=await load('./extension-state.ts');await state.link(()=>{throw Error('unexpected import')});await state.evaluate();
  const module=await load('./composer-extensions.ts');await module.link(n=>n==='solid-js'?synthetic(solid):n==='./extension-bridge'?synthetic(api):state);await module.evaluate();
  let value,dispose,setScene,setRecords,setBusy;
@@ -52,3 +52,5 @@ test('busy UI cannot mutate engine or model; malformed and failed catalogs are r
   for(const value of [null,{}, {ok:false,error:'需要登录'}, {...catalog,models:[{id:'x',name:'X'},{id:'x',name:'Y'}]}])assert.throws(()=>f.module.namespace.parseAgentModelCatalog(value));
  }finally{f.dispose();}
 });
+
+test("binding event arriving before command acknowledgement still completes the selection",async()=>{const f=await fixture(true);try{assert.equal(await f.value.selectEngine(''),true);assert.equal(f.value.selected(),'');assert.equal(f.value.pending(),false);}finally{f.dispose();}});
