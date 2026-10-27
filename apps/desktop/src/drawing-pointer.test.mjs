@@ -1066,11 +1066,23 @@ test('actual rich-image JSX retains one loaded SVG image across drawing revision
   const rich=await jsx(await raw('./components/RichDrawingShape.tsx'),{'../drawing-layout-preview':layout,'../drawing-layout-bridge':{getDrawingLayoutPreview:target=>new Promise((resolve,reject)=>jobs.push({target,resolve,reject}))}});
   const [revision,setRevision]=solid.createSignal(0),root=renderer.createElement('root');
   const drawing={id:'picture',kind:'rich',points:[{x:10,y:10},{x:100,y:60}],rich:{layoutId:'immutable',kind:'extracted',width:90,height:50}},asset={id:'source',kind:'image',width:500,height:400};
-  const props={drawing,get context(){return{sceneId:'scene',background:asset,region:{id:'region',x:0,y:0,width:500,height:400,drawingRevision:revision()}};}};
+  const props={drawing,get context(){return{sceneId:'scene',background:asset,region:{id:'region',x:0,y:0,width:500,height:400,drawingRevision:revision(),drawings:[drawing]}};}};
   const dispose=renderer.render(()=>renderer.createComponent(rich.default,props),root);
   await tick();jobs[0].resolve({...jobs[0].target,dataUrl:'synthetic-pixels'});await tick();const node=descendants(root,'image')[0];assert.ok(node);
   for(let i=1;i<=8;i++){setRevision(i);await tick();assert.equal(descendants(root,'image')[0],node);jobs[i].resolve({...jobs[i].target,dataUrl:'synthetic-pixels'});await tick();assert.equal(descendants(root,'image')[0],node);}
   setRevision(9);await tick();jobs[9].reject(Error('native rejected current object'));await tick();assert.equal(descendants(root,'image').length,0);dispose();
+});
+
+test('actual rich JSX never reads an optimistic redo until native snapshot acknowledges it',async()=>{
+  const layout=await pure('./drawing-layout-preview.ts'),jobs=[],errors=[];
+  const rich=await jsx(await raw('./components/RichDrawingShape.tsx'),{'../drawing-layout-preview':layout,'../drawing-layout-bridge':{getDrawingLayoutPreview:target=>new Promise((resolve,reject)=>jobs.push({target,resolve,reject}))}});
+  const drawing={id:'formula',kind:'rich',points:[{x:10,y:10},{x:100,y:60}],rich:{layoutId:'immutable',kind:'formula',width:90,height:50}},asset={id:'source',kind:'image',width:500,height:400};
+  const [document,setDocument]=solid.createSignal({id:'region',x:0,y:0,width:500,height:400,drawingRevision:2,drawings:[]}),root=renderer.createElement('root');
+  const dispose=renderer.render(()=>renderer.createComponent(rich.default,{drawing,get context(){return{sceneId:'scene',background:asset,region:document()};},onError:value=>errors.push(value)}),root);
+  await tick();assert.equal(jobs.length,0);assert.equal(errors.length,0);
+  setDocument({...document(),drawingRevision:3,drawings:[drawing]});await tick();assert.equal(jobs.length,1);assert.equal(jobs[0].target.expectedRevision,3);
+  jobs[0].resolve({...jobs[0].target,dataUrl:'synthetic-pixels'});await tick();assert.equal(descendants(root,'image').length,1);assert.equal(errors.length,0);
+  setDocument({...document(),drawingRevision:4,drawings:[]});await tick();assert.equal(jobs.length,1);assert.equal(descendants(root,'image').length,0);dispose();
 });
 
 

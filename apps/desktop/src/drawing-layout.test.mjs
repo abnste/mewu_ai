@@ -27,6 +27,27 @@ const region = { id: id(2), x: 10, y: 10, width: 300, height: 200, drawingRevisi
 const asset = { id: id(20), name: 'synthetic.png', kind: 'image', path: 'assets/synthetic.png', width: 500, height: 400 };
 const checks = [];
 {
+  const published = [], reads = [], gate = deferred();
+  const reader = new preview.DrawingLayoutReader(value => { reads.push(value); return gate.promise; }, value => published.push(value));
+  const context = { sceneId: id(1), background: asset, region: { ...region, drawings: [], drawingRevision: 8 } };
+  // A redo has already drawn the future object, while the acknowledged document
+  // still contains the empty state produced by undo. No native read may race it.
+  reader.select(preview.richPreviewTarget(context, drawing), preview.richSourceIdentity(context)); await tick();
+  assert.equal(reads.length, 0); assert.deepEqual(published.at(-1), { loading: false });
+  context.region = { ...region, drawingRevision: 9 };
+  const committed = preview.richPreviewTarget(context, drawing);
+  reader.select(committed, preview.richSourceIdentity(context)); await tick();
+  assert.equal(reads.length, 1); assert.equal(reads[0].expectedRevision, 9);
+  gate.resolve(receipt(committed)); await tick(); assert.equal(published.at(-1).preview.drawingId, drawing.id);
+  // Same id with a different rich resource is also only an optimistic draft.
+  assert.equal(preview.richPreviewTarget(context, { ...drawing, rich: { ...reference, layoutId: id(99) } }), undefined);
+  context.region = { ...region, drawings: [], drawingRevision: 10 };
+  reader.select(preview.richPreviewTarget(context, drawing), preview.richSourceIdentity(context)); await tick();
+  assert.deepEqual(published.at(-1), { loading: false }); assert.equal(reads.length, 1);
+  reader.dispose();
+  checks.push('Optimistic rich redo waits for acknowledged membership/reference and reads the committed revision without a transient missing-layer error');
+}
+{
   assert.deepEqual(preview.validateLayoutPreview(receipt(), target), receipt());
   for (const bad of [
     { ...receipt(), sceneId: id(30) }, { ...receipt(), expectedRevision: 8 },

@@ -28,6 +28,7 @@ test('image document coordinates stay in source pixels, independent from scene b
 test('rich image preview binds explicit item and source identities and cannot collide with a region request',()=>{
   const reference={layoutId:'44444444-4444-4444-8444-444444444444',layoutSha256:'a'.repeat(64),rasterSha256:'b'.repeat(64),kind:'formula',width:200,height:40};
   const value=item(),region=images.imageAnnotationRegion(value),drawing={id:'55555555-5555-4555-8555-555555555555',kind:'rich',rich:reference};
+  region.drawings=[drawing];
   const image=rich.richPreviewTarget({sceneId:scene,background:value.asset,region,imageItemId:id},drawing),capture=rich.richPreviewTarget({sceneId:scene,background:value.asset,region},drawing);
   assert.equal(rich.validLayoutTarget(image),true);assert.equal(rich.validLayoutTarget(capture),true);assert.notEqual(rich.layoutRequestKey(image,''),rich.layoutRequestKey(capture,''));
   assert.equal(rich.validLayoutTarget({...image,imageItemId:scene}),false);assert.equal(rich.validLayoutTarget({...image,sourceAssetId:undefined}),false);assert.equal(rich.validLayoutTarget({...capture,sourceAssetId:source}),false);

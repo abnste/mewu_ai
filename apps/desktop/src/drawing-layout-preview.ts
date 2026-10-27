@@ -13,6 +13,11 @@ export function richSourceIdentity(context: RichDrawingContext): string {
 }
 export function richPreviewTarget(context: RichDrawingContext, drawing: Drawing): DrawingLayoutTarget | undefined {
   if (drawing.kind !== 'rich' || !drawing.rich) return;
+  // Undo/redo renders its optimistic geometry before native persistence finishes.
+  // A preview read is valid only for the acknowledged document, not that future
+  // geometry. Its revision/membership update will reactively schedule the read.
+  const saved = context.region.drawings?.find(value => value.id === drawing.id);
+  if (saved?.kind !== 'rich' || !saved.rich || !sameRichReference(saved.rich, drawing.rich)) return;
   return { sceneId: context.sceneId, regionId: context.region.id, drawingId: drawing.id, expectedRevision: context.region.drawingRevision ?? 0, reference: { ...drawing.rich }, ...(context.imageItemId ? {imageItemId: context.imageItemId, sourceAssetId: context.background.id} : {}) };
 }
 const maxPngBytes = 8 * 1024 * 1024, prefix = 'data:image/png;base64,';
