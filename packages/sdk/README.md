@@ -10,7 +10,7 @@ Mewu API 插件运行在独立 QuickJS worker 中。宿主提供 SDK 模块，�
 ```sh
 npm init -y
 npm pkg set type=module
-npm install --save-dev --ignore-scripts --no-audit --no-fund https://github.com/abnste/mewu-plugins/releases/download/v0.1.0/mewu-sdk-0.1.0.tgz
+npm install --save-dev --ignore-scripts --no-audit --no-fund https://github.com/abnste/mewu-plugins/releases/download/v0.2.2/mewu-sdk-0.2.2.tgz
 ```
 
 运行时 SDK 由 Mewu 提供；不要把 `node_modules` 放入插件包。打包、自己的 GitHub Release 和社区 PR 流程见 [作者指南](https://github.com/abnste/mewu_ai/blob/master/tools/extension-market/README.md#from-an-independent-project-to-a-market-pr)。
@@ -154,3 +154,7 @@ Agent 注册描述可声明 `metadata: {modelsService: "models"}`。该 ID 必�
 宿主在发送期间禁止切换，切换会话、卸载、停用、升级后丢弃迟到目录；认证、模型探测及保存均由插件完成。仅注册目录不表示账号有权限或余额，首次实际请求仍可能失败。
 
 `process.installation-search` 能力允许 `ctx.processes.resolve(candidates, files, searches)` 的第三个可选参数：`[{root:"${localAppData}/Vendor/App/bin", relativePath:"client.exe"}]`。只检查明确根目录的一级版本子目录，不递归扫描磁盘、不解释 shell 或通配符；按修改时间从新到旧检测，每个根最多读取 256 项、选取 8 个版本，最多 8 个根。路径规则属于插件；宿主不包含厂商目录。旧宿主未声明该能力时不得发送 `searches`。手动配置必须保留，不因自动发现结果而被覆盖。
+
+### 工具条布局服务（Mewu 1.0.11+）
+
+通过 `toolbar-layout` 服务重排原有截图工具条按钮，设置与顺序由插件保存；停用后恢复默认顺序，不替换原有按钮事件。完整输入、返回值及稳定按钮 ID 见[布局协议](../../docs/plugin-toolbar-layout.md)。内置 Agent 的技能和插件工程工作流见[制作协议](../../docs/agent-skills.md)。

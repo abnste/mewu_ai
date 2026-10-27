@@ -3,7 +3,7 @@
   "hostApi": 2,
   "runtime": "javascript",
   "id": "abnste.agent-connectors",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "name": "外部 Agent",
   "description": "在原对话条接入 Codex、MiniMax Code、WorkBuddy / CodeBuddy 和 Hermes，并在设置中管理和检测连接。",
   "publisher": "Mewu",

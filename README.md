@@ -40,6 +40,7 @@
 - **Blackboard:** draw and explain on a full-screen board, combining questions, formulas, and AI analysis. A setting lets screen-sharing apps see selections and annotations.
 - **CLI and region AI operations:** local Agents can inspect scenes, capture, add selections, draw, and export. The region plugin lets a model observe a selected target, act, and check a fresh screenshot before continuing.
 - **Plugins and event triggers:** extend Agents, memory, tools, and UI independently. Official Hooks supports schedules, prompts, completed replies, global shortcuts, and app/plugin events, connecting Mewu operations, MCP, commands, and keyboard/mouse actions.
+- **Skills and self-made plugins:** the built-in Agent can read portable `SKILL.md` skills, create and validate plugin projects, and prepare an installable package. Review permissions before installation under Installed → Self-made. Plugins can reorder the original screenshot toolbar through the [generic layout service](./docs/plugin-toolbar-layout.md). See [skills and authoring](./docs/agent-skills.md).
 
 Capture, drawing, and recording work without AI setup. AI conversations, translation, and generated content require a configured service.
 
