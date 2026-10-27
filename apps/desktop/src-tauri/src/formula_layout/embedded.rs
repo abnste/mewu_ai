@@ -108,7 +108,7 @@ fn expand(directory: &Path, font: &EmbeddedFont) -> Result<(), String> {
 }
 
 pub(super) fn prepare(app_owned_root: PathBuf) -> Result<Resources, String> {
-    if !cfg!(windows) {
+    if !cfg!(any(windows, target_os = "macos", target_os = "linux")) {
         return Err("formula_worker_platform_unsupported".into());
     }
     let _serial = PREPARATION.lock().map_err(|_| "formula_font_preparation")?;
@@ -122,32 +122,63 @@ pub(super) fn prepare(app_owned_root: PathBuf) -> Result<Resources, String> {
         expand(&fonts, font)?;
     }
     let (jobs, _jobs_pin) = directory(&cache, "jobs")?;
-    let windows =
-        PathBuf::from(std::env::var_os("SystemRoot").unwrap_or_else(|| "C:/Windows".into()));
-    if !windows.is_absolute() {
-        return Err("formula_system_font_path".into());
-    }
-    let system_fonts = windows.join("Fonts");
-    let _system_pin = fonts::pin_directory(&system_fonts)?;
-    // Primary is host-installed only. Missing glyphs remain explicit; fallback
-    // outlines do not imply that we distribute, approve or copy system fonts.
-    let unicode = [
-        "msyh.ttc",
-        "msyh.ttf",
-        "simhei.ttf",
-        "simsun.ttc",
-        "segoeui.ttf",
-    ]
-    .iter()
-    .map(|name| system_fonts.join(name))
-    .find(|path| fonts::pin_file(path, 64 * 1024 * 1024).is_ok())
-    .ok_or("formula_system_font_missing")?;
+    let unicode = system_unicode_font()?;
     Resources::new(fonts, unicode, jobs)
+}
+
+fn system_unicode_font() -> Result<PathBuf, String> {
+    #[cfg(windows)]
+    let candidates = {
+        let windows =
+            PathBuf::from(std::env::var_os("SystemRoot").unwrap_or_else(|| "C:/Windows".into()));
+        if !windows.is_absolute() {
+            return Err("formula_system_font_path".into());
+        }
+        let system_fonts = windows.join("Fonts");
+        let _system_pin = fonts::pin_directory(&system_fonts)?;
+        // Primary is host-installed only. Missing glyphs remain explicit; fallback
+        // outlines do not imply that we distribute, approve or copy system fonts.
+        [
+            "msyh.ttc",
+            "msyh.ttf",
+            "simhei.ttf",
+            "simsun.ttc",
+            "segoeui.ttf",
+        ]
+        .iter()
+        .map(|name| system_fonts.join(name))
+        .collect::<Vec<_>>()
+    };
+    #[cfg(target_os = "macos")]
+    let candidates = crate::font_macos::font_paths()?;
+    #[cfg(target_os = "linux")]
+    let candidates = super::font_linux::paths()?;
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
+    let candidates: Vec<PathBuf> = Vec::new();
+    candidates
+        .into_iter()
+        .find(|path| fonts::pin_file(path, 64 * 1024 * 1024).is_ok())
+        .ok_or_else(|| "formula_system_font_missing".into())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn installed_resources_expand_and_revalidate_on_this_platform() {
+        let root = tempfile::tempdir().unwrap();
+        let root = root.path().canonicalize().unwrap();
+        let first = prepare(root.clone()).unwrap();
+        let pinned = fonts::pin_fonts(&first.font_directory, &first.unicode_font).unwrap();
+        let second = prepare(root).unwrap();
+        assert_eq!(first.font_directory, second.font_directory);
+        assert_eq!(
+            pinned.primary_sha256,
+            fonts::pin_fonts(&second.font_directory, &second.unicode_font)
+                .unwrap()
+                .primary_sha256
+        );
+    }
     #[test]
     fn every_embedded_file_matches_inventory_and_license_pin() {
         assert_eq!(EMBEDDED.len(), 19);

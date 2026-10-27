@@ -4996,7 +4996,6 @@ dependencies = [
 [[package]]
 name = "ratex-unicode-font"
 version = "0.1.14"
-source = "git+https://github.com/erweixin/RaTeX?rev=776c1d37bafa3bf445a0ab9377c55fe77f7a0133#776c1d37bafa3bf445a0ab9377c55fe77f7a0133"
 dependencies = [
  "fontdb 0.23.0",
  "system-fonts",

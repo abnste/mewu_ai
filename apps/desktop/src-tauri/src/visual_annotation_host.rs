@@ -744,7 +744,7 @@ fn parse_plan(arguments: &str, input: &VerifiedVisualInput) -> Result<ParsedBatc
 }
 
 // An actual MiniMax M3 response serialized numeric fields as JSON strings and
-// point arrays as {"item":...}. Decode only those observed representations;
+// point/table arrays as {"item":...}. Decode only those observed representations;
 // the original target, unit, field, size and geometry checks still run below.
 fn minimax_object_wire(value: &mut Value, root: &str) -> Result<(), Rejection> {
     fn number(value: &mut Value) -> Result<(), String> {
@@ -805,6 +805,36 @@ fn minimax_object_wire(value: &mut Value, root: &str) -> Result<(), Rejection> {
                         }
                     }
                 }
+            }
+        }
+    }
+    if let Some(table) = object.get_mut("table").and_then(Value::as_object_mut) {
+        if let Some(version) = table.get_mut("version") {
+            number(version).map_err(|error| {
+                Rejection::field(error, format!("{root}/table/version"), DiagnosticReason::Data)
+            })?;
+        }
+        // Observed M3.1 Flash table output wraps every array, including each row.
+        // Only unwrap an exact one-key object containing an array. Do not invent
+        // cells, turn scalars into arrays or discard extra fields; the normal
+        // schema and table bounds checks remain authoritative after decoding.
+        fn array(value: &mut Value, path: String) -> Result<(), Rejection> {
+            if let Some(wrapper) = value.as_object_mut() {
+                if wrapper.len() != 1 || !wrapper.get("item").is_some_and(Value::is_array) {
+                    return Err(Rejection::field("表格数组格式无效", path, DiagnosticReason::Data));
+                }
+                *value = wrapper.remove("item").expect("checked table array");
+            }
+            Ok(())
+        }
+        for field in ["header", "rows", "align"] {
+            if let Some(value) = table.get_mut(field) {
+                array(value, format!("{root}/table/{field}"))?;
+            }
+        }
+        if let Some(rows) = table.get_mut("rows").and_then(Value::as_array_mut) {
+            for (index, row) in rows.iter_mut().enumerate() {
+                array(row, format!("{root}/table/rows/{index}"))?;
             }
         }
     }

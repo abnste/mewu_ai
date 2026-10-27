@@ -44,7 +44,7 @@ pub(crate) enum Worker {
 }
 impl Worker {
     fn admitted(self)->bool {
-        matches!(self, Self::Recording | Self::VideoClip) || cfg!(feature="linux-worker-tests")
+        matches!(self, Self::Recording | Self::VideoClip | Self::Formula) || cfg!(feature="linux-worker-tests")
     }
     pub fn flag(self) -> &'static str {
         match self {
@@ -609,7 +609,8 @@ mod production_tests {
     fn production_bootstrap_admission_keeps_unimplemented_domains_closed(){
         assert!(Worker::Recording.admitted());
         assert!(Worker::VideoClip.admitted());
-        for worker in [Worker::Code,Worker::Formula,Worker::Snapshot,Worker::Speech]{
+        assert!(Worker::Formula.admitted());
+        for worker in [Worker::Code,Worker::Snapshot,Worker::Speech]{
             assert!(!worker.admitted());
             assert_eq!(TrustedCommand::new(worker).err().unwrap().kind(),io::ErrorKind::PermissionDenied);
             assert_eq!(bootstrap(worker,-1,-1,Instant::now()).unwrap_err().kind(),io::ErrorKind::PermissionDenied);
@@ -617,6 +618,7 @@ mod production_tests {
         // Production admission never grants an invalid/missing PID1 bridge.
         assert_eq!(bootstrap(Worker::Recording,-1,-1,Instant::now()).unwrap_err().kind(),io::ErrorKind::PermissionDenied);
         assert_eq!(bootstrap(Worker::VideoClip,-1,-1,Instant::now()).unwrap_err().kind(),io::ErrorKind::PermissionDenied);
+        assert_eq!(bootstrap(Worker::Formula,-1,-1,Instant::now()).unwrap_err().kind(),io::ErrorKind::PermissionDenied);
     }
     fn closed_bridge()->Bridge{
         let (socket,peer)=UnixStream::pair().unwrap();socket.set_nonblocking(true).unwrap();drop(peer);

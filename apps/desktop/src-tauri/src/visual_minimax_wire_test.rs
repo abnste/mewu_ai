@@ -2,6 +2,40 @@
 //! Observed synthetic MiniMax response; no credentials, network or UI.
 use super::*;
 
+#[test]
+fn observed_table_array_wrappers_decode_without_changing_cells_or_weakening_validation() {
+    let input = super::tests::normalized_input();
+    let scope = super::tests::scope(input.clone()).for_connection(&profile());
+    let wire = json!({"groups":[{"target":input.manifest().targets[0].handle,
+        "coordinateSpace":"normalized1000","styleUnit":"encodedPixels","objects":[{
+        "kind":"table","points":[{"x":690,"y":775},{"x":975,"y":940}],
+        "table":{"version":"1","header":{"item":["x","y"]},
+        "rows":{"item":[{"item":["1","2"]},{"item":["2","4"]}]},
+        "align":{"item":["left","right"]}}}]}]});
+    assert!(parse_plan(&wire.to_string(), &input).is_err());
+    let plan = scope.parse_plan(&wire.to_string()).unwrap();
+    let ParsedObject::Rich { content: RichContent::Table { header, rows, .. }, .. } = &plan.groups[0].objects[0] else {
+        panic!("expected a validated table");
+    };
+    assert_eq!(header, &["x", "y"]);
+    assert_eq!(rows, &[vec!["1", "2"], vec!["2", "4"]]);
+    for (path, value) in [
+        ("/table/version", json!("2")),
+        ("/table/version", json!("1.0")),
+        ("/table/align", json!({"item":"left"})),
+        ("/table/align", json!({"item":["left","right"],"extra":true})),
+        ("/table/align", json!({"item":["left"]})),
+        ("/table/header", json!({"item":[1,2]})),
+        ("/table/rows", json!({"item":[{"item":["1"]}]})),
+        ("/table/rows", json!({"item":[{"item":["1","2"],"extra":true}]})),
+        ("/table/rows", json!({"item":[{"item":[1,2]}]})),
+    ] {
+        let mut bad = wire.clone();
+        *bad["groups"][0]["objects"][0].pointer_mut(path).unwrap() = value;
+        assert!(scope.parse_plan(&bad.to_string()).is_err(), "accepted {path}");
+    }
+}
+
 fn profile() -> mewu_core::ConnectionProfile {
     mewu_core::ConnectionProfile {
         id: uuid::Uuid::new_v4().to_string(),

@@ -36,6 +36,34 @@ const ALLOW_VALUE: &str = "one-request-doubao-260628";
 const ONCE_MARKER: &str = "doubao-260628-real-request-reserved.once";
 const PROMPT: &str = "请在图片中完成两件事：计算题目，把答案写在蓝色空框内部；用红色矩形沿橙色框的外缘圈出它。通过 visual_annotate 一次提交全部图元。保留图片原有内容。不在文字回复中代替图上作答。";
 
+/// Capture one real synthetic table invocation for provider compatibility
+/// diagnosis. Never executes that invocation or changes a user's conversation.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "explicit real model request; synthetic table only, private output and once marker"]
+async fn real_table_arguments_observation() -> Result<()> {
+    require(std::env::var("MEWU_PROBE_ALLOW_HTTP").ok().as_deref() == Some("synthetic-table-wire"), "需要显式允许真实测试")?;
+    let output = PathBuf::from(std::env::var_os("MEWU_PROBE_OUTPUT").ok_or("缺少测试输出目录")?).canonicalize().map_err(error)?;
+    let private = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../.private").canonicalize().map_err(error)?;
+    require(output.starts_with(private), "测试输出必须位于私有目录")?;
+    let data = PathBuf::from(std::env::var_os("MEWU_PROBE_DATA_ROOT").ok_or("缺少数据目录")?);
+    let id = std::env::var("MEWU_PROBE_MINIMAX_PROFILE_ID").map_err(error)?;
+    let model = std::env::var("MEWU_PROBE_MODEL").map_err(error)?;
+    let profile = selected_profile_at_schema_read_only(&data, &id, &model, i64::from(STORAGE_SCHEMA_VERSION))?;
+    let transport = connection_host::transport_for(&profile)?;
+    let f = fixture_with_profile(output.clone(), &profile, VisualCoordinateProfile::ExplicitNormalized1000V2)?;
+    let mut body = f.body;
+    body["messages"].as_array_mut().ok_or("缺少消息")?.push(json!({"role":"user","content":"忽略图片中的题目。本次只创建一个kind=table对象：两列x和y，两行1,2以及2,4；table.version为整数1，header为字符串数组，rows为二维字符串数组，align必须是[\"left\",\"right\"]数组。按工具schema提交，覆盖图片右下方空白区域，points必须有两个对角点。只调用visual_annotate，不创建其他图元。"}));
+    let key = credentials::read_profile(&data, &profile).map_err(|_| "测试凭据读取失败")?;
+    let marker = output.join("request.once");
+    let turn = tokio::time::timeout(Duration::from_secs(90), provider_transport::stream_turn_before_send(&transport, &key, body, |_| {}, || {
+        OpenOptions::new().write(true).create_new(true).open(&marker).map_err(error)?;
+        Ok(())
+    })).await.map_err(|_| "测试请求超时，不重发")??;
+    let calls: Vec<_> = turn.tool_calls.iter().map(|call| json!({"name":call.name,"arguments":call.arguments})).collect();
+    write_json(&output.join("synthetic-tool-arguments.json"), &calls)?;
+    require(!calls.is_empty(), "模型没有返回工具调用，原失败保留")
+}
+
 fn uid() -> String {
     uuid::Uuid::new_v4().to_string()
 }

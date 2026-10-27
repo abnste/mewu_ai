@@ -48,6 +48,11 @@ pub(super) fn pin_directory(path: &Path) -> Result<File, String> {
     }
     let mut options = OpenOptions::new();
     options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_DIRECTORY);
+    }
     #[cfg(windows)]
     {
         use std::os::windows::fs::OpenOptionsExt;
@@ -64,6 +69,11 @@ pub(super) fn pin_directory(path: &Path) -> Result<File, String> {
 pub(super) fn pin_file(path: &Path, maximum: u64) -> Result<File, String> {
     let mut options = OpenOptions::new();
     options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK);
+    }
     #[cfg(windows)]
     {
         use std::os::windows::fs::OpenOptionsExt;
@@ -88,8 +98,9 @@ pub(super) fn read_bounded(mut file: &File, maximum: u64) -> Result<Vec<u8>, Str
     Ok(bytes)
 }
 
-/// These real handles must remain owned by the process permit until child+Job+IO
-/// have exited. Files cannot be replaced while the renderer reopens their paths.
+/// Retain handles until the child and IO exit. Windows denies replacement;
+/// Unix rejects symlinks and independently verifies bytes in the child. An open
+/// Unix descriptor does not by itself lock a pathname against replacement.
 pub(super) struct PinnedFonts {
     _directory: File,
     _files: Vec<File>,
@@ -193,18 +204,13 @@ fn face(
 /// Discovery/load happens inside the worker deadline. This is not an OS RAM cap
 /// or a redistribution approval for installed fonts.
 pub(super) fn snapshot(primary_sha256: &str) -> Result<FontIdentity, String> {
-    let primary = face(
-        ratex_unicode_font::unicode_font_data_ref(),
-        ratex_unicode_font::unicode_font_face_index(),
-    )?;
-    let secondary = face(
-        ratex_unicode_font::fallback_font_data_ref(),
-        ratex_unicode_font::fallback_font_face_index(),
-    )?;
-    let emoji = face(
-        ratex_unicode_font::emoji_font_data_ref(),
-        ratex_unicode_font::emoji_font_face_index(),
-    )?;
+    let loaded = ratex_unicode_font::loaded_font_snapshot();
+    let observed = |entry: Option<(&ratex_unicode_font::FontData, u32)>| {
+        face(entry.map(|v| v.0), entry.map(|v| v.1))
+    };
+    let primary = observed(loaded[0])?;
+    let secondary = observed(loaded[1])?;
+    let emoji = observed(loaded[2])?;
     if primary
         .as_ref()
         .is_none_or(|face| face.sha256 != primary_sha256)
@@ -230,6 +236,24 @@ pub(super) fn snapshot(primary_sha256: &str) -> Result<FontIdentity, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    #[test]
+    fn unix_font_pins_reject_symlinks_for_files_and_directories() {
+        use std::os::unix::fs::symlink;
+        let root = tempfile::tempdir().unwrap();
+        let file = root.path().join("font.ttf");
+        fs::write(&file, b"synthetic").unwrap();
+        let link = root.path().join("linked.ttf");
+        symlink(&file, &link).unwrap();
+        assert!(pin_file(&link, 64).is_err());
+        let dir = root.path().join("linked-dir");
+        symlink(root.path(), &dir).unwrap();
+        assert!(pin_directory(&dir).is_err());
+        assert_eq!(
+            read_bounded(&pin_file(&file, 64).unwrap(), 64).unwrap(),
+            b"synthetic"
+        );
+    }
     #[test]
     fn inventory_bytes_and_unique_filenames_are_pinned() {
         let bytes = include_bytes!("../../resources/formula/fonts/inventory.json");

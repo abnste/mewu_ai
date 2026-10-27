@@ -3,6 +3,8 @@
 //! Only the host can supply Resources and turn this verified result into a core layout.
 mod embedded;
 mod fonts;
+#[cfg(target_os = "linux")]
+mod font_linux;
 mod protocol;
 mod render;
 mod supervise;

@@ -1438,7 +1438,7 @@ Reproduce with Cargo, Node.js, and ripgrep on PATH, after npm ci: node apps/desk
 - Cargo ratex-parser@0.1.14: https://github.com/erweixin/RaTeX?rev=776c1d37bafa3bf445a0ab9377c55fe77f7a0133#776c1d37bafa3bf445a0ab9377c55fe77f7a0133
 - Cargo ratex-svg@0.1.14: https://github.com/erweixin/RaTeX?rev=776c1d37bafa3bf445a0ab9377c55fe77f7a0133#776c1d37bafa3bf445a0ab9377c55fe77f7a0133
 - Cargo ratex-types@0.1.14: https://github.com/erweixin/RaTeX?rev=776c1d37bafa3bf445a0ab9377c55fe77f7a0133#776c1d37bafa3bf445a0ab9377c55fe77f7a0133
-- Cargo ratex-unicode-font@0.1.14: https://github.com/erweixin/RaTeX?rev=776c1d37bafa3bf445a0ab9377c55fe77f7a0133#776c1d37bafa3bf445a0ab9377c55fe77f7a0133
+- Cargo ratex-unicode-font@0.1.14: https://github.com/erweixin/RaTeX?rev=776c1d37bafa3bf445a0ab9377c55fe77f7a0133#776c1d37bafa3bf445a0ab9377c55fe77f7a0133; local adaptation in vendor/ratex-unicode-font-0.1.14 adds a read-only snapshot of loaded fonts. Upstream MIT license and authorship retained.
 - Cargo raw-window-handle@0.6.2: https://crates.io/crates/raw-window-handle/0.6.2
 - Cargo rayon-core@1.13.0: https://crates.io/crates/rayon-core/1.13.0
 - Cargo rayon@1.12.0: https://crates.io/crates/rayon/1.12.0

@@ -265,7 +265,7 @@ pub(super) fn run(
     if cancel.is_cancelled() {
         return Err("formula_cancelled".into());
     }
-    if !cfg!(windows) {
+    if !cfg!(any(windows, target_os = "macos", target_os = "linux")) {
         return Err("formula_worker_platform_unsupported".into());
     }
     let permit = Permit::acquire(cancel.clone())?;
@@ -281,7 +281,7 @@ pub(super) fn run_embedded(
     if cancel.is_cancelled() {
         return Err("formula_cancelled".into());
     }
-    if !cfg!(windows) {
+    if !cfg!(any(windows, target_os = "macos", target_os = "linux")) {
         return Err("formula_worker_platform_unsupported".into());
     }
     // Include lazy resource extraction in the native work/exit-observation slot.
@@ -349,9 +349,19 @@ fn run_owned(
     if cancel.is_cancelled() {
         return Err("formula_cancelled".into());
     }
+    let mut deadline = Instant::now() + Duration::from_secs(5);
+    #[cfg(not(target_os = "linux"))]
     let mut command = Command::new(worker_executable()?);
+    #[cfg(not(target_os = "linux"))]
+    command.arg("--formula-layout-worker");
+    #[cfg(target_os = "linux")]
+    let mut command = crate::owned_process::linux_worker::TrustedCommand::new(
+        crate::owned_process::linux_worker::Worker::Formula,
+    )
+    .map_err(|_| "formula_spawn_or_job_failed")?;
+    #[cfg(target_os = "linux")]
+    command.env_clear();
     command
-        .arg("--formula-layout-worker")
         .env_remove("RATEX_UNICODE_FONT")
         .env("RATEX_UNICODE_FONT", &held.fonts.unicode_font)
         .stdin(Stdio::piped())
@@ -362,8 +372,12 @@ fn run_owned(
         use std::os::windows::process::CommandExt;
         command.creation_flags(0x08000000);
     }
+    #[cfg(not(target_os = "linux"))]
     let mut child =
         ManagedProcess::spawn(&mut command, permit).map_err(|_| "formula_spawn_or_job_failed")?;
+    #[cfg(target_os = "linux")]
+    let mut child = ManagedProcess::spawn_trusted(command, permit, deadline, &cancel.0.cancelled)
+        .map_err(|_| "formula_spawn_or_job_failed")?;
     cancel.0.worker_started.store(true, Ordering::Release);
     // The existing ManagedProcess attaches the kill-on-close Job first. No
     // renderer input is written before that attachment succeeds.
@@ -395,7 +409,6 @@ fn run_owned(
             .spawn(move || reader(stdout, sender))
             .map_err(|_| "formula_output_thread")?,
     );
-    let mut deadline = Instant::now() + Duration::from_secs(5);
     let mut identity = None;
     let mut result = None;
     let mut done = false;
@@ -576,7 +589,7 @@ fn verify_png(directory: &Path, metrics: &Metrics) -> Result<Vec<u8>, String> {
 }
 
 pub(super) fn worker() -> Result<(), String> {
-    if !cfg!(windows) {
+    if !cfg!(any(windows, target_os = "macos", target_os = "linux")) {
         return Err("formula_worker_platform_unsupported".into());
     }
     let mut bytes = Vec::new();
@@ -612,15 +625,18 @@ pub(super) fn worker() -> Result<(), String> {
     if pinned.primary_sha256 != config.primary_sha256 {
         return Err("formula_primary_font_mismatch".into());
     }
+    // Load the explicitly selected primary; all other fonts remain lazy.
+    // Capture actual renderer-used fallback bytes only after rendering. Merely
+    // checking identity must not load Apple's large emoji TTC for plain math.
+    let _ = ratex_unicode_font::unicode_font_data_ref();
+    let result = render::execute(&config);
     let identity = Identity {
         renderer_id: RENDERER_ID.into(),
         fonts: fonts::snapshot(&config.primary_sha256)?,
         style: StyleIdentity::for_input(&config.input),
     };
     emit(&Event::Ready { identity })?;
-    emit(&Event::Result {
-        result: render::execute(&config),
-    })?;
+    emit(&Event::Result { result })?;
     emit(&Event::Done {})
 }
 fn emit(event: &Event) -> Result<(), String> {

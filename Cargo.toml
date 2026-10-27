@@ -9,6 +9,9 @@ glib = { path = "vendor/glib-0.18.5" }
 # Exact upstream installer/signature implementation; only adds in-memory release data.
 tauri-plugin-updater = { path = "vendor/tauri-plugin-updater-2.13.2" }
 
+[patch."https://github.com/erweixin/RaTeX"]
+ratex-unicode-font = { path = "vendor/ratex-unicode-font-0.1.14" }
+
 [profile.release]
 codegen-units = 1
 lto = "thin"
