@@ -523,7 +523,7 @@ impl Store {
         run: &str,
         input: ModelDispatchInput,
     ) -> Result<DispatchLease> {
-        if input.round >= 6 || !j::hash_valid(&input.projected_request_sha256) {
+        if input.round >= crate::MAX_AGENT_MODEL_ROUNDS || !j::hash_valid(&input.projected_request_sha256) {
             return Err(j::bad("模型请求记录无效"));
         }
         self.journal_transaction(|db, state| {

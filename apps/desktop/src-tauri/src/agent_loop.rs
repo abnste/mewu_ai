@@ -11,8 +11,8 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{collections::HashSet, future::Future, sync::Arc, time::Duration};
 
-const MAX_ROUNDS: usize = 6;
-const MAX_CALLS: usize = 16;
+const MAX_ROUNDS: usize = mewu_core::MAX_AGENT_MODEL_ROUNDS as usize;
+const MAX_CALLS: usize = 32;
 const MAX_TOOL_OUTPUT: usize = 128 * 1024;
 const MAX_TOTAL_TOOL_OUTPUT: usize = 512 * 1024;
 const RUN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
@@ -1368,7 +1368,7 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn round_and_call_budgets_stop_before_dispatching_an_excess_batch() {
-        let responses = (0..6)
+        let responses = (0..MAX_ROUNDS)
             .map(|index| calls(&[&format!("call{index}")], "remember", ""))
             .collect();
         let fixture = Fixture::new(responses);
@@ -1387,12 +1387,9 @@ mod tests {
         .await
         .unwrap_err()
         .contains("轮次上限"));
-        assert_eq!(executed, 5);
-        let fixture = Fixture::new(vec![
-            calls(&["a", "b", "c", "d", "e", "f", "g", "h"], "remember", ""),
-            calls(&["i", "j", "k", "l", "m", "n", "o", "p"], "remember", ""),
-            calls(&["q"], "remember", ""),
-        ]);
+        assert_eq!(executed, MAX_ROUNDS - 1);
+        let ids: Vec<String> = (0..=MAX_CALLS).map(|index|format!("batch-{index}")).collect();
+        let fixture = Fixture::new(ids.chunks(8).map(|chunk|calls(&chunk.iter().map(String::as_str).collect::<Vec<_>>(),"remember","")).collect());
         let mut executed = 0;
         assert!(run(
             fixture.url.clone(),
@@ -1408,7 +1405,16 @@ mod tests {
         .await
         .unwrap_err()
         .contains("次数上限"));
-        assert_eq!(executed, 16);
+        assert_eq!(executed, MAX_CALLS);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn authoring_can_read_validate_correct_and_package_after_six_rounds() {
+        let mut responses: Vec<_> = (0..7).map(|index|calls(&[&format!("step-{index}")],"remember","")).collect();
+        responses.push(final_text("工程已准备"));
+        let fixture=Fixture::new(responses); let mut executed=0;
+        let answer=run(fixture.url.clone(),"",body(),tools(),|_|{},|_|{executed+=1;async {Ok(json!({"ok":true}))}}).await.unwrap();
+        assert_eq!(answer,"工程已准备"); assert_eq!(executed,7);
     }
 
     #[tokio::test(flavor = "current_thread")]

@@ -26,6 +26,11 @@ and complete JavaScript module graph without executing it. Errors return to
 the model. Source projects live in `plugin-projects/` in the same data directory.
 Transport supports bounded tool arguments up to 512 KiB; each operation applies
 its own smaller payload/schema limits. An incomplete model stream never runs.
+Authoring arguments derive their JSON Schema from the same types used by the
+validator; invalid input returns its field path and expected type to the model.
+The native workflow permits 12 model rounds and 32 executed tool calls within
+the existing time and output budgets. The execution loop and durable journal
+share the round limit; work already saved remains available if a run stops.
 
 Preparing a project produces a normal plugin ZIP in **插件 → 已安装 → 自制**.
 It does not mean the package has been installed or its interaction tested.

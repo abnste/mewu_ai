@@ -706,7 +706,7 @@ pub(crate) fn validate(db: &Connection, state: &Snapshot) -> Result<()> {
             || row.get::<_, i64>(1)? != seq
             || e.summary.sequence != seq as u64
             || seq > 64
-            || e.summary.round >= 6
+            || e.summary.round >= crate::MAX_AGENT_MODEL_ROUNDS
         {
             return Err(bad("执行回执序号无效"));
         }
@@ -818,7 +818,7 @@ pub(crate) fn validate(db: &Connection, state: &Snapshot) -> Result<()> {
     if bad_count != 0 {
         return Err(bad("空执行记录检查点无效"));
     }
-    let excessive:i64=db.query_row("SELECT count(*) FROM (SELECT run_id FROM agent_run_events GROUP BY run_id HAVING sum(json_extract(metadata,'$.summary.kind')='model')>6 OR sum(json_extract(metadata,'$.summary.kind')='tool')>48)",[],|r|r.get(0))?;
+    let excessive:i64=db.query_row("SELECT count(*) FROM (SELECT run_id FROM agent_run_events GROUP BY run_id HAVING sum(json_extract(metadata,'$.summary.kind')='model')>?1 OR sum(json_extract(metadata,'$.summary.kind')='tool')>48)",[crate::MAX_AGENT_MODEL_ROUNDS],|r|r.get(0))?;
     if excessive != 0 {
         return Err(bad("执行轮次超过预算"));
     }

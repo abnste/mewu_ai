@@ -99,6 +99,20 @@ fn revision(db: &Connection) -> i64 {
 }
 
 #[test]
+fn extended_workflow_rounds_survive_restart_and_still_reject_the_limit() {
+    let file=Db::new(); let mut store=Store::open(&file.0).unwrap();
+    let context=start(&mut store,"多步骤插件开发");
+    for round in 0..MAX_AGENT_MODEL_ROUNDS {
+        let lease=model(&mut store,&context,round);
+        store.record_model_turn(&lease,CompletePublicTurn{text:format!("步骤 {round}"),calls:vec![]}).unwrap();
+    }
+    assert!(store.begin_model_request(&context.scene_id,&context.run_id,ModelDispatchInput{round:MAX_AGENT_MODEL_ROUNDS,projected_request_sha256:hash("bounded")}).is_err());
+    store.fail_run(&context.scene_id,&context.run_id,"已保留草稿").unwrap(); drop(store);
+    let store=Store::open(&file.0).unwrap();
+    assert_eq!(page(&store,&context).entries.len(),MAX_AGENT_MODEL_ROUNDS as usize);
+}
+
+#[test]
 fn not_sent_reason_is_read_only_detail_metadata_and_survives_restart() {
     let file = Db::new();
     let reasons = [
