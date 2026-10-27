@@ -10,6 +10,7 @@ pub type Result<T> = std::result::Result<T, String>;
 const MAX_TEXT: usize = 96 * 1024;
 const MAX_PROJECT: usize = 384 * 1024;
 const MAX_PROJECTS: usize = 64;
+static SKILL_SEED_GATE: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn slug(value: &str) -> bool {
     !value.is_empty() && value.len() <= 64 && !value.starts_with('-') && !value.ends_with('-')
@@ -104,6 +105,8 @@ pub struct Draft {
     pub sha256: String,
     pub manifest: ExtensionManifest,
 }
+#[derive(Debug, Serialize)]
+pub struct SkillFiles { pub files: Vec<String>, pub truncated: bool }
 pub struct Workspace { root: PathBuf }
 impl Workspace {
     pub fn open(data_root: &Path) -> Result<Self> {
@@ -114,9 +117,13 @@ impl Workspace {
         Ok(Self { root })
     }
     pub fn seed_skill(&self, name: &str, files: &[(&str, &str)]) -> Result<()> {
+        let _gate=SKILL_SEED_GATE.lock().map_err(|_|"无法初始化技能")?;
         if !slug(name) { return Err("技能名称无效".into()); }
         let base = self.root.join("skills").join(name);
         directory(&base)?;
+        let receipt=base.join(".mewu-builtin.json");
+        let previous:BTreeMap<String,String>=if receipt.exists() {serde_json::from_slice(&read(&receipt,16*1024)?).map_err(|_|"内置技能版本记录无效")?} else {BTreeMap::new()};
+        let mut managed=previous.clone();
         for (file, content) in files {
             let path = base.join(file);
             if Path::new(file).components().any(|c| !matches!(c, Component::Normal(_))) || file.contains(['\\', ':']) { return Err("技能文件路径无效".into()); }
@@ -126,13 +133,20 @@ impl Workspace {
                 }
                 if parent != base { directory(parent)?; }
             }
-            // User customizations are never silently overwritten by an upgrade.
+            let digest=hash(content.as_bytes());
+            // Update only unchanged factory files. User edits and previously
+            // unknown files remain untouched, including across app upgrades.
             match fs::OpenOptions::new().write(true).create_new(true).open(&path) {
-                Ok(mut file) => file.write_all(content.as_bytes()).map_err(|_| "无法初始化技能")?,
-                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => { no_link(&path)?; },
+                Ok(mut output) => {output.write_all(content.as_bytes()).map_err(|_| "无法初始化技能")?;output.sync_all().map_err(|_|"无法保存技能")?;managed.insert((*file).into(),digest);},
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    let current=hash(&read(&path,MAX_TEXT)?);
+                    if current==digest {managed.insert((*file).into(),digest);}
+                    else if previous.get(*file)==Some(&current) {atomic(&path,content.as_bytes())?;managed.insert((*file).into(),digest);}
+                },
                 Err(_) => return Err("无法初始化技能".into()),
             }
         }
+        if managed!=previous {atomic(&receipt,&serde_json::to_vec(&managed).map_err(|_|"内置技能版本记录无效")?)?;}
         Ok(())
     }
     pub fn skills(&self) -> Result<(Vec<Skill>, Vec<String>)> {
@@ -155,6 +169,31 @@ impl Workspace {
         let mut path = base;
         for part in Path::new(file).components() { path.push(part); no_link(&path)?; }
         text(&path)
+    }
+    /// Discover real references instead of asking the model to guess filenames.
+    /// A bounded listing is not a limit on the skill's storage or readability.
+    pub fn skill_files(&self, name: &str) -> Result<SkillFiles> {
+        if !slug(name) { return Err("技能名称无效".into()); }
+        let base=self.root.join("skills").join(name); no_link(&base)?;
+        parse_skill(name, &text(&base.join("SKILL.md"))?)?;
+        let mut files=vec!["SKILL.md".to_owned()]; let mut pending=Vec::new();
+        for folder in ["references","scripts","assets"] {
+            let path=base.join(folder);
+            if path.is_dir() && no_link(&path).is_ok() { pending.push(path); }
+        }
+        let mut scanned=0; let mut truncated=false;
+        'walk: while let Some(dir)=pending.pop() {
+            for entry in fs::read_dir(dir).map_err(|_|"无法列出技能文件")? {
+                scanned+=1; if scanned>512 {truncated=true;break 'walk;}
+                let path=entry.map_err(|_|"无法列出技能文件")?.path();
+                if no_link(&path).is_err() {continue;}
+                let relative=path.strip_prefix(&base).map_err(|_|"技能路径无效")?;
+                if path.is_dir() {
+                    if relative.components().count()<8 {pending.push(path);} else {truncated=true;}
+                } else if path.is_file() {files.push(relative.to_string_lossy().replace('\\',"/"));}
+            }
+        }
+        files.sort(); Ok(SkillFiles{files,truncated})
     }
     fn project_dir(&self, id: &str, create: bool) -> Result<PathBuf> {
         if !slug(id) { return Err("工程 ID 必须是小写字母、数字和连字符，最长 64 字符".into()); }
@@ -223,7 +262,13 @@ mod tests {
         ws.seed_skill("make-plugin",&[("SKILL.md",skill),("references/api.md","API")]).unwrap();
         assert_eq!(ws.skills().unwrap().0[0].description,"Build a portable plugin");
         assert_eq!(ws.skill_read("make-plugin","references/api.md").unwrap(),"API");
-        ws.seed_skill("make-plugin",&[("SKILL.md","overwritten")]).unwrap(); assert_eq!(ws.skill_read("make-plugin","SKILL.md").unwrap(),skill);
+        let files=ws.skill_files("make-plugin").unwrap();
+        assert_eq!(files.files,vec!["SKILL.md","references/api.md"]); assert!(!files.truncated);
+        let updated=skill.replace("Body","Updated factory body");
+        ws.seed_skill("make-plugin",&[("SKILL.md",&updated)]).unwrap(); assert_eq!(ws.skill_read("make-plugin","SKILL.md").unwrap(),updated);
+        let customized=skill.replace("Body","User custom workflow");
+        fs::write(root.path().join("skills/make-plugin/SKILL.md"),&customized).unwrap();
+        ws.seed_skill("make-plugin",&[("SKILL.md",skill)]).unwrap(); assert_eq!(ws.skill_read("make-plugin","SKILL.md").unwrap(),customized);
         for path in ["../secret","/secret","references/../../secret","references/a:stream"] { assert!(ws.skill_read("make-plugin",path).is_err()); }
     }
     #[test] fn malformed_skill_does_not_hide_valid_skills() {
@@ -236,5 +281,6 @@ mod tests {
         let root=tempfile::tempdir().unwrap(); let ws=Workspace::open(root.path()).unwrap(); let outside=tempfile::tempdir().unwrap();
         std::os::unix::fs::symlink(outside.path(),root.path().join("skills/escape")).unwrap();
         assert!(ws.skill_read("escape","SKILL.md").is_err());
+        assert!(ws.skill_files("escape").is_err());
     }
 }

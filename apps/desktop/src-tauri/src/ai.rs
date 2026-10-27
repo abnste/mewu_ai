@@ -1128,8 +1128,10 @@ where
 }
 
 pub(crate) const MAX_ANSWER_BYTES: usize = 2 * 1024 * 1024;
-const MAX_TOOL_ARGUMENT_BYTES: usize = 16 * 1024;
-const MAX_TURN_ARGUMENT_BYTES: usize = 64 * 1024;
+// Transport assembly must accommodate bounded source/document tools. Each
+// executor still applies its own schema and smaller operation-specific limits.
+pub(crate) const MAX_TOOL_ARGUMENT_BYTES: usize = 512 * 1024;
+pub(crate) const MAX_TURN_ARGUMENT_BYTES: usize = 1024 * 1024;
 pub(crate) const MAX_TURN_CALLS: usize = 8;
 
 pub(crate) fn valid_tool_name(name: &str) -> bool {
@@ -1282,7 +1284,7 @@ impl ReplyAccumulator {
                         &mut partial.arguments,
                         function.get("arguments"),
                         MAX_TOOL_ARGUMENT_BYTES,
-                    )?;
+                    ).map_err(|error| if error == "回复内容超过长度上限" { "单次工具参数超过 512 KiB 上限".to_owned() } else { error })?;
                     self.argument_bytes += added;
                     if self.argument_bytes > MAX_TURN_ARGUMENT_BYTES {
                         return Err("工具参数总量超过上限".into());
@@ -3680,6 +3682,17 @@ pub(crate) mod tests {
         let mut accumulator = ReplyAccumulator::default();
         let data = json!({"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"x".repeat(129)}]}}]}).to_string();
         assert!(accumulator.event(&data, &mut |_| {}, true).is_err());
+    }
+
+    #[tokio::test]
+    async fn authoring_tool_arguments_larger_than_16k_survive_fragmented_transport() {
+        let arguments=json!({"op":"write","projectId":"transport-check","project":{"modules":{"main.mjs":format!("export function activate() {{}}\n/*{}*/","source ".repeat(6000))}}}).to_string();
+        assert!(arguments.len()>16*1024);
+        let cut=arguments.len()/2;
+        let data=format!("{}{}",tool_event(json!({"tool_calls":[{"index":0,"id":"authoring","type":"function","function":{"name":"plugin_project","arguments":&arguments[..cut]}}]}),None),tool_event(json!({"tool_calls":[{"index":0,"function":{"arguments":&arguments[cut..]}}]}),Some("tool_calls")));
+        let turn=consume_turn_bytes(futures_util::stream::iter([Ok::<_,String>(data.into_bytes())]), |_|{},true).await.unwrap();
+        assert_eq!(turn.tool_calls.len(),1); assert_eq!(turn.tool_calls[0].arguments,arguments);
+        assert!(turn.content.is_empty());
     }
 
     #[tokio::test]

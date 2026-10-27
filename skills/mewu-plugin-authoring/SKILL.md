@@ -7,6 +7,14 @@ compatibility: Mewu with skills_list, skill_read and plugin_project tools; no No
 
 # Build a Mewu plugin
 
+Use only the filenames returned by `skill_read.availableFiles`. This skill's
+bundled references are `references/sdk.d.ts`, `references/ui-client.d.ts`, and
+`references/toolbar-layout.md`. Read them only if needed; `plugin_project.describe`
+already returns their full current content. Do not look for additional examples
+or guessed paths. Once the contract is available, write the plugin, then correct
+specific validation errors. A missing file is not a reason to search personal
+history or repeatedly try alternate filenames.
+
 1. Read the current contract using `plugin_project` with `op: "describe"`. It is the installed host's SDK, not a remembered or invented API. Match the requested extension point before writing code. If the host lacks the requested capability, explain that limitation; do not replace a requested native integration with an unrelated HTML mockup.
 2. Create one independent project using `plugin_project` with `op: "write"`, a short lowercase `projectId`, and `project: {manifest, modules}`. `manifest` is the complete `mewu-plugin.json`; `modules` maps relative `.mjs` filenames to UTF-8 JavaScript source. Use `expectedSha256: null` for a new project. Read an existing project before editing and use its returned SHA-256. Keep the same plugin ID and project ID when updating it, and increment its semantic version before installing changed code. The tool validates manifest, imports and JavaScript syntax before saving atomically. Correct errors from the tool, never claim a failed write succeeded.
 3. Use `@mewu/sdk` and exported `activate(ctx)`. Run in the host's bounded JavaScript runtime; no Node.js, filesystem imports, eval, unapproved shell, arbitrary network or access to other plugins. Request only the actual permissions required. Settings belong to an ordinary `ui` service with `metadata.surface: "settings"`; keep business logic in this plugin. Its handler returns `{html,width,height}` for `input.type === "mount"`; do not call `ctx.ui.render` for a settings page. The host injects the global `mewu` client into the HTML: await `mewu.ready`, then `mewu.call(input)` invokes this same settings handler. Never embed the native SDK in the HTML. Shared settings use `configuration.get` and `configuration.compareAndSet` from that settings surface. Subscribe to `mewu.on('appearance', value => ...)` for host colors. Render using the SDK UI client and the host theme, not a separate application.

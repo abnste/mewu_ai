@@ -16,8 +16,8 @@ use std::{
 
 const MAX_REQUEST_BYTES: usize = 32 * 1024 * 1024;
 const MAX_CONTINUATION: usize = 4 * 1024 * 1024;
-const MAX_ARGS: usize = 16 * 1024;
-const MAX_TOTAL_ARGS: usize = 64 * 1024;
+const MAX_ARGS: usize = ai::MAX_TOOL_ARGUMENT_BYTES;
+const MAX_TOTAL_ARGS: usize = ai::MAX_TURN_ARGUMENT_BYTES;
 const MAX_BLOCKS: usize = 128;
 const REFUSAL_ERROR: &str = "模型拒绝了此请求";
 
@@ -949,6 +949,15 @@ where
 
 #[cfg(test)]
 pub(crate) mod tests {
+    #[test]
+    fn authoring_tool_arguments_use_the_same_bounded_budget_across_protocols() {
+        use super::*;
+        let mut turn=ModelTurn::default();
+        turn.tool_calls.push(ModelToolCall{id:"authoring".into(),name:"plugin_project".into(),arguments:json!({"source":"x".repeat(48*1024)}).to_string()});
+        assert!(validate_turn(&turn).is_ok());
+        turn.tool_calls[0].arguments=json!({"source":"x".repeat(MAX_ARGS)}).to_string();
+        assert!(validate_turn(&turn).is_err());
+    }
     #[test]
     fn explicit_tool_error_flag_reaches_anthropic_without_rewriting_content_or_guessing() {
         use super::*;
