@@ -28,6 +28,7 @@ const command = { kind: 'command', id: 'operate', title: '区域操作', metadat
 const record = (patch = {}) => ({ manifest, revision: 1, state: 'enabled', source: { type: 'local', path: 'synthetic.zip' }, sha256: 'a'.repeat(64), hasRollback: false, services: [command], ...patch });
 const entry = { ...manifest, repository: 'independent/tool', releaseTag: 'v1.0.0', assetName: 'tool.zip', size: 100, sha256: 'a'.repeat(64), platforms: ['any'] };
 async function controller(filename, api, expose, props) {
+  api = { subscribePluginProjects: async () => () => {}, listPluginProjects: async () => [], ...api };
   if (filename.endsWith('CommunityExtensions.tsx')) props = reactive.mergeProps({ platform: 'windows' }, props);
   const source = await raw(filename), ast = parse(source, { sourceType: 'module', plugins: ['typescript', 'jsx'] });
   const component = ast.program.body.find(node => node.type === 'ExportDefaultDeclaration').declaration;

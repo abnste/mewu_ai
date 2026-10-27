@@ -1064,6 +1064,9 @@ fn tool_label(binding: &ToolBinding) -> String {
                 "memory_save" => "保存记忆",
                 "memory_forget" => "删除记忆",
                 "history_search" => "查找历史",
+                "skills_list" => "查找技能",
+                "skill_read" => "读取技能",
+                "plugin_project" => "制作插件",
                 _ => name,
             }
         }

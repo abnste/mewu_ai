@@ -7,6 +7,7 @@ mod control_run_stream;
 #[path = "../../../../tools/mewu-cli/cli.rs"]
 mod control_cli;
 mod agent_tools;
+mod agent_development;
 mod ai;
 mod inline_reasoning;
 mod interaction_performance;
@@ -2350,7 +2351,7 @@ fn start_run_with_extensions(
     let title_transport = transport.clone();
     let run_tools =
         match mcp_host::RunTools::with_extensions(&context, visual.clone(), video.clone(), extension_catalog, chat_region.clone()) {
-            Ok(tools) => Arc::new(tools.with_model_key(&context, key.clone())),
+            Ok(tools) => Arc::new(tools.with_development().with_model_key(&context, key.clone())),
             Err(error) => {
                 engine.plugin_runs.remove(&context.run_id);
                 engine.agent_runs.remove(&context.run_id);
@@ -2533,6 +2534,7 @@ fn start_run_with_extensions(
                         }
                         connection_host::apply_parameters(&mut body, &context.connection_profile)?;
                         agent_tools::augment_request(&mut body, &context)?;
+                        agent_development::augment_request(&mut body, &host)?;
                         tools3.augment_request(&mut body)?;
                         Ok(body)
                     })
@@ -2581,7 +2583,9 @@ fn start_run_with_extensions(
                         let tools = run_tools.clone();
                         async move {
                             let tool_name=call.name.clone();
-                            let result=if agent_tools::label(&call.name).is_some() {
+                            let result=if agent_development::handles(&call.name) {
+                                agent_development::execute(app.clone(), scene_id.clone(), run_id.clone(), call, lease).await
+                            } else if agent_tools::label(&call.name).is_some() {
                                 journal_tool_host::execute(app.clone(), scene_id.clone(), run_id.clone(), call, lease).await
                             } else {
                                 tools.execute_recorded(&app, &scene_id, &run_id, call, lease).await
@@ -3119,6 +3123,8 @@ fn main() {
                 extension_host::get_extension_project,
                 extension_host::get_extension_project_image,
                 extension_host::prepare_extension,
+                agent_development::list_plugin_projects,
+                agent_development::prepare_plugin_project,
                 extension_host::install_extension,
                 extension_host::control_extension,
                 extension_host::invoke_extension,

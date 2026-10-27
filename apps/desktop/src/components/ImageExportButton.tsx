@@ -7,7 +7,7 @@ import { t } from '../i18n';
 import './image-export-button.css';
 
 export interface ImageExportButtonProps {
-  scope: string; disabled?: boolean; compact?: boolean; label?: string; title?: string;
+  scope: string; disabled?: boolean; compact?: boolean; label?: string; title?: string; layoutId?: string;
   onSelect: (variant: ImageExportVariant) => void;
   onOpenChange?: (open: boolean) => void;
   onRegister?: (open: () => void) => (() => void);
@@ -59,7 +59,7 @@ export default function ImageExportButton(props: ImageExportButtonProps) {
   const unregister = props.onRegister?.(show);
   onCleanup(() => { disposed = true; close(); unregister?.(); });
   return <>
-    <button ref={trigger} class="image-export-trigger" classList={{ 'icon-button': props.compact, compact: props.compact }} data-caption={props.compact ? undefined : t('保存')} title={props.title ?? t('保存 · S')} aria-label={props.label ?? t('保存图片')} aria-haspopup="menu" aria-expanded={open()} aria-controls={open() ? id : undefined} disabled={props.disabled} onPointerDown={event => event.stopPropagation()} onClick={event => { event.stopPropagation(); if (open()) close(); else show(); }} onKeyDown={event => { if (!open() && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) { event.preventDefault(); event.stopPropagation(); show(); if (event.key === 'ArrowUp') queueMicrotask(() => { if (open()) focusItem(1); }); } }}><Download size={props.compact ? 15 : 20} /></button>
+    <button data-layout-id={props.layoutId} ref={trigger} class="image-export-trigger" classList={{ 'icon-button': props.compact, compact: props.compact }} data-caption={props.compact ? undefined : t('保存')} title={props.title ?? t('保存 · S')} aria-label={props.label ?? t('保存图片')} aria-haspopup="menu" aria-expanded={open()} aria-controls={open() ? id : undefined} disabled={props.disabled} onPointerDown={event => event.stopPropagation()} onClick={event => { event.stopPropagation(); if (open()) close(); else show(); }} onKeyDown={event => { if (!open() && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) { event.preventDefault(); event.stopPropagation(); show(); if (event.key === 'ArrowUp') queueMicrotask(() => { if (open()) focusItem(1); }); } }}><Download size={props.compact ? 15 : 20} /></button>
     <Show when={open()}><Portal><div ref={menu} id={id} class="image-export-menu" role="menu" aria-label={t('保存图片')} style={{ left: `${position().x}px`, top: `${position().y}px` }} onPointerDown={event => event.stopPropagation()}>
       <For each={choices}>{(variant, index) => <button ref={element => { buttons[index()] = element; }} type="button" role="menuitem" tabIndex={focused() === index() ? 0 : -1} onFocus={() => setFocused(index())} onClick={() => choose(variant)}>{t(variant === 'annotated' ? '带标注图' : '原图')}</button>}</For>
     </div></Portal></Show>

@@ -315,6 +315,9 @@ pub async fn prepare_extension(
         let package = market::decode_package(&bytes)?;
         (package, bytes, Source::Local { path: text })
     };
+    prepare_package(&app, package, bytes, source).map(Some)
+}
+pub(crate) fn prepare_package(app: &AppHandle, package: ExtensionPackage, bytes: Vec<u8>, source: Source) -> Result<Proposal,String> {
     let state = app.state::<ExtensionHost>();
     if !mewu_extension::plugin_platform_supported(package.manifest.platforms.as_deref(), mewu_extension::current_plugin_platform()) {
         return Err("此插件不支持当前系统".into());
@@ -349,7 +352,7 @@ pub async fn prepare_extension(
             created: Instant::now(),
         },
     );
-    Ok(Some(proposal))
+    Ok(proposal)
 }
 #[tauri::command]
 pub async fn install_extension(
@@ -2082,7 +2085,7 @@ fn tool_initialization_read(method: &str) -> bool {
     matches!(method, "runtime.describe" | "configuration.get" | "storage.get" | "storage.list" | "services.list" | "objects.library.describe")
 }
 pub(crate) fn runtime_capabilities()->Value {
-    json!({"hostApi":mewu_extension::HOST_API,"capabilities":["ui.settings","configuration.shared","secrets.network","secrets.settings","memory.archive","process.jsonlines","process.frame-bindings","process.installation-search"]})
+    json!({"hostApi":mewu_extension::HOST_API,"capabilities":["ui.settings","ui.toolbar-layout","configuration.shared","secrets.network","secrets.settings","memory.archive","process.jsonlines","process.frame-bindings","process.installation-search"]})
 }
 
 fn bridge_impl(
@@ -2144,10 +2147,12 @@ fn bridge_impl(
             if !context.surface_owner.as_ref().is_some_and(|(_,owner)|owner.scene.is_empty()) {
                 return Err("请在插件设置界面修改配置".into());
             }
-            Ok(Value::Bool(live_store(app,context,|store|store.compare_and_set(
+            let changed=live_store(app,context,|store|store.compare_and_set(
                 &context.record.manifest.id,"plugin-configuration",string(&params,"key")?,
                 params.get("expected").ok_or("缺少比较值")?,params.get("value").ok_or("缺少插件配置")?
-            ))?))
+            ))?;
+            if changed { let _=app.emit_to("space","extension-configuration-changed",json!({"pluginId":context.record.manifest.id,"revision":context.record.revision})); }
+            Ok(Value::Bool(changed))
         },
         "objects.library.describe" => Ok(crate::extension_objects_host::describe()),
         "objects.library.get" | "objects.library.preview" | "objects.library.commit" | "objects.library.restore" => {

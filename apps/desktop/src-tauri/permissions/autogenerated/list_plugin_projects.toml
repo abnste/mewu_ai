@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-list-plugin-projects"
+description = "Enables the list_plugin_projects command without any pre-configured scope."
+commands.allow = ["list_plugin_projects"]
+
+[[permission]]
+identifier = "deny-list-plugin-projects"
+description = "Denies the list_plugin_projects command without any pre-configured scope."
+commands.deny = ["list_plugin_projects"]

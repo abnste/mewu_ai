@@ -292,7 +292,15 @@ impl RunTools {
         self.definitions.clone()
     }
 
+    pub(crate) fn with_development(mut self) -> Self {
+        self.definitions.extend(crate::agent_development::definitions());
+        self
+    }
+
     pub fn journal_binding(&self, alias: &str) -> Option<ToolBinding> {
+        if self.definitions.iter().any(|d| d.pointer("/function/name").and_then(Value::as_str)==Some(alias)) {
+            if let Some(binding)=crate::agent_development::binding(alias) { return Some(binding); }
+        }
         if let Some(descriptor) = self.extensions.get(alias) {
             return Some(descriptor.binding());
         }

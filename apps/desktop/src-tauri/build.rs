@@ -61,6 +61,8 @@ fn main() {
             "get_extension_project",
             "get_extension_project_image",
             "prepare_extension",
+            "list_plugin_projects",
+            "prepare_plugin_project",
             "install_extension",
             "control_extension",
             "invoke_extension",

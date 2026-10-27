@@ -120,9 +120,10 @@ test('installed community list excludes native, local and removed packages while
   ];
   const before=structuredClone(records), catalog=[{...manifest('market.entry'),repository:'author/market'}];
   const scope=run(`${community.slice(community.variable('record'))}\n${community.slice(community.variable('entries'))}\nglobalThis.list=entries;`,{
-    createMemo:callback=>callback,props:{get pane(){return scope.paneValue},query:'',filter:''},paneValue:'installed',records:()=>records,catalog:()=>catalog,tagText:value=>value,
+    createMemo:callback=>callback,origin:()=>scope.originValue,originValue:'community',props:{get pane(){return scope.paneValue},query:'',filter:''},paneValue:'installed',records:()=>records,catalog:()=>catalog,tagText:value=>value,
   });
   assert.deepEqual(Array.from(scope.list(),value=>value.id),['github.enabled','github.disabled']);
+  scope.originValue='selfmade';assert.deepEqual(Array.from(scope.list(),value=>value.id),['local.zip']);
   scope.paneValue='discover';assert.deepEqual(Array.from(scope.list(),value=>value.id),['market.entry']);
   assert.deepEqual(records,before);
 });

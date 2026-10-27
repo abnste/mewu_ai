@@ -1,0 +1,15 @@
+[package]
+name = "mewu-agent-workspace"
+version = "0.1.0"
+edition = "2021"
+license = "MPL-2.0"
+
+[dependencies]
+mewu-extension = { path = "../mewu-extension" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde-saphyr = "=2.0.0"
+sha2 = "0.10"
+tempfile = "3"
+zip = { version = "6.0.0", default-features = false, features = ["deflate"] }
+

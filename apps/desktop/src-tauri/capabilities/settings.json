@@ -64,6 +64,8 @@
     "allow-get-extension-project",
     "allow-get-extension-project-image",
     "allow-prepare-extension",
+    "allow-list-plugin-projects",
+    "allow-prepare-plugin-project",
     "allow-install-extension",
     "allow-control-extension",
     "allow-invoke-extension",

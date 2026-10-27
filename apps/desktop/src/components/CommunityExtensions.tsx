@@ -2,7 +2,7 @@
 import { createEffect, createMemo, createSignal, For, on, onCleanup, Show } from 'solid-js';
 import { ArrowLeft, Check, ChevronRight, Download, LoaderCircle, RefreshCw, Trash2, Undo2, X } from 'lucide-solid';
 import * as api from '../extension-bridge';
-import type { ExtensionCatalogEntry, ExtensionControl, ExtensionManifest, ExtensionProposal, ExtensionRecord, ExtensionSource } from '../extension-contracts';
+import type { ExtensionCatalogEntry, ExtensionControl, ExtensionManifest, ExtensionProposal, ExtensionRecord, ExtensionSource, PluginDraft } from '../extension-contracts';
 import { mergeExtensionRecords } from '../extension-state';
 import { extensionUpdateEntry } from '../extension-updates';
 import { extensionPlatformError, installedExtensionError, type HostPlatform } from '../plugin-platform';
@@ -26,6 +26,9 @@ export default function CommunityExtensions(props: Props) {
   const [selected, setSelected] = createSignal(''), [proposal, setProposal] = createSignal<ExtensionProposal>();
   const [busy, setBusy] = createSignal(''), [error, setError] = createSignal(''), [loading, setLoading] = createSignal(false);
   const [confirmRemoval, setConfirmRemoval] = createSignal(false);
+  const [origin, setOrigin] = createSignal<'community' | 'selfmade'>('community');
+  const [drafts, setDrafts] = createSignal<PluginDraft[]>([]);
+  let stopProjects: (() => void) | undefined;
   let disposed = false, serial = 0, navigation = 0, eventSerial = 0, unsubscribe: (() => void) | undefined, listening: Promise<void> | undefined;
   const accept = (value: ExtensionRecord[]) => { if (!disposed) setRecords(old => mergeExtensionRecords(old, value)); };
   const record = (id: string) => records().find(record => record.manifest.id === id);
@@ -42,18 +45,26 @@ export default function CommunityExtensions(props: Props) {
   const entries = createMemo(() => {
     const text = props.query.trim().toLocaleLowerCase(), known = new Set(catalog().map(entry => entry.id));
     const source = props.pane === 'discover' ? catalog().filter(entry => !record(entry.id) || record(entry.id)!.state === 'removed')
-      : records().filter(record => record.state !== 'removed' && (record.source.type === 'github' || known.has(record.manifest.id))).map(record => ({ ...record.manifest, repository: record.source.type === 'github' ? record.source.entry.repository : '' }));
+      : records().filter(record => record.state !== 'removed' && (origin() === 'selfmade' ? record.source.type === 'local' && !known.has(record.manifest.id) : record.source.type === 'github' || known.has(record.manifest.id))).map(record => ({ ...record.manifest, repository: record.source.type === 'github' ? record.source.entry.repository : '' }));
     return source.filter(entry => (!props.filter || entry.tags.includes(props.filter))
       && (!text || [entry.name, entry.id, entry.description, ...entry.tags.map(tagText)].join(' ').toLocaleLowerCase().includes(text)));
   });
+  const visibleDrafts = createMemo(() => props.pane !== 'installed' || origin() !== 'selfmade' ? [] : drafts().filter(d => {
+    const r = record(d.manifest.id), text = props.query.trim().toLocaleLowerCase();
+    return (!r || r.state === 'removed' || r.manifest.version !== d.manifest.version)
+      && (!props.filter || d.manifest.tags.includes(props.filter)) && (!text || `${d.manifest.name} ${d.manifest.description} ${d.manifest.id}`.toLocaleLowerCase().includes(text));
+  }));
   createEffect(() => props.onDetail(Boolean(detail())));
   async function ensureListening() {
     if (!listening) listening = (async () => {
       const stop = await api.subscribeExtensions(value => { eventSerial++; accept(value); });
       if (disposed) stop(); else unsubscribe = stop;
+      const stopDrafts = await api.subscribePluginProjects(() => { void refreshDrafts(); });
+      if (disposed) stopDrafts(); else stopProjects = stopDrafts;
     })().catch(error => { listening = undefined; throw error; });
     await listening;
   }
+  async function refreshDrafts() { try { const values = await api.listPluginProjects(); if (!disposed) setDrafts(values); } catch (cause) { if (!disposed) setError(String(cause)); } }
   async function refresh() {
     if (!api.extensionNative) return;
     const current = ++serial; setLoading(true); setError('');
@@ -61,6 +72,7 @@ export default function CommunityExtensions(props: Props) {
       await ensureListening(); if (disposed) return;
       const beforeEvents = eventSerial, installed = await api.getExtensions();
       if (beforeEvents === eventSerial) accept(installed);
+      await refreshDrafts();
       const value = await api.getExtensionCatalog();
       if (!disposed && current === serial) { rememberExtensionIcons(value.plugins); setCatalog(value.plugins); }
     } catch (cause) { if (!disposed && current === serial) setError(cause instanceof Error ? cause.message : String(cause)); }
@@ -70,7 +82,7 @@ export default function CommunityExtensions(props: Props) {
   createEffect(on(() => props.refreshRequest, () => { if (props.active) void refresh(); }, { defer: true }));
   createEffect(on(() => props.addRequest, () => { if (props.active) void prepare(); }, { defer: true }));
   createEffect(on(() => props.pane, () => back(), { defer: true }));
-  onCleanup(() => { disposed = true; serial++; navigation++; unsubscribe?.(); props.onDetail(false); });
+  onCleanup(() => { disposed = true; serial++; navigation++; unsubscribe?.(); stopProjects?.(); props.onDetail(false); });
   function back() { navigation++; setSelected(''); setProposal(undefined); setConfirmRemoval(false); setError(''); }
   function open(id: string) { navigation++; setSelected(id); setProposal(undefined); setConfirmRemoval(false); setError(''); }
   async function operate(id: string, action: () => Promise<void>) {
@@ -92,6 +104,10 @@ export default function CommunityExtensions(props: Props) {
     if (value.sourceMigration && (value.sourceMigration.schemaVersion !== 1 || !['migrate', 'migrate-and-install'].includes(value.sourceMigration.operation))) { setError(t('插件迁移协议版本不受支持')); return; }
     await operate(value.manifest.id, async () => { accept(await api.installExtension(value.id, value.sourceMigration?.id)); if (!disposed && proposal()?.id === value.id) setProposal(undefined); });
   }
+  async function prepareDraft(draft: PluginDraft) {
+    const current = navigation;
+    await operate(draft.manifest.id, async () => { const value = await api.preparePluginProject(draft.projectId, draft.sha256); if (!disposed && current === navigation) { setProposal(value); setSelected(value.manifest.id); setConfirmRemoval(false); } });
+  }
   async function control(value: ExtensionRecord, action: ExtensionControl) {
     if (action !== 'disable' && action !== 'remove' && installedExtensionError(value, props.platform)) return;
     await operate(value.manifest.id, async () => { accept(await api.controlExtension(value, action)); if (!disposed) { setConfirmRemoval(false); if (action === 'remove') back(); } });
@@ -105,6 +121,8 @@ export default function CommunityExtensions(props: Props) {
     <Show when={error()}><div class="plugin-error" role="alert"><span>{error()}</span><button class="icon-button compact" aria-label={t('关闭提示')} onClick={() => setError('')}><X size={13}/></button></div></Show>
     <Show when={loading()}><div class="plugin-loading"><LoaderCircle size={14} class="spin"/>{t('加载中')}</div></Show>
     <Show when={detail()} fallback={<>
+      <Show when={props.pane === 'installed'}><div class="plugins-category-tags" role="group" aria-label={t('插件来源')}><button aria-pressed={origin() === 'community'} onClick={() => setOrigin('community')}>{t('社区')}</button><button aria-pressed={origin() === 'selfmade'} onClick={() => setOrigin('selfmade')}>{t('自制')}</button></div></Show>
+      <Show when={visibleDrafts().length}><div class="plugin-list"><For each={visibleDrafts()}>{draft => <article class="plugin-row"><span class="plugin-glyph"><PluginIcon plugin={draft.manifest} size={24}/></span><div class="plugin-summary"><button class="plugin-name" onClick={() => void prepareDraft(draft)}>{draft.manifest.name}<ChevronRight size={13}/></button><p>{draft.manifest.description}</p></div><button class="secondary-button" disabled={Boolean(busy())} onClick={() => void prepareDraft(draft)}>{t('安装')}</button></article>}</For></div></Show>
       <div class="plugin-list"><For each={entries()}>{entry => <article class="plugin-row">
         <span class="plugin-glyph"><PluginIcon plugin={entry} source={record(entry.id)?.source} sha256={record(entry.id)?.sha256} size={24}/></span><div class="plugin-summary">
           <button class="plugin-name" onClick={() => open(entry.id)}><span>{entry.name}</span><ChevronRight size={13}/></button>

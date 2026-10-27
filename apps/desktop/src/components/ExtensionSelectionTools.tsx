@@ -66,7 +66,7 @@ export default function ExtensionSelectionTools(props: Props) {
     if (event.key === 'Escape' && (taskChoice() || menu() || result())) { event.preventDefault(); event.stopPropagation(); setTaskChoice(undefined); setMenu(false); setResult(''); }
   }
   return <>
-    <Show when={services().length || running()}><button class="capture-plugin" data-caption={running() ? t('停止') : services().length === 1 ? services()[0].service.title : t('插件')}
+    <Show when={services().length || running()}><button data-layout-id="extensions" class="capture-plugin" data-caption={running() ? t('停止') : services().length === 1 ? services()[0].service.title : t('插件')}
       title={running() ? t('停止') : services().length === 1 ? t(services()[0].unavailableReason || services()[0].service.title) : t('插件')} aria-label={running() ? t('停止插件执行') : t('选区插件')}
       disabled={running() ? stopping() : props.disabled || (services().length === 1 && Boolean(services()[0].unavailableReason))} onClick={() => running() ? void stop() : services().length === 1 ? choose(services()[0]) : setMenu(!menu())}>
       <Show when={running()} fallback={<Show when={services().length === 1} fallback={<Ellipsis size={18}/>}><PluginIcon plugin={services()[0].record.manifest} source={services()[0].record.source} sha256={services()[0].record.sha256} size={18}/></Show>}><Show when={stopping()} fallback={<Square size={16}/>}><LoaderCircle size={18} class="spin"/></Show></Show>

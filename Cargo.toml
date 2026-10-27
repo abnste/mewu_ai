@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/mewu-core", "crates/mewu-extension", "crates/mewu-control", "crates/mewu-hooks", "apps/desktop/src-tauri"]
+members = ["crates/mewu-core", "crates/mewu-extension", "crates/mewu-control", "crates/mewu-hooks", "crates/mewu-agent-workspace", "apps/desktop/src-tauri"]
 resolver = "2"
 
 # GTK3 consumers require glib 0.18. This exact source backports upstream
