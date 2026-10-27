@@ -9,6 +9,16 @@ const textInput=(input,resumed)=>{
 const soul=input=>(input.messages??[]).filter(m=>m.role==='system'||m.role==='developer').map(m=>m.content).join('\n\n');
 const imagesForTurn=(input,resumed)=>resumed&&Array.isArray(input.currentImages)?input.currentImages:input.images??[];
 const stream=(ctx,kind,text)=>text?ctx.events.emit(kind,text):Promise.resolve();
+export function codexEffort(models,config){
+  const requested=config.effort?.trim();if(!requested)return undefined;
+  const selected=models.find(model=>model.id===config.model)||models.find(model=>model.default)||models[0];
+  const supported=(selected?.efforts??[]).filter(value=>typeof value==='string');
+  if(supported.includes(requested))return requested;
+  const matches=supported.filter(value=>value.toLowerCase()===requested.toLowerCase());
+  if(matches.length===1)return matches[0];
+  const error=Error('所选模型不支持该思考程度，请使用客户端默认设置或模型支持的选项');
+  error.publicMessage=error.message;throw error;
+}
 export async function connectCodex(ctx,config){
   const peer=await openPeer(ctx,config,false);
   try{
@@ -36,6 +46,7 @@ export async function runCodex(ctx,config,input,session,checkpoint=async()=>{}){
       configOverrides[`mcp_servers.${name}.enabled`]=false;
     }
     const model=config.model||models.find(value=>value.default)?.id;
+    const effort=codexEffort(models,{...config,model});
     const options={cwd:peer.cwd,...(model?{model}:{}),approvalPolicy:'on-request',sandbox:'read-only',config:configOverrides,developerInstructions:soul(input)};
     const resumed=Boolean(session?.id);
     const thread=await peer.request(resumed?'thread/resume':'thread/start',resumed?{...options,threadId:session.id}:{...options,ephemeral:false});
@@ -60,7 +71,7 @@ export async function runCodex(ctx,config,input,session,checkpoint=async()=>{}){
       if(!turnId){if(early.length>=1024)throw Error('Codex 提前事件过多');early.push([method,params]);return;}
       await consume(method,params);
     };
-    const start=await peer.request('turn/start',{threadId,input:content,...(config.effort?{effort:config.effort}:{})},bindings);
+    const start=await peer.request('turn/start',{threadId,input:content,...(effort?{effort}:{})},bindings);
     turnId=start.turn?.id;if(typeof turnId!=='string'||!turnId)throw Error('Codex 未返回当前轮次');
     for(const [method,params] of early)await consume(method,params);
     await peer.wait(()=>Boolean(completed));

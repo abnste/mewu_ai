@@ -5,7 +5,7 @@ export async function openPeer(ctx, config, jsonrpc = true){
   config=workbuddyProcess(config);
   let process;
   try{process=await ctx.processes.open({executable:config.executable,args:config.args,...(config.cwd?{cwd:config.cwd}:{}),...(config.env?{env:config.env}:{})});}
-  catch{throw Error('无法启动外部程序，请检查运行程序和启动参数');}
+  catch{throw Error('无法启动外部程序，请检查程序路径、工作目录和启动参数');}
   let sequence=0,closed=false;
   const envelope=value=>jsonrpc?{jsonrpc:'2.0',...value}:value;
   const peer={
