@@ -99,6 +99,7 @@ mod lifecycle;
 mod windows_identity;
 mod mcp_host;
 mod mcp_runtime;
+mod external_process_env;
 mod memory_export;
 mod memory_host;
 mod memory_runtime;

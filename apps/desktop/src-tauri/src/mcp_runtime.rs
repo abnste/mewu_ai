@@ -911,7 +911,21 @@ async fn start_stdio_prepared(executable:PathBuf, arguments:&[String], cwd:PathB
         "PATH",
         std::env::join_paths(paths).map_err(|_| "MCP 程序目录无效")?,
     );
-    } else {if clear_environment{command.env_clear();}command.envs(environment.unwrap());}
+    } else {
+        if clear_environment { command.env_clear(); }
+        #[cfg(target_os = "linux")]
+        if !clear_environment {
+            let clean = crate::external_process_env::inherited();
+            for (name, value) in std::env::vars_os().filter_map(|(name,value)|Some((name.into_string().ok()?,value.into_string().ok()?))) {
+                match clean.get(&name) {
+                    None => { command.env_remove(name); },
+                    Some(clean) if clean != &value => { command.env(name, clean); },
+                    _ => {},
+                }
+            }
+        }
+        command.envs(environment.unwrap());
+    }
     command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -1013,7 +1027,7 @@ pub(crate) async fn run_user_command(
 )->Result<(),String>{
     if input.len()>256*1024 || timeout.is_zero(){return Err("命令输入或时间限制无效".into())}
     if extra_env.len()>16||extra_env.iter().any(|(k,v)|k.is_empty()||!k.bytes().all(|b|b.is_ascii_alphanumeric()||b==b'_')||v.len()>16384||v.contains('\0')){return Err("命令环境参数无效".into())}
-    let mut environment:std::collections::BTreeMap<_,_>=std::env::vars().filter(|(name,_)|{let name=name.to_ascii_uppercase();!name.starts_with("TAURI_SIGNING_")&&!name.starts_with("MEWU_TEST_")}).collect();
+    let mut environment:std::collections::BTreeMap<_,_>=crate::external_process_env::inherited().into_iter().filter(|(name,_)|{let name=name.to_ascii_uppercase();!name.starts_with("TAURI_SIGNING_")&&!name.starts_with("MEWU_TEST_")}).collect();
     environment.extend(extra_env);
     let until=tokio::time::Instant::now()+timeout;
     let started=async {
