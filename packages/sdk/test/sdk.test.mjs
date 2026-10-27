@@ -20,6 +20,13 @@ function harness(dispatch) {
   return { scope, calls };
 }
 
+test('toolbar catalog reads use the public scoped API and retain explicit separator metadata',async()=>{
+ const result={version:1,surface:'example.surface',items:[{id:'new-rule',title:'分隔线',kind:'separator'},{id:'save',title:'保存',kind:'button'}],current:null,currentScope:'definition'};
+ const {scope,calls}=harness(async(method,params)=>{assert.equal(method,'ui.toolbars.describe');assert.deepEqual(params,{surface:'example.surface'});return result;});
+ assert.deepEqual(await scope.ctx.ui.toolbars.describe('example.surface'),result);
+ assert.equal(calls.length,1);
+});
+
 test('region observation preserves safe native diagnostics and never invites an automatic input replay',async()=>{
   const {default:activate}=await import('../../../extensions/examples/region-agent/index.mjs');
   for(const code of ['region_display_changed','region_capture_failed','region_source_invalid','overlay_hide_failed']){

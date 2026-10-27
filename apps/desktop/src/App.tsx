@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 import PinObjectLayer from './components/PinObjectLayer';
+import { startToolbarLayouts } from './toolbar-layout-session';
 import { referencePinObject, subscribePinObjects, type PinObject } from './pin-objects';
 import { syncNativeLanguage } from './language-bridge';
 import { t } from "./i18n";
@@ -93,6 +94,8 @@ function withoutScene<T>(values: Record<string, T>, sceneId: string): Record<str
 }
 
 export default function App() {
+  const releaseToolbarLayouts=startToolbarLayouts();
+  onCleanup(releaseToolbarLayouts);
   const drawingFlush = new DrawingFlushRegistry();
   const videoFlush = new VideoFlushRegistry();
   const videoDrawingFlush = new VideoFlushRegistry();

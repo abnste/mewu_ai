@@ -8,6 +8,7 @@ mod control_run_stream;
 mod control_cli;
 mod agent_tools;
 mod agent_development;
+mod toolbar_catalog;
 mod ai;
 mod inline_reasoning;
 mod interaction_performance;
@@ -3118,6 +3119,7 @@ fn main() {
                 plugin_host::get_official_plugins,
                 plugin_host::control_official_plugin,
                 extension_host::get_extensions,
+                toolbar_catalog::publish_toolbar_catalog,
                 extension_host::get_extension_bindings,
                 extension_host::set_extension_binding,
                 extension_host::get_extension_catalog,

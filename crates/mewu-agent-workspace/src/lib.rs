@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Portable skills and bounded plugin workspaces, independent of any Agent loop.
 //! Never executes skill scripts, reads arbitrary files or installs generated code.
+mod probe;
+pub use probe::{probe,ProbeCase,ProbeAssertion};
 use mewu_extension::{ExtensionManifest, ExtensionPackage};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -230,6 +232,9 @@ impl Workspace {
         drafts.sort_by(|a, b| a.project_id.cmp(&b.project_id)); Ok(drafts)
     }
     pub fn package(&self, id: &str, expected: &str) -> Result<(PathBuf, Vec<u8>)> {
+        if self.service_checks(id,expected)?.is_some_and(|v|v["passed"]==false){
+            return Err("此工程仍有失败的服务测试；修正后重新 test，不能将失败用例包装为已完成".into());
+        }
         let (project, actual) = self.read_project(id)?;
         if actual != expected { return Err("工程已变化，请重新校验".into()); }
         let bytes = project.archive()?;
@@ -237,6 +242,22 @@ impl Workspace {
         // own immutable package bytes, not this editable workspace.
         let path = self.project_dir(id, false)?.join("plugin.zip");
         atomic(&path, &bytes)?; Ok((path, bytes))
+    }
+    pub fn probe_project(&self,id:&str,expected:&str,cases:&[ProbeCase],configuration:BTreeMap<String,serde_json::Value>,capabilities:serde_json::Value,catalog:serde_json::Value)->Result<serde_json::Value>{
+        let (project,actual)=self.read_project(id)?;
+        if actual!=expected{return Err("工程已变化，请重新读取后测试".into());}
+        let result=probe(&project,cases,configuration,capabilities,catalog)?;
+        let receipt=serde_json::json!({"projectSha256":actual,"result":result});
+        let bytes=serde_json::to_vec(&receipt).map_err(|_|"测试结果无效")?;
+        if bytes.len()>MAX_PROJECT{return Err("测试结果过大，请减少输入和返回内容".into());}
+        atomic(&self.project_dir(id,false)?.join("service-checks.json"),&bytes)?;
+        Ok(receipt)
+    }
+    pub fn service_checks(&self,id:&str,expected:&str)->Result<Option<serde_json::Value>>{
+        let path=self.project_dir(id,false)?.join("service-checks.json");
+        if !path.exists(){return Ok(None);}
+        let receipt:serde_json::Value=serde_json::from_slice(&read(&path,MAX_PROJECT)?).map_err(|_|"测试记录无效")?;
+        Ok((receipt["projectSha256"]==expected).then_some(receipt["result"].clone()))
     }
 }
 

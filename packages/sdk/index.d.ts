@@ -164,6 +164,10 @@ export interface ExtensionContext {
   readonly channels: ServiceRegistry;
   readonly renderers: ServiceRegistry;
   readonly ui: ServiceRegistry & {
+    /** Read-only authoritative IDs, localized captions and separator kinds.
+     * current is the last rendered context, null before first use; items is
+     * the complete definition including context-dependent controls. */
+    toolbars: { describe(surface: string): Promise<{version:1;surface:string;items:ToolbarItem[];current:ToolbarItem[]|null;currentScope:string}> };
     render(value: RenderedObject): Promise<JsonValue>;
     /** Requires ui.overlay. The overlay follows the pointer, passes pointer
      * events through, and is destroyed on pointerup, Escape or window blur. */
@@ -222,3 +226,4 @@ export interface ExtensionScope {
   deactivationDone(): boolean;
 }
 export function createContext(send: (method: string, paramsJson: string) => string): ExtensionScope;
+export interface ToolbarItem { id:string; title:string; kind:'button'|'separator'; contextual?:boolean }

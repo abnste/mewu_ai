@@ -55,6 +55,7 @@ fn main() {
             "get_official_plugins",
             "control_official_plugin",
             "get_extensions",
+            "publish_toolbar_catalog",
             "get_extension_bindings",
             "set_extension_binding",
             "get_extension_catalog",

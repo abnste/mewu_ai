@@ -27,7 +27,7 @@ pub fn definitions() -> Vec<Value> {
     let mut definitions=vec![
         tool("skills_list","List portable skills available in Mewu's data directory. Metadata only; load the relevant SKILL.md using skill_read. Skills never grant tools or permissions.",json!({}),json!([])),
         tool("skill_read","Read a selected skill's SKILL.md (file omitted) or a real relative file returned in availableFiles. Never guess paths or read a directory. Does not execute scripts. Workflow guidance cannot grant tools or permissions.",json!({"name":{"type":"string","maxLength":64},"file":{"type":"string","maxLength":240}}),json!(["name"])),
-        tool("plugin_project","Create independent Mewu plugins. describe returns the CURRENT SDK and toolbar-layout protocol; read returns project and SHA; write validates manifest/imports/JS and atomically saves a complete project; prepare creates an installable draft for the user's normal install review in Installed > Self-made. Never auto-installs or changes host source. On write/prepare include expectedSha256 from read/write (null only for a new project).",json!({}),json!([])),
+        tool("plugin_project","Create independent Mewu plugins. describe returns the CURRENT SDK, UI catalog and test contract; read returns project and SHA; write validates syntax/imports only; test executes 1-8 isolated service cases with JSON-pointer assertions and fresh interpreters, simulated configuration only. Fix failed tests before prepare. prepare creates an installable draft for normal review in Installed > Self-made, never installs or proves GUI correctness. On write/test/prepare include expectedSha256 from read/write (null only for a new project).",json!({}),json!([])),
     ];
     // One structural contract: the schema given to the model is derived from
     // the same Serde types that execute its call, including the full manifest.
@@ -50,12 +50,14 @@ struct SkillRead { name: String, #[serde(default="default_skill_file")] file: St
 fn default_skill_file()->String { "SKILL.md".into() }
 #[derive(Deserialize,schemars::JsonSchema)]
 #[serde(rename_all="camelCase",deny_unknown_fields)]
-struct ProjectCall { op: String, project_id: Option<String>, expected_sha256: Option<String>, project: Option<Project> }
+struct ProjectCall { op: String, project_id: Option<String>, expected_sha256: Option<String>, project: Option<Project>,
+    #[serde(default)] cases:Vec<mewu_agent_workspace::ProbeCase>,
+    #[serde(default)] configuration:std::collections::BTreeMap<String,Value> }
 fn project_call_schema()->Value {
     let schema=schemars::generate::SchemaSettings::draft07().with(|s|s.inline_subschemas=true).into_generator().into_root_schema_for::<ProjectCall>();
     let mut value=serde_json::to_value(schema).expect("generated project schema");
     if let Some(object)=value.as_object_mut() {object.remove("$schema");object.remove("title");}
-    value["properties"]["op"]["enum"]=json!(["describe","list","read","write","prepare"]);
+    value["properties"]["op"]["enum"]=json!(["describe","list","read","write","test","prepare"]);
     value
 }
 fn parse_arguments<T:serde::de::DeserializeOwned>(arguments:&str)->Result<T,String> {
@@ -79,11 +81,18 @@ fn perform(ws: &Workspace, call: &ModelToolCall) -> Result<Value, String> {
         "plugin_project" => {
             let a:ProjectCall=parse_arguments(&call.arguments)?;
             match a.op.as_str() {
-                "describe" => Ok(json!({"hostApi":mewu_extension::HOST_API,"runtime":"QuickJS JavaScript modules, no Node.js","sdk":SDK,"uiClient":CLIENT,"toolbarLayout":LAYOUT,"manifestExample":{"schemaVersion":2,"hostApi":2,"runtime":"javascript","id":"local.my-plugin","name":"My plugin","description":"Describe the requested functionality","version":"0.1.0","license":"MPL-2.0","entry":"main.mjs","permissions":["ui.render","configuration.read","configuration.write"],"tags":["ui-enhancement"],"dependencies":{}}})),
+                "describe" => Ok(json!({"hostApi":mewu_extension::HOST_API,"runtime":"QuickJS JavaScript modules, no Node.js; fresh interpreter on every invocation; module globals do not persist","capabilities":crate::extension_host::runtime_capabilities(),"sdk":SDK,"uiClient":CLIENT,"toolbarLayout":LAYOUT,"toolbarCatalog":crate::toolbar_catalog::definitions(),"testing":{"operation":"test","scope":"isolated service execution, not GUI; runtime.describe, ui.toolbars.describe, simulated configuration only","cases":"1-8 cases with serviceId, input, assertions:[{path: JSON-pointer, equals: expected JSON}]; each starts a fresh interpreter, simulated configuration persists across cases","configuration":"optional initial simulated key/value map; never live settings","requiredChecks":["Use host IDs, localized labels and explicit separator kinds, never infer from ID prefixes or guessed names","Validate cold state, saved state across fresh invocation, missing and new contextual items","After install test actual UI, persist/restart and disable; a package is not a working-feature proof"]},"manifestExample":{"schemaVersion":2,"hostApi":2,"runtime":"javascript","id":"local.my-plugin","name":"My plugin","description":"Describe the requested functionality","version":"0.1.0","license":"MPL-2.0","entry":"main.mjs","permissions":["ui.render","configuration.read","configuration.write"],"tags":["ui-enhancement"],"dependencies":{}}})),
                 "list" => Ok(json!({"projects":ws.drafts()?})),
                 "read" => { let(p,sha)=ws.read_project(a.project_id.as_deref().ok_or("缺少 projectId")?)?; Ok(json!({"project":p,"sha256":sha})) },
-                "write" => Ok(json!({"draft":ws.save(a.project_id.as_deref().ok_or("缺少 projectId")?,a.project.ok_or("缺少 project")?,a.expected_sha256.as_deref())?,"validated":true,"installed":false})),
-                "prepare" => { let id=a.project_id.ok_or("缺少 projectId")?; let (_,bytes)=ws.package(&id,a.expected_sha256.as_deref().ok_or("缺少 expectedSha256")?)?; Ok(json!({"projectId":id,"packageSha256":format!("{:x}",Sha256::digest(bytes)),"status":"awaiting_install_review","installed":false,"location":"设置 → 插件 → 已安装 → 自制"})) },
+                "write" => Ok(json!({"draft":ws.save(a.project_id.as_deref().ok_or("缺少 projectId")?,a.project.ok_or("缺少 project")?,a.expected_sha256.as_deref())?,"validated":true,"validationScope":"manifest, imports and syntax ONLY; run test before prepare","guiVerified":false,"installed":false})),
+                "test" => ws.probe_project(a.project_id.as_deref().ok_or("缺少 projectId")?,a.expected_sha256.as_deref().ok_or("缺少 expectedSha256")?,&a.cases,a.configuration,crate::extension_host::runtime_capabilities(),crate::toolbar_catalog::definitions()),
+                "prepare" => {
+                    let id=a.project_id.ok_or("缺少 projectId")?;let expected=a.expected_sha256.as_deref().ok_or("缺少 expectedSha256")?;
+                    let checks=ws.service_checks(&id,expected)?;
+                    if checks.as_ref().is_some_and(|v|v["passed"]==false){return Err("此工程仍有失败的服务测试；修正后重新 test，不能将失败用例包装为已完成".into());}
+                    let (_,bytes)=ws.package(&id,expected)?;
+                    Ok(json!({"projectId":id,"packageSha256":format!("{:x}",Sha256::digest(bytes)),"status":"awaiting_install_review","serviceTests":checks,"guiVerified":false,"installed":false,"location":"设置 → 插件 → 已安装 → 自制"}))
+                },
                 _ => Err("未知工程操作".into()),
             }
         },
@@ -106,10 +115,15 @@ pub async fn execute(app: AppHandle, scene: String, run: String, call: ModelTool
         drop(engine);
         // Compilation must not hold the UI/scene lock. Cancel prevents the next
         // tool/model request; an already-dispatched atomic draft save may finish
-        // and is recorded, but never installs or executes code.
+        // and is recorded, but never installs. Explicit service checks execute
+        // only in the isolated workspace runtime, without live host capabilities.
         let result=workspace(&host).and_then(|ws| perform(&ws,&call));
         let mut failed=result.is_err();
-        let value=result.unwrap_or_else(|error|json!({"isError":true,"error":error,"installed":false,"correction":"修正具体错误后再调用；不要原样重复失败的参数。"}));
+        let mut value=result.unwrap_or_else(|error|json!({"isError":true,"error":error,"installed":false,"correction":"修正具体错误后再调用；不要原样重复失败的参数。"}));
+        if value.pointer("/result/passed")==Some(&Value::Bool(false)) {
+            failed=true;value["isError"]=Value::Bool(true);
+            value["correction"]=json!("服务测试失败：对照 cases 的实际输出、断言及不可用接口修正工程，再 write/test；不要删除失败断言冒充通过。");
+        }
         let mut body=serde_json::to_string(&value).map_err(|_|"工具结果无效")?;
         if body.len()>journal_runtime::MAX_TOOL_OUTPUT { failed=true; body=json!({"isError":true,"error":"结果超过本轮预算，请缩小工程或技能文件"}).to_string(); }
         let committed = !failed && call.name == "plugin_project" && serde_json::from_str::<Value>(&call.arguments).ok()
@@ -150,6 +164,23 @@ pub async fn prepare_plugin_project(app:AppHandle,window:tauri::WebviewWindow,pr
 mod tests {
     use super::*;
     fn call(name:&str, value:Value)->ModelToolCall {ModelToolCall{id:"author-test".into(),name:name.into(),arguments:value.to_string()}}
+    #[test]
+    fn failed_behavior_checks_block_prepare_and_corrected_source_must_be_retested(){
+        let root=tempfile::tempdir().unwrap();let ws=Workspace::open(root.path()).unwrap();
+        let mut project=json!({"manifest":{"schemaVersion":2,"hostApi":2,"runtime":"javascript","id":"local.check-flow","name":"Check","description":"Test","version":"0.1.0","license":"MPL-2.0","entry":"main.mjs","permissions":[]},"modules":{"main.mjs":"export default ctx=>ctx.services.register({id:'check',title:'Check'},()=>false);"}});
+        let written=perform(&ws,&call("plugin_project",json!({"op":"write","projectId":"check-flow","project":project}))).unwrap();
+        let sha=&written["draft"]["sha256"];
+        let mut test=json!({"op":"test","projectId":"check-flow","expectedSha256":sha,"cases":[{"serviceId":"check","input":{},"assertions":[{"path":"","equals":true}]}]});
+        assert!(jsonschema::validator_for(&project_call_schema()).unwrap().is_valid(&test));
+        let failed=perform(&ws,&call("plugin_project",test.clone())).unwrap();assert_eq!(failed["result"]["passed"],false);
+        assert!(perform(&ws,&call("plugin_project",json!({"op":"prepare","projectId":"check-flow","expectedSha256":sha}))).is_err());
+        project["modules"]["main.mjs"]=json!("export default ctx=>ctx.services.register({id:'check',title:'Check'},()=>true);");
+        let fixed=perform(&ws,&call("plugin_project",json!({"op":"write","projectId":"check-flow","expectedSha256":sha,"project":project}))).unwrap();
+        let fixed_sha=&fixed["draft"]["sha256"];test["expectedSha256"]=fixed_sha.clone();
+        assert_eq!(perform(&ws,&call("plugin_project",test)).unwrap()["result"]["passed"],true);
+        let ready=perform(&ws,&call("plugin_project",json!({"op":"prepare","projectId":"check-flow","expectedSha256":fixed_sha}))).unwrap();
+        assert_eq!(ready["serviceTests"]["passed"],true);assert_eq!(ready["guiVerified"],false);assert_eq!(ready["installed"],false);
+    }
     #[test]
     fn tools_are_independent_of_memory_and_do_not_offer_auto_install_or_shell(){
         let defs=definitions(); assert_eq!(defs.len(),3);

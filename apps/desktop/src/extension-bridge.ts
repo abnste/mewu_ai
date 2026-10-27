@@ -22,6 +22,7 @@ export async function controlExtension(record: ExtensionRecord, action: Extensio
   desktop(); return invoke('control_extension', { pluginId: record.manifest.id, revision: record.revision, action });
 }
 export async function invokeExtension(invocation: ExtensionInvocation): Promise<unknown> { desktop(); return invoke('invoke_extension', { invocation }); }
+export async function publishToolbarCatalog(surface:string,locale:'zh-CN'|'en-US',items:import('./toolbar-catalog').ToolbarItem[]):Promise<void>{desktop();return invoke('publish_toolbar_catalog',{surface,locale,items});}
 export async function resolveExtensionAction(id: string, ok: boolean, reason?: string): Promise<void> { desktop(); return invoke('resolve_extension_action', { id, ok, reason: reason ?? null }); }
 export async function openSurfaceWindow(surfaceId:string,x:number,y:number):Promise<void>{desktop();return invoke('open_extension_surface_window',{surfaceId,x,y});}
 export async function releaseSurfaceWindow(surfaceId:string):Promise<void>{desktop();return invoke('release_extension_surface_window',{surfaceId});}

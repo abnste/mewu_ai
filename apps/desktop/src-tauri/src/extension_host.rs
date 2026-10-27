@@ -2082,10 +2082,10 @@ fn bridge(
         .map_err(|message| HostCallFailure::from_error(method, &message, diagnostic))
 }
 fn tool_initialization_read(method: &str) -> bool {
-    matches!(method, "runtime.describe" | "configuration.get" | "storage.get" | "storage.list" | "services.list" | "objects.library.describe")
+    matches!(method, "runtime.describe" | "ui.toolbars.describe" | "configuration.get" | "storage.get" | "storage.list" | "services.list" | "objects.library.describe")
 }
 pub(crate) fn runtime_capabilities()->Value {
-    json!({"hostApi":mewu_extension::HOST_API,"capabilities":["ui.settings","ui.toolbar-layout","configuration.shared","secrets.network","secrets.settings","memory.archive","process.jsonlines","process.frame-bindings","process.installation-search"]})
+    json!({"hostApi":mewu_extension::HOST_API,"capabilities":["ui.settings","ui.toolbar-layout","ui.toolbar-catalog","configuration.shared","secrets.network","secrets.settings","memory.archive","process.jsonlines","process.frame-bindings","process.installation-search"]})
 }
 
 fn bridge_impl(
@@ -2116,7 +2116,7 @@ fn bridge_impl(
         "region.observe" => "region.observe",
         "region.action" => "region.input",
         "services.list" | "services.call" => "services.call",
-        "ui.render" => "ui.render",
+        "ui.render" | "ui.toolbars.describe" => "ui.render",
         "ui.transient" => "ui.overlay",
         "objects.library.describe" | "objects.library.get" | "objects.library.preview" | "objects.library.commit" | "objects.library.restore" => "objects.library",
         "process.resolve" | "process.open" | "process.write" | "process.read" | "process.close" => "process.rpc",
@@ -2138,6 +2138,7 @@ fn bridge_impl(
         return Err("当前平台尚不支持区域操作".into());
     }
     let result = match method {
+        "ui.toolbars.describe" => crate::toolbar_catalog::describe(string(&params,"surface")?),
         "memory.archive.list"|"memory.archive.page"|"memory.archive.lookup"|"memory.archive.credential"|"memory.archive.activate"|"memory.archive.forget"=>memory_archive::call(app,context,method,params),
         "secrets.status" => secrets::status(app,context,&params),
         "secrets.read" => secrets::reveal(app,context,&params),

@@ -20,7 +20,7 @@ user modifications remain intact. SDK references are generated from the same
 source as the host. `plugin_project.describe` remains the authority for the
 currently running host's contract.
 
-`plugin_project` supports describe, list, read, write and prepare. Writes use
+`plugin_project` supports describe, list, read, write, test and prepare. Writes use
 the prior project SHA-256 and an atomic replacement, and validate the manifest
 and complete JavaScript module graph without executing it. Errors return to
 the model. Source projects live in `plugin-projects/` in the same data directory.
@@ -28,6 +28,13 @@ Transport supports bounded tool arguments up to 512 KiB; each operation applies
 its own smaller payload/schema limits. An incomplete model stream never runs.
 Authoring arguments derive their JSON Schema from the same types used by the
 validator; invalid input returns its field path and expected type to the model.
+`test` runs declared service cases with JSON-pointer assertions in the real
+JavaScript runtime. Each case gets a fresh interpreter; only simulated plugin
+configuration persists between cases. It cannot access live data, credentials,
+network, processes or native actions. Failed checks return to the Agent for
+correction and block preparing those exact source bytes. Passing these checks
+does not prove GUI or platform compatibility; installation and actual interaction
+still need verification. Changing the source invalidates its previous results.
 The native workflow permits 12 model rounds and 32 executed tool calls within
 the existing time and output budgets. The execution loop and durable journal
 share the round limit; work already saved remains available if a run stops.

@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "surfaces": [
+    {
+      "id": "capture.selection",
+      "title": "截图工具",
+      "items": [
+        { "id": "reference", "kind": "button", "title": "引用", "contextual": true },
+        { "id": "add-region", "kind": "button", "title": "加选区" },
+        { "id": "delete-region", "kind": "button", "title": "删除" },
+        { "id": "separator-edit", "kind": "separator", "title": "分隔线" },
+        { "id": "draw", "kind": "button", "title": "绘制" },
+        { "id": "workflow", "kind": "button", "title": "图像处理", "contextual": true },
+        { "id": "extensions", "kind": "button", "title": "插件", "contextual": true },
+        { "id": "ocr", "kind": "button", "title": "文字", "contextual": true },
+        { "id": "translate", "kind": "button", "title": "翻译", "contextual": true },
+        { "id": "separator-capture", "kind": "separator", "title": "分隔线" },
+        { "id": "scroll", "kind": "button", "title": "长截图", "contextual": true },
+        { "id": "record", "kind": "button", "title": "录屏" },
+        { "id": "separator-export", "kind": "separator", "title": "分隔线" },
+        { "id": "copy", "kind": "button", "title": "复制" },
+        { "id": "export", "kind": "button", "title": "保存" },
+        { "id": "pin", "kind": "button", "title": "贴图", "contextual": true }
+      ]
+    }
+  ]
+}

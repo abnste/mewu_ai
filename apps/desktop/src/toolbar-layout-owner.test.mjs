@@ -13,7 +13,7 @@ const record={manifest:{id:'independent.layout',permissions:['ui.render']},revis
 async function fixture(){
  class Element {constructor(id){this.dataset={layoutId:id};this.children=[];this.parent=null;}getAttribute(){return null;}}
  let receive,config,stops=0;const calls=[];
- const context=createContext({console,HTMLElement:Element});
+ const context=createContext({console,HTMLElement:Element,setTimeout,clearTimeout});
  const synthetic=values=>new SyntheticModule(Object.keys(values),function(){for(const[k,v]of Object.entries(values))this.setExport(k,v);},{context});
  const core=synthetic(solid);
  const universal=new SourceTextModule(await readFile(new URL('../../../node_modules/solid-js/universal/dist/universal.js',import.meta.url),'utf8'),{context});await universal.link(()=>core);await universal.evaluate();
@@ -22,22 +22,51 @@ async function fixture(){
  const load=async path=>new SourceTextModule(stripTypeScriptTypes(await readFile(new URL(path,import.meta.url),'utf8'),{mode:'transform'}),{context});
  const state=await load('./extension-state.ts');await state.link(()=>{throw Error('unexpected')});await state.evaluate();
  const layout=await load('./toolbar-layout.ts');await layout.link(()=>state);await layout.evaluate();
- const api=synthetic({extensionNative:true,subscribeExtensions:async f=>{receive=f;return()=>stops++;},getExtensions:async()=>[record],invokeExtension:input=>new Promise(resolve=>calls.push({input,resolve}))});
+ const published=[];
+ const api=synthetic({extensionNative:true,subscribeExtensions:async f=>{receive=f;return()=>stops++;},getExtensions:async()=>[record],invokeExtension:input=>new Promise(resolve=>calls.push({input,resolve})),publishToolbarCatalog:async(surface,locale,items)=>published.push({surface,locale,items})});
+ const events=synthetic({listen:async(_,f)=>{config=f;return()=>stops++;}});
+ const session=await load('./toolbar-layout-session.ts');await session.link(n=>n.endsWith('/extension-bridge')?api:n.endsWith('/event')?events:n.endsWith('/extension-state')?state:layout);await session.evaluate();
+ const catalog=await load('./toolbar-catalog.ts');await catalog.link(n=>n.endsWith('.json')?synthetic({default:JSON.parse(awaitedCatalog)}):synthetic({t:s=>s}));await catalog.evaluate();
  const source=await readFile(new URL('./components/ToolbarLayout.tsx',import.meta.url),'utf8');
  const compiled=stripTypeScriptTypes(transformSync(source,{filename:'ToolbarLayout.tsx',babelrc:false,configFile:false,parserOpts:{plugins:['typescript','jsx']},presets:[[solidPreset,{generate:'universal',moduleName:'test-renderer'}]]}).code,{mode:'transform'});
- const component=new SourceTextModule(compiled,{context});await component.link(n=>n==='solid-js'?core:n==='test-renderer'?synthetic(renderer):n.endsWith('/event')?synthetic({listen:async(_,f)=>{config=f;return()=>stops++;}}):n.endsWith('/extension-bridge')?api:n.endsWith('/extension-state')?state:layout);await component.evaluate();
+ const component=new SourceTextModule(compiled,{context});await component.link(n=>n==='solid-js'?core:n.endsWith('/i18n')?synthetic({resolveLanguage:()=> 'zh-CN',uiLanguage:()=> 'zh-CN'}):n==='test-renderer'?synthetic(renderer):n.endsWith('/extension-bridge')?api:n.endsWith('/toolbar-layout-session')?session:n.endsWith('/toolbar-catalog')?catalog:layout);await component.evaluate();
  const initial=[new Element('draw'),new Element('copy'),new Element('export')];const [nodes,setNodes]=solid.createSignal(initial);const root=new Element();
  const dispose=renderer.render(()=>component.namespace.default({surface:'capture.selection',get children(){return nodes();}}),root);await tick();
- return{initial,root,calls,dispose,setNodes,receive:v=>receive(v),config:()=>config(),stops:()=>stops,element:id=>new Element(id)};
+ return{initial,root,calls,dispose,setNodes,published,hold:()=>session.namespace.startToolbarLayouts(),remount:()=>{const root=new Element();const dispose=renderer.render(()=>component.namespace.default({surface:'capture.selection',get children(){return nodes();}}),root);return{root,dispose};},receive:v=>receive(v),config:()=>config(),stops:()=>stops,element:id=>new Element(id)};
 }
+const awaitedCatalog=await readFile(new URL('../ui/toolbar-catalog.json',import.meta.url),'utf8');
 test('layout moves original nodes and handler owners, refresh does not flash default order, disable rejects late replies',async()=>{
  const f=await fixture();try{
+  assert.deepEqual(f.root.children,[], 'cold first frame must not render the default arrangement');
   assert.equal(f.calls.length,1);f.calls[0].resolve({order:['copy','export','draw']});await tick();
   assert.deepEqual(f.root.children,[f.initial[1],f.initial[2],f.initial[0]]);
   f.config();assert.deepEqual(f.root.children,[f.initial[1],f.initial[2],f.initial[0]]);
   assert.equal(f.calls.length,2);f.receive([{...record,revision:2,state:'disabled'}]);
-  assert.deepEqual(f.root.children,f.initial);f.calls[1].resolve({order:['export','copy']});await tick();assert.deepEqual(f.root.children,f.initial);
+  await tick();assert.deepEqual(f.root.children,f.initial);f.calls[1].resolve({order:['export','copy']});await tick();assert.deepEqual(f.root.children,f.initial);
  }finally{f.dispose();}assert.equal(f.stops(),2);
+});
+
+test('remount uses the saved layout in its first frame; configuration invalidation cannot replay stale cache',async()=>{
+ const f=await fixture(),release=f.hold();let next;
+ try{
+  f.calls[0].resolve({order:['export','copy','draw']});await tick();f.dispose();
+  next=f.remount();assert.deepEqual(next.root.children,[f.initial[2],f.initial[1],f.initial[0]]);assert.equal(f.calls.length,1);
+  next.dispose();f.config();next=f.remount();assert.deepEqual(next.root.children,[]);assert.equal(f.calls.length,2);
+  f.calls[1].resolve({order:['copy','draw','export']});await tick();assert.deepEqual(next.root.children,[f.initial[1],f.initial[0],f.initial[2]]);
+ }finally{next?.dispose();f.dispose();release();}
+});
+
+test('host catalog supplies actual captions and explicit separator kind before any screenshot history',async()=>{
+ const catalog=JSON.parse(awaitedCatalog).surfaces.find(s=>s.id==='capture.selection');
+ assert.deepEqual(catalog.items.filter(i=>i.kind==='separator').map(i=>i.id),['separator-edit','separator-capture','separator-export']);
+ assert.equal(catalog.items.find(i=>i.id==='ocr').title,'文字');assert.equal(catalog.items.find(i=>i.id==='export').title,'保存');
+ const f=await fixture();try{
+  const separator=f.element('separator-edit');f.setNodes([f.initial[0],separator,...f.initial.slice(1)]);await tick();
+  assert.equal(f.published.at(-1).items.find(i=>i.id==='separator-edit').kind,'separator');
+  f.calls.at(-1).resolve({order:['copy','separator-edit','draw','export']});await tick();
+  assert.deepEqual(f.root.children,[f.initial[1],separator,f.initial[0],f.initial[2]]);
+  f.calls[0].resolve({order:['draw']});await tick();assert.deepEqual(f.root.children,[f.initial[1],separator,f.initial[0],f.initial[2]]);
+ }finally{f.dispose();}
 });
 test('popover appearance cannot restart a layout request or replace the existing control nodes',async()=>{
  const f=await fixture();try{
