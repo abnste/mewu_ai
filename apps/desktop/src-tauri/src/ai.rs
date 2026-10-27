@@ -1140,6 +1140,28 @@ fn append_fragment(
     Ok(fragment.len())
 }
 
+// Some OpenAI-compatible providers repeat the complete tool identity on every
+// arguments delta. Preserve fragmented identities too, but never concatenate an
+// exact repeat of the identity already assembled. Arguments remain pure deltas.
+fn append_tool_identity(
+    target: &mut String,
+    value: Option<&Value>,
+    limit: usize,
+) -> Result<(), String> {
+    if value.and_then(Value::as_str) == Some(target.as_str()) {
+        return Ok(());
+    }
+    append_fragment(target, value, limit)
+        .map(|_| ())
+        .map_err(|error| {
+            if error == "回复内容超过长度上限" {
+                "工具调用标识超过长度上限".to_owned()
+            } else {
+                error
+            }
+        })
+}
+
 #[derive(Default)]
 struct ReplyAccumulator {
     turn: ModelTurn,
@@ -1258,10 +1280,10 @@ impl ReplyAccumulator {
                         name: String::new(),
                         arguments: String::new(),
                     });
-                append_fragment(&mut partial.id, call.get("id"), 128)?;
+                append_tool_identity(&mut partial.id, call.get("id"), 128)?;
                 if let Some(function) = call.get("function").filter(|v| !v.is_null()) {
                     let function = function.as_object().ok_or("工具函数格式无效")?;
-                    append_fragment(&mut partial.name, function.get("name"), 64)?;
+                    append_tool_identity(&mut partial.name, function.get("name"), 64)?;
                     let added = append_fragment(
                         &mut partial.arguments,
                         function.get("arguments"),
@@ -3685,6 +3707,46 @@ pub(crate) mod tests {
         let turn=consume_turn_bytes(futures_util::stream::iter([Ok::<_,String>(data.into_bytes())]), |_|{},true).await.unwrap();
         assert_eq!(turn.tool_calls.len(),1); assert_eq!(turn.tool_calls[0].arguments,arguments);
         assert!(turn.content.is_empty());
+    }
+
+    #[tokio::test]
+    async fn repeated_complete_tool_identities_do_not_duplicate_ids_or_argument_deltas() {
+        let mut data = String::new();
+        // Matches the observed MiniMax stream: same id on each arguments delta.
+        // Interleave two calls and repeat argument text to rule out deduplication
+        // of the payload or accidental merging of calls by name.
+        for (i, fragment) in ["{\"text\":\"", "same", "same", "same", "same", "same", "\"}"].iter().enumerate() {
+            data.push_str(&tool_event(json!({"tool_calls": [
+                {"index": 0, "id": "chatcmpl-tool-9ca2a464134ddc89", "function": {"name": "memory_read", "arguments": fragment}},
+                {"index": 1, "id": "chatcmpl-tool-bbbbbbbbbbbbbbbb", "function": {"name": "memory_read", "arguments": fragment}}
+            ]}), (i == 6).then_some("tool_calls")));
+        }
+        let turn = consume_turn_bytes(futures_util::stream::iter(
+            data.as_bytes().chunks(7).map(|chunk| Ok::<_, String>(chunk.to_vec()))
+        ), |_| {}, true).await.unwrap();
+        assert_eq!(turn.tool_calls.len(), 2);
+        assert_eq!(turn.tool_calls[0].id, "chatcmpl-tool-9ca2a464134ddc89");
+        assert_eq!(turn.tool_calls[1].id, "chatcmpl-tool-bbbbbbbbbbbbbbbb");
+        for call in turn.tool_calls {
+            assert_eq!(call.name, "memory_read");
+            assert_eq!(call.arguments, r#"{"text":"samesamesamesamesame"}"#);
+        }
+    }
+
+    #[test]
+    fn tool_identity_deduplication_preserves_type_length_and_final_uniqueness_checks() {
+        for invalid in [json!(42), json!({"id":"x"}), json!("x".repeat(129))] {
+            assert!(append_tool_identity(&mut String::new(), Some(&invalid), 128).is_err());
+        }
+        let mut id = "prefix".to_owned();
+        append_tool_identity(&mut id, Some(&json!("-suffix")), 128).unwrap();
+        assert_eq!(id, "prefix-suffix");
+        append_tool_identity(&mut id, Some(&json!("prefix-suffix")), 128).unwrap();
+        assert_eq!(id, "prefix-suffix");
+        let mut accumulator = ReplyAccumulator::default();
+        let data = json!({"choices":[{"index":0,"delta":{"tool_calls":[complete_call(0,"same","{}"),complete_call(1,"same","{}")]},"finish_reason":"tool_calls"}]}).to_string();
+        accumulator.event(&data, &mut |_| {}, true).unwrap();
+        assert!(accumulator.finish().is_err());
     }
 
     #[tokio::test]
