@@ -298,7 +298,7 @@ pub fn extract_frames(
         for &tick in requested {
             check()?;
             let mut reader =
-                Reader::open(source, expected.width, expected.height).map_err(convert)?;
+                Reader::open_presentation(source, expected.width, expected.height, cancel).map_err(convert)?;
             reader
                 .seek_once(tick.0.saturating_sub(nominal_frame.saturating_mul(2)), 240)
                 .map_err(convert)?;
@@ -497,10 +497,11 @@ impl PlaybackFrames {
         start: u64,
         cancel: &AtomicBool,
     ) -> Result<Self, ClipError> {
-        let mut reader = crate::video_gif_backend::source_stream::Reader::open(
+        let mut reader = crate::video_gif_backend::source_stream::Reader::open_presentation(
             source,
             expected.width,
             expected.height,
+            cancel,
         )
         .map_err(media_error)?;
         let nominal = (10_000_000u64 * u64::from(expected.frame_rate_denominator))
@@ -3296,6 +3297,30 @@ pub(crate) mod tests {
             );
             assert!(fs::read_dir(empty).unwrap().next().is_none());
             assert_eq!(sha(&source), source_hash);
+        }
+
+        #[test]
+        #[ignore = "explicit synthetic H.264 B-frame fixture with a 200ms edit; no user media"]
+        fn supplied_synthetic_decoder_start() {
+            let source = PathBuf::from(std::env::var_os("MEWU_SYNTHETIC_VIDEO").expect("synthetic video path"));
+            let _runtime = Runtime::new().unwrap();
+            let cancel = AtomicBool::new(false);
+            for seek in [false, true] {
+                let mut reader = Reader::open(&source, 960, 640).unwrap();
+                if seek { reader.seek_once(0, 240).unwrap(); }
+                for index in 0..4 {
+                    let frame = reader.next(&cancel).unwrap().unwrap();
+                    println!("seek={seek} index={index} pts={} duration={}", frame.pts, frame.duration);
+                }
+            }
+            let info = VideoMetadata { duration_ticks:60_000_000,width:960,height:640,
+                frame_rate_numerator:10,frame_rate_denominator:1,has_audio:false };
+            let range = VideoRange {start_ticks:0,end_ticks:info.duration_ticks};
+            let frames=extract_frames(&source,&info,&range,&[SourcePlaybackTicks(0),SourcePlaybackTicks(10_000_000),SourcePlaybackTicks(50_000_000)],&cancel).unwrap();
+            assert_eq!(frames.iter().map(|f|f.actual_pts_ticks).collect::<Vec<_>>(),vec![0,10_000_000,50_000_000]);
+            let mut playback=PlaybackFrames::open(&source,&info,0,&cancel).unwrap();
+            assert_eq!(playback.rgba_at(SourcePlaybackTicks(0),&cancel).unwrap(),frames[0].rgba);
+            assert!(playback.rgba_at(SourcePlaybackTicks(59_000_000),&cancel).is_ok());
         }
     }
 }

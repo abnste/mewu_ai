@@ -54,6 +54,24 @@ fn table_version_type_is_advertised_and_rejection_teaches_the_actual_contract() 
 }
 
 #[test]
+fn table_alignment_failure_returns_valid_column_array_example_without_rejected_content() {
+    let scope = tests::scope(tests::normalized_input());
+    let mut args = tests::normalized_args(&scope.input);
+    *object(&mut args) = json!({"kind":"table","points":[{"x":0,"y":0},{"x":1000,"y":1000}],
+        "table":{"version":1,"header":["private-secret","value"],"rows":[["A","1"]],"align":"center"}});
+    let error = rejection(&scope, &args);
+    diagnostic(&error, "$/groups/0/objects/0/table/align", DiagnosticReason::Type);
+    let mut fixture = ReceiptFixture::new();
+    let (_, output) = reject_arguments(&mut fixture.store, &fixture.lease, &error, &scope.input).unwrap();
+    assert!(!output.model_json.contains("private-secret"));
+    let feedback: Value = serde_json::from_str(&output.model_json).unwrap();
+    assert!(jsonschema::validator_for(&feedback["tableSchema"]).unwrap().is_valid(&feedback["tableExample"]));
+    object(&mut args)["table"] = feedback["tableExample"].clone();
+    assert!(scope.parse_plan_diagnosed(&args.to_string()).is_ok());
+    assert_eq!(fixture.detail().entry.phase, ReceiptPhase::NotSent);
+}
+
+#[test]
 fn visual_diagnostics_locate_points_triangle_style_and_formula_without_raw_values() {
     let scope = tests::scope(tests::normalized_input());
     let original = tests::normalized_args(&scope.input);

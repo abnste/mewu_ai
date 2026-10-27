@@ -354,6 +354,8 @@ fn reject_arguments(
                 if let Some(table) = schema["properties"]["objects"]["items"]["oneOf"]
                     .as_array().and_then(|branches| branches.iter().find(|branch| branch["properties"]["kind"]["const"] == "table")) {
                     feedback["tableSchema"] = table["properties"]["table"].clone();
+                    feedback["tableExample"] = json!({"version":1,"header":["项目","数值"],"rows":[["示例","1"]],"align":["left","right"]});
+                    feedback["tableGuidance"] = json!("table is an object with version (integer 1), header (string array), rows (array of string arrays) and align (array with one alignment per column, e.g. [\"left\",\"right\"]). align must not be a single string. Replace example cell text with the requested content; preserve the array structure.");
                 }
             }
         }
@@ -445,7 +447,7 @@ fn group_definition(target: &mewu_core::VisualInputTarget) -> Value {
         "table":{"type":"object","additionalProperties":false,"required":["version","header","rows","align"],"properties":{
             "version":{"type":"integer","const":1,"description":"Integer 1, not the string \"1\"."},"header":{"type":"array","minItems":1,"maxItems":32,"items":{"type":"string"}},
             "rows":{"type":"array","maxItems":199,"items":{"type":"array","minItems":1,"maxItems":32,"items":{"type":"string"}}},
-            "align":{"type":"array","minItems":1,"maxItems":32,"items":{"enum":["left","center","right",null]}}
+            "align":{"type":"array","description":"One alignment per column, e.g. [\"left\",\"right\"], never a scalar string.","minItems":1,"maxItems":32,"items":{"enum":["left","center","right",null]}}
         }}
     }});
     let formula = json!({"type":"object","additionalProperties":false,"required":["kind","points","tex","color","fontSize"],"properties":{

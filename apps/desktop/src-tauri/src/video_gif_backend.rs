@@ -13,6 +13,10 @@ use std::{
 #[cfg(windows)]
 pub(crate) use platform::source_stream;
 
+#[cfg(any(windows, test))]
+#[path = "video_presentation_offset.rs"]
+mod presentation_offset;
+
 pub(crate) fn boundary(index: u32, total: u32, count: u32) -> u64 {
     (u64::from(index) * u64::from(total) + u64::from(count / 2)) / u64::from(count)
 }
@@ -240,7 +244,7 @@ mod platform {
         let start = range.map_or(0, |r| r.start_ticks);
         let end = range.map_or(expected.duration_ticks, |r| r.end_ticks);
         let duration = end - start;
-        let mut reader = source_stream::Reader::open(source, expected.width, expected.height)?;
+        let mut reader = source_stream::Reader::open_presentation(source, expected.width, expected.height, cancel)?;
         let mut current = loop {
             let frame = reader.next(cancel)?.ok_or(ClipError::InvalidRange)?;
             if frame.pts >= end {
@@ -591,6 +595,7 @@ mod platform {
             eof: bool,
             read_calls: u64,
             read_limit: u64,
+            presentation_offset: u64,
             _mf: Mf,
         }
         impl Reader {
@@ -630,9 +635,26 @@ mod platform {
                         eof: false,
                         read_calls: 0,
                         read_limit: 500_000,
+                        presentation_offset: 0,
                         _mf: mf,
                     })
                 }
+            }
+            /// MF may expose H.264 composition timestamps before the container
+            /// edit is applied. Correct only an edit matching the first native
+            /// sample, never an arbitrary non-zero start or an already mapped source.
+            pub fn open_presentation(path: &Path, width: u32, height: u32, cancel: &AtomicBool) -> Result<Self> {
+                check(cancel)?;
+                let mut probe = Self::open(path, width, height)?;
+                probe.seek_once(0, 240)?;
+                let first = probe.next(cancel)?.ok_or("empty source")?;
+                let offset = super::super::presentation_offset::encoder_lead_in(path, first.pts);
+                drop(first);
+                drop(probe);
+                check(cancel)?;
+                let mut reader = Self::open(path, width, height)?;
+                reader.presentation_offset = offset;
+                Ok(reader)
             }
             /// Bounded input analysis may seek once before its first read. GIF
             /// export never calls this method and retains its original stream.
@@ -652,7 +674,9 @@ mod platform {
                 unsafe {
                     let mut position = PROPVARIANT::default();
                     (*position.Anonymous.Anonymous).vt = VT_I8;
-                    (*position.Anonymous.Anonymous).Anonymous.hVal = ticks as i64;
+                    (*position.Anonymous.Anonymous).Anonymous.hVal = i64::try_from(
+                        ticks.checked_add(self.presentation_offset).ok_or("source seek overflow")?
+                    )?;
                     let result = self.reader.SetCurrentPosition(&GUID::zeroed(), &position);
                     let cleared = PropVariantClear(&mut position);
                     result?;
@@ -712,7 +736,8 @@ mod platform {
                         }
                         self.eof = flags & MF_SOURCE_READERF_ENDOFSTREAM.0 as u32 != 0;
                         if let Some(sample) = sample {
-                            let pts = u64::try_from(time)?;
+                            let pts = u64::try_from(time)?.checked_sub(self.presentation_offset)
+                                .ok_or("source timestamp precedes verified edit")?;
                             let duration = u64::try_from(sample.GetSampleDuration()?)?;
                             if duration == 0
                                 || self.previous.is_some_and(|previous| pts <= previous)

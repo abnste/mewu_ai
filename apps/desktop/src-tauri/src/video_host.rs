@@ -340,7 +340,7 @@ fn ensure_space(window: &WebviewWindow) -> Result<(), String> {
         Err("此窗口不能操作视频".into())
     }
 }
-fn window_handle(window: &WebviewWindow) -> Result<usize, String> {
+pub(crate) fn window_handle(window: &WebviewWindow) -> Result<usize, String> {
     #[cfg(windows)]
     {
         window

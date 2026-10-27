@@ -187,23 +187,9 @@ fn check_scene(
 }
 fn space_handle(app: &AppHandle) -> Result<usize, String> {
     let window = app.get_webview_window("space").ok_or("空间窗口不可用")?;
-    #[cfg(windows)]
-    {
-        window
-            .hwnd()
-            .map(|handle| handle.0 as usize)
-            .map_err(|_| "空间窗口不可用".into())
-    }
-    #[cfg(target_os = "macos")]
-    {
-        // Reuse the actual revocable space-window admission used by video saves.
-        crate::window_witness_macos::window_handle(&window)
-    }
-    #[cfg(not(any(windows, target_os = "macos")))]
-    {
-        let _ = window;
-        Err("当前系统不支持视频原位作答".into())
-    }
+    // Input and export must admit the same revocable native window on every
+    // platform, including the GTK witness used by Wayland and X11.
+    video_host::window_handle(&window)
 }
 fn gate(
     app: &AppHandle,

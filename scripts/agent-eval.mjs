@@ -23,7 +23,12 @@ function call(method, params = {}, wait = false) {
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
     let stdout = '', stderr = '';
-    const timeout = setTimeout(() => { child.kill(); reject(Error(`CLI observation timed out: ${method}; operation was NOT resent`)); }, 120_000);
+    const timeout = setTimeout(() => {
+      cliFailures.push({ method, observationTimedOut: true, stdout, stderr });
+      save('cli-failures.json', cliFailures);
+      child.kill();
+      reject(Object.assign(Error(`CLI observation timed out: ${method}; operation was NOT resent`), { executionUnknown: true }));
+    }, 120_000);
     child.stdout.on('data', chunk => { stdout += chunk.toString(); });
     child.stderr.on('data', chunk => { stderr += chunk.toString(); });
     child.on('error', error => { clearTimeout(timeout); reject(error); });
@@ -77,7 +82,7 @@ try {
     try {
       await call('chat.send', { context, text: test.prompt, refs: imported.map(item => ({ kind: 'item', id: item.itemId })) }, true);
     } catch (error) {
-      if (error.cliExitCode !== 6) throw error;
+      if (error.cliExitCode !== 6 && !error.executionUnknown) throw error;
       // Unknown execution is not a retry signal (e.g. OS keyring confirmation).
       // Observe this newly-created scene only; preserve the original timeout.
       record.sendObservation = String(error);
