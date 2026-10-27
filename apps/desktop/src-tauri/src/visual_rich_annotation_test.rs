@@ -543,6 +543,25 @@ async fn cancellation_after_real_table_render_discards_uncommitted_pixels() {
 }
 
 #[test]
+fn formula_parser_rejection_is_durable_correctable_and_does_not_classify_strings() {
+    use crate::formula_layout::RenderFailure;
+    assert!(matches!(preparation::Failure::from(RenderFailure::InvalidTex),
+        preparation::Failure::Correctable(preparation::Rejection::InvalidFormula)));
+    for error in ["formula_parse_error", "formula_cancelled", "formula_worker_exit", "formula_identity_mismatch"] {
+        assert!(matches!(preparation::Failure::from(RenderFailure::Hard(error.into())), preparation::Failure::Hard(_)));
+    }
+    let mut fixture = Fixture::new();
+    let (_, output) = preparation::reject(&mut fixture.store, &fixture.lease,
+        preparation::Rejection::InvalidFormula).unwrap();
+    let feedback: Value = serde_json::from_str(&output.model_json).unwrap();
+    assert_eq!(feedback["code"], "formula_parse_error");
+    assert_eq!(feedback["executed"], false);
+    assert_eq!(feedback["correctable"], true);
+    assert!(fixture.store.run_is_active(&fixture.scene, &fixture.run));
+    assert!(fixture.store.snapshot().scenes[0].regions[0].drawings.is_empty());
+}
+
+#[test]
 fn preparation_feedback_requires_a_durable_receipt_and_never_overwrites_unknown() {
     let mut fixture = Fixture::new();
     let db = Connection::open(fixture.root.join("spaces.db")).unwrap();
@@ -597,6 +616,21 @@ async fn product_formula_worker_renders_four_math_cases_in_mixed_sqlite_document
     assert!(output.starts_with(&private) && output != private);
     let worker_root = output.join("synthetic-worker-data");
     std::fs::create_dir(&worker_root).unwrap();
+    // A real supervised parser failure after a valid table must reject the
+    // whole batch and return a typed correction, not terminate the Agent run.
+    let mut invalid = Fixture::new();
+    let before = invalid.proof();
+    let mut bad = table_args(&invalid.input);
+    bad["groups"][0]["objects"] = json!([table_object(), {"kind":"formula",
+        "points":[{"x":500,"y":50},{"x":950,"y":950}],
+        "tex":"\\frac{", "color":"#173F8A", "fontSize":24}]);
+    let rejection = render_plan(parse_plan(&bad.to_string(), &invalid.input).unwrap(),
+        worker_root.clone(), || Ok(())).await.unwrap_err();
+    assert!(matches!(rejection, preparation::Failure::Correctable(preparation::Rejection::InvalidFormula)));
+    assert_eq!(invalid.proof(), before);
+    let (_, feedback) = preparation::reject(&mut invalid.store, &invalid.lease,
+        preparation::Rejection::InvalidFormula).unwrap();
+    assert_eq!(serde_json::from_str::<Value>(&feedback.model_json).unwrap()["executed"], false);
     let cases = [
         ("fraction", r"\frac{a+b}{c+d}"),
         ("chinese-label", r"\text{面积}=r^2"),

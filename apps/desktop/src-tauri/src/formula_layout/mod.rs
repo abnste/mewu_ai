@@ -29,6 +29,25 @@ pub(crate) const MAX_PNG: usize = 8 * 1024 * 1024;
 pub(crate) const MAX_CONFIG: usize = 32 * 1024;
 pub(crate) const MAX_FRAME: usize = 64 * 1024;
 
+/// Only a verified worker's parser rejection is safe to return as a
+/// correctable argument error. Infrastructure failures never gain that status.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum RenderFailure {
+    InvalidTex,
+    Hard(String),
+}
+impl From<String> for RenderFailure {
+    fn from(value: String) -> Self { Self::Hard(value) }
+}
+impl From<&str> for RenderFailure {
+    fn from(value: &str) -> Self { Self::Hard(value.into()) }
+}
+impl std::fmt::Display for RenderFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self { Self::InvalidTex => "formula_parse_error", Self::Hard(value) => value })
+    }
+}
+
 /// Adapt the already validated RichContent::Formula variant, never old text/cell strings.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -185,7 +204,7 @@ pub async fn render_formula(
         .await
         .map_err(|_| "formula_host_interrupted")?;
     guard.armed = false;
-    result
+    result.map_err(|error| error.to_string())
 }
 
 /// Synchronous VisualScope callers must run this outside Engine/plugin locks,
@@ -195,14 +214,14 @@ pub fn render_formula_blocking(
     resources: Resources,
     cancel: Cancellation,
 ) -> Result<FormulaLayout, String> {
-    supervise::run(input, resources, cancel)
+    supervise::run(input, resources, cancel).map_err(|error| error.to_string())
 }
 pub fn render_formula_embedded_blocking(
     input: FormulaInput,
     app_owned_root: PathBuf,
     cancel: Cancellation,
 ) -> Result<FormulaLayout, String> {
-    supervise::run_embedded(input, app_owned_root, cancel)
+    supervise::run_embedded(input, app_owned_root, cancel).map_err(|error| error.to_string())
 }
 /// First-use embedding preparation and rendering both run off the UI/async
 /// executor thread. A normally completed call leaves a batch token usable.
@@ -211,6 +230,14 @@ pub async fn render_formula_embedded(
     app_owned_root: PathBuf,
     cancel: Cancellation,
 ) -> Result<FormulaLayout, String> {
+    render_formula_embedded_diagnosed(input, app_owned_root, cancel).await.map_err(|error| error.to_string())
+}
+
+pub(crate) async fn render_formula_embedded_diagnosed(
+    input: FormulaInput,
+    app_owned_root: PathBuf,
+    cancel: Cancellation,
+) -> Result<FormulaLayout, RenderFailure> {
     input.validate()?;
     let mut guard = CancelOnDrop {
         token: cancel.clone(),

@@ -259,7 +259,7 @@ pub(super) fn run(
     input: FormulaInput,
     resources: Resources,
     cancel: Cancellation,
-) -> Result<FormulaLayout, String> {
+) -> Result<FormulaLayout, RenderFailure> {
     register(&cancel)?;
     input.validate()?;
     if cancel.is_cancelled() {
@@ -275,7 +275,7 @@ pub(super) fn run_embedded(
     input: FormulaInput,
     root: PathBuf,
     cancel: Cancellation,
-) -> Result<FormulaLayout, String> {
+) -> Result<FormulaLayout, RenderFailure> {
     register(&cancel)?;
     input.validate()?;
     if cancel.is_cancelled() {
@@ -325,7 +325,7 @@ fn run_owned(
     resources: Resources,
     cancel: Cancellation,
     mut permit: Permit,
-) -> Result<FormulaLayout, String> {
+) -> Result<FormulaLayout, RenderFailure> {
     if cancel.is_cancelled() {
         return Err("formula_cancelled".into());
     }
@@ -476,11 +476,13 @@ fn run_owned(
         return Err("formula_cancelled".into());
     }
     let result = result.ok_or("formula_protocol_incomplete")?;
+    if result.status == "parse_error" {
+        return Err(RenderFailure::InvalidTex);
+    }
     if result.status != "rendered" {
         // Fixed vocabulary only. Do not return renderer/parser text or TeX.
         return Err(match result.status.as_str() {
             "missing_glyph" => "formula_missing_glyph",
-            "parse_error" => "formula_parse_error",
             "renderer_panic" => "formula_renderer_panic",
             "input_budget" | "layout_budget" | "svg_budget" | "pixel_budget" | "png_budget" => {
                 "formula_render_budget"

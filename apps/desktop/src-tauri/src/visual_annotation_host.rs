@@ -1309,7 +1309,7 @@ async fn render_plan(
                                 color: color.clone(),
                                 font_size: *font_size,
                             };
-                            let result = crate::formula_layout::render_formula_embedded(
+                            let result = crate::formula_layout::render_formula_embedded_diagnosed(
                                 input.clone(),
                                 root.clone(),
                                 crate::formula_layout::Cancellation::default(),
