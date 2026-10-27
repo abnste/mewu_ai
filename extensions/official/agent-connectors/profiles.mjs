@@ -56,11 +56,11 @@ export async function detectProfile(ctx,profile){
   const roots=found.platform==='windows'?['${programFiles}/WorkBuddy','${localAppData}/Programs/WorkBuddy','${localAppData}/WorkBuddy']
     :found.platform==='macos'?['/Applications/WorkBuddy.app/Contents']:[];
   if(!roots.length)return {executable:'',args:profile.args,platform:found.platform};
-  const candidates=roots.map(root=>root.startsWith('/Applications')?root+'/MacOS/WorkBuddy':root+'/WorkBuddy.exe');
+  const candidates=roots.flatMap(root=>root.startsWith('/Applications')?[root+'/MacOS/WorkBuddy',root+'/MacOS/Electron']:[root+'/WorkBuddy.exe']);
   const scripts=roots.flatMap(root=>['bin/codebuddy','dist/codebuddy.js'].map(name=>root+(root.startsWith('/Applications')?'/Resources':'/resources')+'/app.asar.unpacked/cli/'+name));
   const bundle=await ctx.processes.resolve(candidates,scripts);
   for(const executable of bundle.executables){
-    const root=executable.replaceAll('\\','/').replace(/\/(?:MacOS\/)?WorkBuddy(?:\.exe)?$/i,'').toLowerCase();
+    const root=executable.replaceAll('\\','/').replace(/\/(?:MacOS\/(?:WorkBuddy|Electron)|WorkBuddy\.exe)$/i,'').toLowerCase();
     const script=(bundle.files??[]).find(path=>path.replaceAll('\\','/').toLowerCase().startsWith(root+'/'));
     if(script)return {executable,args:[script],transport:'workbuddy-http',env:{ELECTRON_RUN_AS_NODE:'1',CODEBUDDY_FORCE_LITE_WB_BUNDLE:'1',CODEBUDDY_CONFIG_DIR:'${home}/.workbuddy'},platform:bundle.platform};
   }

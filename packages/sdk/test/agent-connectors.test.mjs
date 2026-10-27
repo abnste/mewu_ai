@@ -159,6 +159,26 @@ test('WorkBuddy discovery sends only absolute candidates for the actual host pla
   }
 });
 
+test('Mac WorkBuddy desktop resolves official Electron executable and keeps its CLI in the same bundle',async()=>{
+  for(const binary of ['WorkBuddy','Electron']){
+    const f=fixture(acp),root='/Applications/WorkBuddy.app/Contents';let calls=0;
+    f.ctx.processes.resolve=async(candidates,files=[])=>{
+      if(++calls===1)return {platform:'macos',executables:[]};
+      assert.ok(candidates.includes(`${root}/MacOS/${binary}`));
+      assert.ok(files.includes(`${root}/Resources/app.asar.unpacked/cli/bin/codebuddy`));
+      return {platform:'macos',executables:[`${root}/MacOS/${binary}`],files:[
+        '/Applications/Another.app/Contents/Resources/app.asar.unpacked/cli/bin/codebuddy',
+        `${root}/Resources/app.asar.unpacked/cli/bin/codebuddy`
+      ]};
+    };
+    const found=await detectProfile(f.ctx,profiles.find(p=>p.id==='workbuddy'));
+    assert.equal(found.executable,`${root}/MacOS/${binary}`);
+    assert.deepEqual(found.args,[`${root}/Resources/app.asar.unpacked/cli/bin/codebuddy`]);
+    assert.equal(found.transport,'workbuddy-http');
+    assert.equal(found.env.ELECTRON_RUN_AS_NODE,'1');
+  }
+});
+
 test('WorkBuddy bridge accepts the native resolver Windows namespace script path',()=>{
   const executable=String.raw`\\?\C:\Program Files\WorkBuddy\WorkBuddy.exe`;
   const cli=String.raw`\\?\C:\Program Files\WorkBuddy\resources\app.asar.unpacked\cli\bin\codebuddy`;
