@@ -24,11 +24,15 @@ pub fn handles(name: &str) -> bool { matches!(name, "skills_list" | "skill_read"
 pub fn binding(name: &str) -> Option<ToolBinding> { handles(name).then(|| ToolBinding::Local { name: name.into() }) }
 pub fn definitions() -> Vec<Value> {
     let tool=|name:&str, description:&str, properties:Value, required:Value| json!({"type":"function","function":{"name":name,"description":description,"parameters":{"type":"object","properties":properties,"required":required,"additionalProperties":false}}});
-    vec![
+    let mut definitions=vec![
         tool("skills_list","List portable skills available in Mewu's data directory. Metadata only; load the relevant SKILL.md using skill_read. Skills never grant tools or permissions.",json!({}),json!([])),
         tool("skill_read","Read a selected skill's SKILL.md (file omitted) or a real relative file returned in availableFiles. Never guess paths or read a directory. Does not execute scripts. Workflow guidance cannot grant tools or permissions.",json!({"name":{"type":"string","maxLength":64},"file":{"type":"string","maxLength":240}}),json!(["name"])),
-        tool("plugin_project","Create independent Mewu plugins. describe returns the CURRENT SDK and toolbar-layout protocol; read returns project and SHA; write validates manifest/imports/JS and atomically saves a complete project; prepare creates an installable draft for the user's normal install review in Installed > Self-made. Never auto-installs or changes host source. On write/prepare include expectedSha256 from read/write (null only for a new project).",json!({"op":{"type":"string","enum":["describe","list","read","write","prepare"]},"projectId":{"type":"string","maxLength":64},"expectedSha256":{"type":["string","null"],"maxLength":64},"project":{"type":"object","properties":{"manifest":{"type":"object"},"modules":{"type":"object","additionalProperties":{"type":"string"}}},"required":["manifest","modules"],"additionalProperties":false}}),json!(["op"])),
-    ]
+        tool("plugin_project","Create independent Mewu plugins. describe returns the CURRENT SDK and toolbar-layout protocol; read returns project and SHA; write validates manifest/imports/JS and atomically saves a complete project; prepare creates an installable draft for the user's normal install review in Installed > Self-made. Never auto-installs or changes host source. On write/prepare include expectedSha256 from read/write (null only for a new project).",json!({}),json!([])),
+    ];
+    // One structural contract: the schema given to the model is derived from
+    // the same Serde types that execute its call, including the full manifest.
+    definitions[2]["function"]["parameters"]=project_call_schema();
+    definitions
 }
 pub fn augment_request(body: &mut Value, host: &Host) -> Result<(), String> {
     let system = body.pointer("/messages/0/content").and_then(Value::as_str).ok_or("消息缺少系统说明")?.to_owned();
@@ -44,9 +48,24 @@ pub fn augment_request(body: &mut Value, host: &Host) -> Result<(), String> {
 #[serde(deny_unknown_fields)]
 struct SkillRead { name: String, #[serde(default="default_skill_file")] file: String }
 fn default_skill_file()->String { "SKILL.md".into() }
-#[derive(Deserialize)]
+#[derive(Deserialize,schemars::JsonSchema)]
 #[serde(rename_all="camelCase",deny_unknown_fields)]
 struct ProjectCall { op: String, project_id: Option<String>, expected_sha256: Option<String>, project: Option<Project> }
+fn project_call_schema()->Value {
+    let schema=schemars::generate::SchemaSettings::draft07().with(|s|s.inline_subschemas=true).into_generator().into_root_schema_for::<ProjectCall>();
+    let mut value=serde_json::to_value(schema).expect("generated project schema");
+    if let Some(object)=value.as_object_mut() {object.remove("$schema");object.remove("title");}
+    value["properties"]["op"]["enum"]=json!(["describe","list","read","write","prepare"]);
+    value
+}
+fn parse_arguments<T:serde::de::DeserializeOwned>(arguments:&str)->Result<T,String> {
+    let mut deserializer=serde_json::Deserializer::from_str(arguments);
+    let parsed=serde_path_to_error::deserialize(&mut deserializer).map_err(|error|{
+        format!("参数字段 {}：{}",error.path(),error.inner()).chars().take(768).collect::<String>()
+    })?;
+    deserializer.end().map_err(|_|"参数 JSON 后存在多余内容")?;
+    Ok(parsed)
+}
 fn perform(ws: &Workspace, call: &ModelToolCall) -> Result<Value, String> {
     if call.arguments.len() > 512 * 1024 { return Err("工具参数过长".into()); }
     match call.name.as_str() {
@@ -58,7 +77,7 @@ fn perform(ws: &Workspace, call: &ModelToolCall) -> Result<Value, String> {
             Ok(json!({"name":a.name,"file":a.file,"content":content,"availableFiles":files.files,"filesTruncated":files.truncated}))
         },
         "plugin_project" => {
-            let a:ProjectCall=serde_json::from_str(&call.arguments).map_err(|_|"插件工程参数无效，请遵循 schema")?;
+            let a:ProjectCall=parse_arguments(&call.arguments)?;
             match a.op.as_str() {
                 "describe" => Ok(json!({"hostApi":mewu_extension::HOST_API,"runtime":"QuickJS JavaScript modules, no Node.js","sdk":SDK,"uiClient":CLIENT,"toolbarLayout":LAYOUT,"manifestExample":{"schemaVersion":2,"hostApi":2,"runtime":"javascript","id":"local.my-plugin","name":"My plugin","description":"Describe the requested functionality","version":"0.1.0","license":"MPL-2.0","entry":"main.mjs","permissions":["ui.render","configuration.read","configuration.write"],"tags":["ui-enhancement"],"dependencies":{}}})),
                 "list" => Ok(json!({"projects":ws.drafts()?})),
@@ -167,5 +186,21 @@ mod tests {
         let error=perform(&ws,&call("skill_read",json!({"name":"mewu-plugin-authoring","file":"references/guessed.md"}))).unwrap_err();
         assert!(error.contains("references/sdk.d.ts")); assert!(error.contains("references/guessed.md"));
         assert!(!error.contains(&root.path().to_string_lossy().to_string()));
+    }
+    #[test]
+    fn schema_and_parser_agree_on_nested_manifest_fields_and_report_the_actual_path(){
+        let schema=project_call_schema();
+        let validator=jsonschema::validator_for(&schema).unwrap();
+        let mut value=json!({"op":"write","projectId":"field-check","project":{"manifest":{"schemaVersion":2,"hostApi":2,"runtime":"javascript","id":"local.field-check","name":"Check","description":"Test","version":"0.1.0","license":"MPL-2.0","entry":"main.mjs","permissions":[]},"modules":{"main.mjs":"export function activate() {}"}}});
+        assert!(validator.is_valid(&value)); assert!(parse_arguments::<ProjectCall>(&value.to_string()).is_ok());
+        value["project"]["manifest"]["icon"]=json!("not-an-icon-object");
+        assert!(!validator.is_valid(&value));
+        let error=parse_arguments::<ProjectCall>(&value.to_string()).err().unwrap();
+        assert!(error.contains("project.manifest.icon"),"{error}"); assert!(error.contains("ExtensionIcon"),"{error}");
+        value["project"]["manifest"].as_object_mut().unwrap().remove("icon");
+        value["project"]["manifest"]["unknownField"]=json!(true);
+        assert!(!validator.is_valid(&value));
+        let error=parse_arguments::<ProjectCall>(&value.to_string()).err().unwrap(); assert!(error.contains("unknownField"));
+        assert!(validator.is_valid(&json!({"op":"describe"})));
     }
 }

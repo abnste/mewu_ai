@@ -34,6 +34,8 @@ tauri-plugin-global-shortcut = "=2.4.0"
 tauri-plugin-single-instance = "=2.5.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+schemars = "=1.2.2"
+serde_path_to_error = "=0.1.20"
 chrono = "=0.4.45"
 uuid = { version = "1", features = ["v4"] }
 tokio = { version = "1", features = ["sync", "time", "macros", "rt"] }

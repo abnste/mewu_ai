@@ -74,7 +74,7 @@ fn parse_skill(name: &str, value: &str) -> Result<Skill> {
     Ok(skill)
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Project {
     pub manifest: ExtensionManifest,

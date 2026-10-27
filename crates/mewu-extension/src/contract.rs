@@ -13,7 +13,7 @@ pub const MAX_VALUE_BYTES: usize = 1024 * 1024;
 pub const MAX_SERVICES: usize = 128;
 
 /// Small vector artwork, rendered as fixed SVG path nodes, never HTML/URLs.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ExtensionIcon {
     pub paths: Vec<String>,
@@ -30,7 +30,7 @@ pub fn valid_extension_icon(icon: &ExtensionIcon) -> bool {
         && icon.color.as_ref().is_none_or(|color| color.len()==7 && color.starts_with('#') && color[1..].bytes().all(|b|b.is_ascii_hexdigit()))
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ExtensionManifest {
     pub schema_version: u32,

@@ -10,6 +10,7 @@ description = "Bounded executable JavaScript extensions and host protocol for Me
 rquickjs = { version = "=0.14.0", default-features = false, features = ["std", "loader"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.151", features = ["float_roundtrip"] }
+schemars = "=1.2.2"
 semver = "1.0"
 thiserror = "2.0.21"
 
