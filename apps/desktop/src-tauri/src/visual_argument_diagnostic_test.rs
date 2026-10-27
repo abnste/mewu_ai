@@ -26,6 +26,34 @@ fn object(value: &mut Value) -> &mut Value {
 }
 
 #[test]
+fn table_version_type_is_advertised_and_rejection_teaches_the_actual_contract() {
+    let scope = tests::scope(tests::normalized_input());
+    let mut args = tests::normalized_args(&scope.input);
+    *object(&mut args) = json!({"kind":"table","points":[{"x":0,"y":0},{"x":1000,"y":1000}],
+        "table":{"version":"1","header":["x","2x+3"],"rows":[["1","5"],["4","11"]],"align":["left","right"]}});
+    let error = rejection(&scope, &args);
+    diagnostic(&error, "$/groups/0/objects/0/table/version", DiagnosticReason::Type);
+    assert_eq!(error.diagnostic.as_ref().unwrap().expected_type, Some(ArgumentExpectedType::Integer));
+    let mut fixture = ReceiptFixture::new();
+    let (_, output) = reject_arguments(&mut fixture.store, &fixture.lease, &error, &scope.input).unwrap();
+    let feedback: Value = serde_json::from_str(&output.model_json).unwrap();
+    assert_eq!(feedback["executed"], false);
+    assert_eq!(feedback["tableSchema"]["properties"]["version"]["type"], "integer");
+    assert_eq!(feedback["tableSchema"]["properties"]["version"]["const"], 1);
+    let schema = scope.definition();
+    let validator = jsonschema::validator_for(&schema["function"]["parameters"]).unwrap();
+    assert!(!validator.is_valid(&args));
+    object(&mut args)["table"]["version"] = json!(1);
+    assert!(validator.is_valid(&args));
+    assert!(scope.parse_plan_diagnosed(&args.to_string()).is_ok());
+    // No coercion of unsupported versions, lossy numbers, or unrelated fields.
+    for invalid in [json!(2), json!(1.5), json!(null), json!({"private-secret":1})] {
+        object(&mut args)["table"]["version"] = invalid;
+        assert!(scope.parse_plan_diagnosed(&args.to_string()).is_err());
+    }
+}
+
+#[test]
 fn visual_diagnostics_locate_points_triangle_style_and_formula_without_raw_values() {
     let scope = tests::scope(tests::normalized_input());
     let original = tests::normalized_args(&scope.input);

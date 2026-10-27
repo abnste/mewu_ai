@@ -313,6 +313,7 @@ pub async fn run_plugin_workflow(
             .ok_or("场景不存在")?;
         (workflow, scene, preflight)
     };
+    let preflight = crate::resolve_run_credentials(host.root.clone(), preflight).await?;
     let mut scene = original.clone();
     // The user's unsent references are unrelated to this explicit selection workflow.
     scene.refs = vec![mewu_core::Reference {

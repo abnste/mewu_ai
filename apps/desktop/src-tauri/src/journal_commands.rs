@@ -112,6 +112,13 @@ pub async fn continue_run_from_journal(
     recording::ensure_idle(&app)?;
     tauri::async_runtime::spawn_blocking(move || {
         let host = app.state::<Host>();
+        let prepared = {
+            let engine = host.lock()?;
+            crate::preflight_run(&host, &engine, &scene_id)?
+        };
+        // The OS keyring may show a confirmation for a newly installed binary.
+        // Keep both the scene and plugin locks available while it waits.
+        let preflight = crate::resolve_run_credentials_blocking(&host.root, prepared)?;
         let plugins = host.plugins.lock().map_err(|_| "插件状态不可用")?;
         plugins.store.require_agent()?;
         let mut engine = host.lock()?;
@@ -120,7 +127,10 @@ pub async fn continue_run_from_journal(
         if host.capturing.load(Ordering::Acquire) {
             return Err("截图正在切换".into());
         }
-        let preflight = crate::preflight_run(&host, &engine, &scene_id)?;
+        crate::optional_capabilities::require_agent_current(&engine, &preflight.agent_grant)?;
+        if engine.store.connection_for_scene(&scene_id).map_err(store_error)? != preflight.connection {
+            return Err("连接已更改，请重新操作".into());
+        }
         if preflight.connection.id != expected_connection_id
             || preflight.connection.revision != expected_connection_revision
         {

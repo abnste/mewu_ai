@@ -133,7 +133,11 @@ fn project(error: &jsonschema::ValidationError<'_>, prefix: &str) -> Option<Argu
             .iter()
             .find(|errors| !errors.is_empty() && !errors.iter().any(selector))
         {
-            return project(&branch[0], prefix);
+            // A primitive type error is more actionable than the accompanying
+            // const failure (for example string "1" instead of integer 1).
+            let failure = branch.iter().find(|error| matches!(error.kind(), K::Type { .. }))
+                .unwrap_or(&branch[0]);
+            return project(failure, prefix);
         }
         if let Some(failure) = context.iter().flatten().find(|error| selector(error)) {
             return project(failure, prefix);

@@ -2036,7 +2036,7 @@ async fn send_message(
         let scene = engine.store.scene(&scene_id).map_err(|e| e.to_string())?;
         extension_chat_region::PreparedChatRegion::capture(scene, &engine.store.snapshot().active_scene_id, region_id.as_deref())?
     };
-    let hook_draft={let engine=host.lock()?;let scene=engine.store.scene(&scene_id).map_err(|e|e.to_string())?;ai::validate_scene_for_send(scene)?;scene.draft.clone()};
+    let hook_draft={let engine=host.lock()?;let scene=engine.store.scene(&scene_id).map_err(|e|e.to_string())?;ai::validate_scene_history_for_send(scene)?;scene.draft.clone()};
     let hook_parent=hooks::take_prompt_origin(&app,automation_origin.as_deref(),&scene_id,&hook_draft)?;
     let hook_context=hooks::before_prompt(&app,&scene_id,&hook_draft,hook_parent).await?;
     if host.lock()?.store.scene(&scene_id).map_err(|e|e.to_string())?.draft!=hook_draft{return Err("会话内容已变化，请重新发送".into())}
@@ -2067,6 +2067,7 @@ async fn send_message(
         }
         (scene, preflight_run(&host, &engine, &scene_id)?)
     };
+    let preflight = resolve_run_credentials(host.root.clone(), preflight).await?;
     let video_requested = scene.refs.iter().any(|reference| {
         reference.kind == mewu_core::ReferenceKind::Item
             && scene
@@ -2206,6 +2207,74 @@ pub(crate) struct RunPreflight {
     connection: ConnectionProfile,
 }
 
+/// Captured under the state lock; keyring access must happen after releasing it.
+pub(crate) struct RunPreparation {
+    agent_grant: optional_capabilities::Grant,
+    transport: provider_transport::Transport,
+    connection: ConnectionProfile,
+}
+
+pub(crate) async fn resolve_run_credentials(root: PathBuf, prepared: RunPreparation) -> Result<RunPreflight, String> {
+    tauri::async_runtime::spawn_blocking(move || resolve_run_credentials_blocking(&root, prepared))
+        .await.map_err(|_| "读取连接凭据中断".to_string())?
+}
+
+pub(crate) fn resolve_run_credentials_blocking(root: &std::path::Path, prepared: RunPreparation) -> Result<RunPreflight, String> {
+    resolve_run_credentials_with(prepared, |connection| credentials::read_profile(root, connection))
+}
+
+fn resolve_run_credentials_with(prepared: RunPreparation, read: impl FnOnce(&ConnectionProfile) -> Result<Zeroizing<String>, String>) -> Result<RunPreflight, String> {
+    let RunPreparation { agent_grant, transport, connection } = prepared;
+    let key = if connection.advanced.auth_mode == mewu_core::ConnectionAuthMode::None {
+        Zeroizing::new(String::new())
+    } else {
+        read(&connection)?
+    };
+    if connection.advanced.auth_mode != mewu_core::ConnectionAuthMode::None && key.trim().is_empty() {
+        return Err("请先填写连接密钥".into());
+    }
+    credentials::validate_key(&key)?;
+    Ok(RunPreflight { agent_grant, transport, key, connection })
+}
+
+#[cfg(test)]
+mod run_preflight_tests {
+    use super::*;
+    fn prepared(auth: mewu_core::ConnectionAuthMode) -> RunPreparation {
+        let connection = ConnectionProfile {
+            id: uuid::Uuid::new_v4().to_string(), name: "synthetic".into(),
+            provider_id: "openai-compatible".into(), base_url: "https://example.invalid/v1".into(),
+            model: "synthetic".into(), has_key: true, credential_id: None, revision: 1,
+            advanced: mewu_core::ConnectionAdvanced { auth_mode: auth, ..Default::default() },
+        };
+        RunPreparation {
+            transport: connection_host::transport_for(&connection).unwrap(), connection,
+            agent_grant: optional_capabilities::Authorizations::test_defaults().require_agent().unwrap(),
+        }
+    }
+    #[test]
+    fn native_preflight_no_auth_never_opens_keyring() {
+        let result = resolve_run_credentials_with(prepared(mewu_core::ConnectionAuthMode::None), |_| panic!("keyring read"));
+        assert!(result.unwrap().key.is_empty());
+    }
+    #[test]
+    fn native_preflight_credentials_remain_required_and_invalid_values_are_not_disclosed() {
+        use mewu_core::ConnectionAuthMode::Bearer;
+        for value in ["", " ", "private-secret\nheader"] {
+            let error = resolve_run_credentials_with(prepared(Bearer), |_| Ok(Zeroizing::new(value.into()))).err().unwrap();
+            assert!(!error.contains("private-secret"));
+        }
+        let candidate = prepared(Bearer);
+        let profile = candidate.connection.clone();
+        let result = resolve_run_credentials_with(candidate, |observed| {
+            assert_eq!(observed, &profile);
+            Ok(Zeroizing::new("synthetic-key".into()))
+        }).unwrap();
+        assert_eq!(result.connection, profile);
+        assert_eq!(result.key.as_str(), "synthetic-key");
+    }
+}
+
 pub(crate) async fn prepare_scene_attachments(
     scene: mewu_core::Scene,
     root: PathBuf,
@@ -2246,7 +2315,7 @@ pub(crate) fn preflight_run(
     host: &Host,
     engine: &Engine,
     scene_id: &str,
-) -> Result<RunPreflight, String> {
+) -> Result<RunPreparation, String> {
     host.exit.ensure_new_operation()?;
     let agent_grant = engine.optional.require_agent()?;
     let connection = engine
@@ -2258,22 +2327,9 @@ pub(crate) fn preflight_run(
     if connection.model.trim().is_empty() {
         return Err("请先设置连接和模型".into());
     }
-    let key = if connection.advanced.auth_mode == mewu_core::ConnectionAuthMode::None {
-        Zeroizing::new(String::new())
-    } else {
-        credentials::read_profile(&host.root, &connection)?
-    };
-    if connection.advanced.auth_mode != mewu_core::ConnectionAuthMode::None && key.trim().is_empty() {
-        return Err("请先填写连接密钥".into());
-    }
-    credentials::validate_key(&key)?;
-    if !key.is_empty() && reqwest::header::HeaderValue::from_str(key.as_str()).is_err() {
-        return Err("连接密钥格式无效".into());
-    }
-    Ok(RunPreflight {
+    Ok(RunPreparation {
         agent_grant,
         transport,
-        key,
         connection,
     })
 }

@@ -42,6 +42,13 @@ pub fn validate_scene_for_send(scene: &Scene) -> Result<(), String> {
     if has_video_reference(&scene.items, &scene.refs) {
         return Err(VIDEO_REFERENCE_ERROR.into());
     }
+    validate_scene_history_for_send(scene)
+}
+
+/// The common pre-hook gate must not reject current video references before
+/// the native sampler can verify them. Historical attachments still must use
+/// already-encoded frames, never an unsupported raw video payload.
+pub(crate) fn validate_scene_history_for_send(scene: &Scene) -> Result<(), String> {
     if scene.messages.iter().any(|message| {
         message
             .attachments
@@ -3406,6 +3413,7 @@ pub(crate) mod tests {
             validate_scene_for_send(scene).unwrap_err(),
             VIDEO_REFERENCE_ERROR
         );
+        assert!(validate_scene_history_for_send(scene).is_ok());
         assert_eq!(store.snapshot(), before);
         assert_eq!(scene.draft, "解释这一段操作");
         assert_eq!(scene.refs, refs);
@@ -3431,6 +3439,7 @@ pub(crate) mod tests {
             validate_scene_for_send(&unreferenced).unwrap_err(),
             VIDEO_HISTORY_ERROR
         );
+        assert_eq!(validate_scene_history_for_send(&unreferenced).unwrap_err(), VIDEO_HISTORY_ERROR);
     }
 
     fn tool_event(delta: Value, finish: Option<&str>) -> String {

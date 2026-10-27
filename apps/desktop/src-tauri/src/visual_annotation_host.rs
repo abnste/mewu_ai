@@ -343,6 +343,21 @@ fn reject_arguments(
     if let Some(example) = invocation_example(input) {
         feedback["exampleArguments"] = example;
     }
+    // Table contents have the same contract for every target. Return that
+    // contract, not another text example or any rejected model-supplied value.
+    if let Some(diagnostic) = &error.diagnostic {
+        let segments: Vec<_> = diagnostic.field_path.split('/').collect();
+        if segments.get(1) == Some(&"groups") && segments.get(3) == Some(&"objects")
+            && segments.get(5) == Some(&"table") {
+            if let Some(target) = input.manifest().targets.first() {
+                let schema = group_definition(target);
+                if let Some(table) = schema["properties"]["objects"]["items"]["oneOf"]
+                    .as_array().and_then(|branches| branches.iter().find(|branch| branch["properties"]["kind"]["const"] == "table")) {
+                    feedback["tableSchema"] = table["properties"]["table"].clone();
+                }
+            }
+        }
+    }
     Ok((
         receipt,
         journal_runtime::CommittedToolOutput {
@@ -428,7 +443,7 @@ fn group_definition(target: &mewu_core::VisualInputTarget) -> Value {
     let table = json!({"type":"object","additionalProperties":false,"required":["kind","points","table"],"properties":{
         "kind":{"const":"table"},"points":{"type":"array","minItems":2,"maxItems":2,"items":point},
         "table":{"type":"object","additionalProperties":false,"required":["version","header","rows","align"],"properties":{
-            "version":{"const":1},"header":{"type":"array","minItems":1,"maxItems":32,"items":{"type":"string"}},
+            "version":{"type":"integer","const":1,"description":"Integer 1, not the string \"1\"."},"header":{"type":"array","minItems":1,"maxItems":32,"items":{"type":"string"}},
             "rows":{"type":"array","maxItems":199,"items":{"type":"array","minItems":1,"maxItems":32,"items":{"type":"string"}}},
             "align":{"type":"array","minItems":1,"maxItems":32,"items":{"enum":["left","center","right",null]}}
         }}

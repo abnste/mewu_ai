@@ -43,6 +43,9 @@ and `--connection` IDs, and `--allow-model-requests`. Cases specify `name`, `pro
 optional fixture `files`, and `expectKinds`, `expectTools`, `expectText` or
 `expectNoObjects`. It creates isolated new conversations, records real run/scene
 receipts, and checks saved objects rather than trusting the final answer. A failed
+run keeps its CLI error details. The suite opens each test scene because video
+sampling requires the visible space's source lease. It rejects external-engine
+bindings and mismatched model connections instead of grading them as native runs. A failed
 run stops the suite and remains available; observing a timeout does not resend an
 operation. Evidence is private and must not be bundled into the release. GUI and
 pixel/time-range checks remain separate mandatory work.

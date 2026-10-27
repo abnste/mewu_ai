@@ -396,6 +396,9 @@ pub async fn run_plugin_translation(
         request_id: request_id.clone(),
     });
     let work = async {
+        let credential_root = app.state::<Host>().root.clone();
+        let preflight = crate::resolve_run_credentials(credential_root, preflight).await?;
+        fence(&app, &origin, &request_id, &cancel)?;
         progress(&app, &request_id, &origin, "recognizing", 0, 0);
         let source = origin.source.clone();
         let source_root = root.clone();
