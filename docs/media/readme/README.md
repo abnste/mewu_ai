@@ -32,3 +32,9 @@ The tabby-cat footage in `video-annotations.gif` is **Cat Walking on Top of Fenc
 其余示例素材来自项目官网现有演示。Mewu 自有界面及演示代码按项目许可提供；第三方媒体适用各自许可。
 
 Other sample materials come from the existing project website demos. Mewu-owned interface and demo code follow the project license; third-party media retain their respective licenses.
+
+## 外部 Agent 原生截图 / External Agent native screenshot
+
+[external-agents.jpg](./external-agents.jpg) 原样取自 [外部 Agent 插件](https://github.com/abnste/mewu-plugin-agent-connectors/blob/e3023f9426b3e97c70d077c5818af93d941f9d95/screenshots/settings-windows.jpg) 的公开截图，822 × 652，未重绘或裁切，适用该项目 MPL-2.0 许可。原项目记录为 Windows 原生 MewuAI 1.0.4 候选程序与插件 0.1.2；连接检测画面不代表所有客户端均通过完整模型对话测试。
+
+This unmodified image comes from the External Agents plugin at the fixed source commit above, under MPL-2.0. It records native Windows MewuAI 1.0.4 candidate UI with plugin 0.1.2. Connection detection does not establish successful model execution for every client.

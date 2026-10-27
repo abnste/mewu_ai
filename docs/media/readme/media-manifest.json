@@ -141,6 +141,21 @@
       "source": "https://www.mewu.ai/assets/hero/table.webp",
       "sourceSha256": "09d68e3d608267e7f1f0c5f0686e72e56df2540e0257a8068cc90253abc34811",
       "cropped": false
+    },
+    {
+      "file": "external-agents.jpg",
+      "bytes": 34060,
+      "dimensions": [
+        822,
+        652
+      ],
+      "frames": 1,
+      "durationMs": 0,
+      "sha256": "270c5e3a58e7007b86afd34bb6e17d60a58e48fffc7e125d4e4af2febb0fddc7",
+      "source": "https://raw.githubusercontent.com/abnste/mewu-plugin-agent-connectors/e3023f9426b3e97c70d077c5818af93d941f9d95/screenshots/settings-windows.jpg",
+      "sourceSha256": "270c5e3a58e7007b86afd34bb6e17d60a58e48fffc7e125d4e4af2febb0fddc7",
+      "cropped": false,
+      "kind": "published native plugin screenshot"
     }
   ]
 }
