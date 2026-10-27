@@ -34,7 +34,7 @@
 - **Personal Agent:** choose a role, model, tools, and memory. Reference images, videos, and files; retain conversation history; read Markdown, formulas, and collapsible public reasoning. Use the official Agent's persistent local memory or connect an independent memory service.
 - **AI creative canvas:** arrange, resize, pin, or save images, videos, text, and generated objects. Describe an HTML / SVG / Canvas tool, use the resulting calculator, experiment, or game, and ask for further changes.
 - **Capture and multiple selections:** capture a region, multiple areas, scrolling content, or supported windows. Selections automatically become references while the surrounding screen dims, with no separate “Reference” click.
-- **Drawing and annotation:** pens, arrows, shapes, text, numbering, highlights, and mosaic, with undo, redo, and object editing. Add marks yourself or ask AI to explain and highlight specific details.
+- **Drawing and annotation:** pens, arrows, shapes, text, numbering, highlights, and mosaic, with undo, redo, and object editing. Add marks yourself or ask AI to explain and highlight specific details in worksheets, code, and other references.
 - **Text and tables:** local OCR, capture translation, chart understanding, and table extraction. Windows/macOS also offer actionable recognition of links, emails, phone numbers, QR codes, and barcodes.
 - **Recording and video annotation:** capture system audio and microphone input; pause, resume, trim, and export MP4 / MP3 / GIF. Add rectangles and text for time ranges, then click conversation timestamps to revisit them. Audio support varies by system.
 - **Blackboard:** draw and explain on a full-screen board, combining questions, formulas, and AI analysis. A setting lets screen-sharing apps see selections and annotations.
@@ -54,9 +54,9 @@ Capture, drawing, and recording work without AI setup. AI conversations, transla
 <table>
 <tr>
 <td width="50%" valign="top">
-<h3>Multiple selections</h3>
-<p>Select several areas and reference them automatically, so AI can compare specific details.</p>
-<a href="./docs/media/readme/multi-region.gif"><img src="./docs/media/readme/multi-region.gif" width="100%" alt="Multiple selections: Select several areas and reference them automatically, so AI can compare specific details." /></a>
+<h3>Exam annotation</h3>
+<p>Explain a worksheet and add construction lines, reasoning, and annotations to the original.</p>
+<a href="./docs/images/exam-annotation-latest.jpg"><img src="./docs/images/exam-annotation-latest.jpg" width="100%" alt="Exam annotation: Explain a worksheet and add construction lines, reasoning, and annotations to the original." /></a>
 </td>
 <td width="50%" valign="top">
 <h3>Generate HTML tools</h3>
@@ -95,9 +95,9 @@ Capture, drawing, and recording work without AI setup. AI conversations, transla
 <a href="./docs/media/readme/ocr.png"><img src="./docs/media/readme/ocr.png" width="100%" alt="Text recognition: Extract the text you need from a capture using local OCR." /></a>
 </td>
 <td width="50%" valign="top">
-<h3>Capture translation</h3>
-<p>Read translated content beside the original selection.</p>
-<a href="./docs/media/readme/translate.png"><img src="./docs/media/readme/translate.png" width="100%" alt="Capture translation: Read translated content beside the original selection." /></a>
+<h3>Code explanation</h3>
+<p>Select code, explain its logic, mark the failing line, and show a correction beside the original.</p>
+<a href="./docs/media/readme/code-explanation.gif"><img src="./docs/media/readme/code-explanation.gif" width="100%" alt="Code explanation: Select code, explain its logic, mark the failing line, and show a correction beside the original." /></a>
 </td>
 </tr>
 <tr>
@@ -117,7 +117,7 @@ Capture, drawing, and recording work without AI setup. AI conversations, transla
 <details>
 <summary>About the demos</summary>
 
-Animations use Mewu interface components with prepared example content; generated results vary by model and prompt. Video annotations appear over assigned time ranges and do not imply automatic object tracking. The External Agents image is a published native screenshot from that plugin. [Assets and credits](./docs/media/readme/README.md).
+Animations use Mewu interface components with prepared example content; generated results vary by model and prompt. Video annotations appear over assigned time ranges and do not imply automatic object tracking. Exam annotation retains the original README screenshot; code explanation is newly recorded with the current Mewu UI. The External Agents image is a published native screenshot from that plugin. [Assets and credits](./docs/media/readme/README.md).
 
 </details>
 
@@ -211,10 +211,6 @@ Browser previews support interface development; native capture, recording, and s
 ## Project members
 
 <a href="https://github.com/abnste"><img src="https://github.com/abnste.png?size=100" width="50" alt="Abner Stephen" /></a> <a href="https://github.com/pyxyd"><img src="https://github.com/pyxyd.png?size=100" width="50" alt="Yandi" /></a> <a href="https://github.com/shuziyuxingxing-stack"><img src="https://github.com/shuziyuxingxing-stack.png?size=100" width="50" alt="数字与星星" /></a> <a href="https://github.com/AndeDrCobb"><img src="https://github.com/AndeDrCobb.png?size=100" width="50" alt="Cobb" /></a> <a href="https://github.com/tljsj"><img src="https://github.com/tljsj.png?size=100" width="50" alt="tljsj" /></a>
-
-[Abner Stephen](https://github.com/abnste) · [Yandi](https://github.com/pyxyd) · [数字与星星](https://github.com/shuziyuxingxing-stack) · [Cobb](https://github.com/AndeDrCobb) · [tljsj](https://github.com/tljsj)
-
-[View all contributors](https://github.com/abnste/mewu_ai/graphs/contributors)
 
 ## License
 

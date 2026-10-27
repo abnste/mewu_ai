@@ -34,7 +34,7 @@
 - **个人 Agent**：选择角色、模型、工具与记忆；引用图片、视频和文件继续对话，保留会话历史，支持 Markdown、公式与可折叠的公开思考。官方 Agent 提供本地持久记忆，也可连接独立记忆服务。
 - **AI 创意画布**：整理图片、视频、文字与生成对象，移动、缩放、置顶或收藏。用自然语言生成 HTML / SVG / Canvas 内容，直接使用计算器、实验面板或小游戏，再继续提出修改要求。
 - **截图与多选区**：单区、多区、长截图和受支持的窗口截图。框选后自动加入对话引用，非选区压暗；同时对照多个来源，无需再手动点击“引用”。
-- **绘制与标注**：画笔、箭头、形状、文字、序号、高亮和马赛克，配合撤销、重做及对象编辑。可以手工标注，也可以让 AI 对着具体位置解释、圈出重点。
+- **绘制与标注**：画笔、箭头、形状、文字、序号、高亮和马赛克，配合撤销、重做及对象编辑。可以手工标注，也可以让 AI 对着试卷、代码等具体内容解释、圈出重点。
 - **文字与表格**：本地 OCR、截图翻译、图表理解与表格提取。Windows/macOS 还支持链接、邮箱、电话号码、二维码与条码的可操作识别。
 - **录屏与视频标注**：录制电脑声音与麦克风，暂停、继续、裁剪并导出 MP4 / MP3 / GIF；对指定时间段添加框线和文字，点击对话中的时间定位画面。音频能力取决于系统。
 - **电子黑板**：在全屏黑板上手绘、推导和讲解，将题目、公式和 AI 分析放在一起；共享演示时可允许共享软件看到选区与标注。
@@ -54,9 +54,9 @@
 <table>
 <tr>
 <td width="50%" valign="top">
-<h3>多选区引用</h3>
-<p>连续框选多处内容，自动加入引用，让 AI 对照具体位置回答。</p>
-<a href="./docs/media/readme/multi-region.gif"><img src="./docs/media/readme/multi-region.gif" width="100%" alt="多选区引用: 连续框选多处内容，自动加入引用，让 AI 对照具体位置回答。" /></a>
+<h3>试卷批注</h3>
+<p>引用试卷截图讲解题目，在原题上补充辅助线、推导与批注。</p>
+<a href="./docs/images/exam-annotation-latest.jpg"><img src="./docs/images/exam-annotation-latest.jpg" width="100%" alt="试卷批注: 引用试卷截图讲解题目，在原题上补充辅助线、推导与批注。" /></a>
 </td>
 <td width="50%" valign="top">
 <h3>生成 HTML 控件</h3>
@@ -95,9 +95,9 @@
 <a href="./docs/media/readme/ocr.png"><img src="./docs/media/readme/ocr.png" width="100%" alt="文字识别: 在本机识别截图文字，将需要的内容提取出来。" /></a>
 </td>
 <td width="50%" valign="top">
-<h3>截图翻译</h3>
-<p>在原文附近查看译文，对照阅读选中的内容。</p>
-<a href="./docs/media/readme/translate.png"><img src="./docs/media/readme/translate.png" width="100%" alt="截图翻译: 在原文附近查看译文，对照阅读选中的内容。" /></a>
+<h3>代码讲解</h3>
+<p>框选代码，解释逻辑，标出出错位置，并在原图旁给出修正。</p>
+<a href="./docs/media/readme/code-explanation.gif"><img src="./docs/media/readme/code-explanation.gif" width="100%" alt="代码讲解: 框选代码，解释逻辑，标出出错位置，并在原图旁给出修正。" /></a>
 </td>
 </tr>
 <tr>
@@ -117,7 +117,7 @@
 <details>
 <summary>演示素材说明</summary>
 
-动图采用 Mewu 界面组件与预置示例内容展示操作，生成结果随模型和提示词变化。视频标注按设定时间段显示，不代表已提供自动目标追踪。外部 Agent 配图来自该插件公开的原生界面截图。[素材与来源](./docs/media/readme/README.md)。
+动图采用 Mewu 界面组件与预置示例内容展示操作，生成结果随模型和提示词变化。视频标注按设定时间段显示，不代表已提供自动目标追踪。试卷批注保留原 README 的案例截图；代码讲解使用当前 Mewu 界面重新录制。外部 Agent 配图来自该插件公开的原生界面截图。[素材与来源](./docs/media/readme/README.md)。
 
 </details>
 
@@ -211,10 +211,6 @@ mewu call capture.open --json '{}' --wait
 ## 项目成员
 
 <a href="https://github.com/abnste"><img src="https://github.com/abnste.png?size=100" width="50" alt="Abner Stephen" /></a> <a href="https://github.com/pyxyd"><img src="https://github.com/pyxyd.png?size=100" width="50" alt="Yandi" /></a> <a href="https://github.com/shuziyuxingxing-stack"><img src="https://github.com/shuziyuxingxing-stack.png?size=100" width="50" alt="数字与星星" /></a> <a href="https://github.com/AndeDrCobb"><img src="https://github.com/AndeDrCobb.png?size=100" width="50" alt="Cobb" /></a> <a href="https://github.com/tljsj"><img src="https://github.com/tljsj.png?size=100" width="50" alt="tljsj" /></a>
-
-[Abner Stephen](https://github.com/abnste) · [Yandi](https://github.com/pyxyd) · [数字与星星](https://github.com/shuziyuxingxing-stack) · [Cobb](https://github.com/AndeDrCobb) · [tljsj](https://github.com/tljsj)
-
-[查看全部贡献者](https://github.com/abnste/mewu_ai/graphs/contributors)
 
 ## 开源协议
 

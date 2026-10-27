@@ -1,13 +1,15 @@
 # README 演示素材 / Demo assets
 
-这些图片与循环动图来自 MewuAI 官网的组件演示录制。截图、选区、对话、黑板和对象界面使用 Mewu 前端组件，示例提示词、回复和工具结果由演示环境预置。它们用于解释操作方式，不作为真实模型准确率、原生系统操作或任意模型成功执行的证明。CLI 片段展示固定操作与画布的对应关系。
+这些素材包含 MewuAI 官网组件演示、新录制的代码讲解，以及原项目截图；具体来源见下表与说明。截图、选区、对话、黑板和对象界面使用 Mewu 前端组件，示例提示词、回复和工具结果由演示环境预置。它们用于解释操作方式，不作为真实模型准确率、原生系统操作或任意模型成功执行的证明。CLI 片段展示固定操作与画布的对应关系。
 
-These images and looping GIFs come from the MewuAI website's component demos. They use Mewu frontend components with prepared example prompts, responses, and tool results. They illustrate workflows, not model-accuracy benchmarks or evidence that every operation ran against a live model or native desktop. The CLI clip illustrates the relationship between fixed operations and the canvas.
+These assets include MewuAI website component demos, a new code-explanation recording, and original project screenshots; see the individual sources below. They use Mewu frontend components with prepared example prompts, responses, and tool results. They illustrate workflows, not model-accuracy benchmarks or evidence that every operation ran against a live model or native desktop. The CLI clip illustrates the relationship between fixed operations and the canvas.
 
 ## 文件 / Files
 
 | 文件 | 内容 | 尺寸 | 时长 |
 | --- | --- | --- | --- |
+| [code-explanation.gif](./code-explanation.gif) | 代码讲解与原位批注 / Code explanation and inline annotation | 1280 × 720 | 11.00 s |
+| [exam-annotation-latest.jpg](../../images/exam-annotation-latest.jpg) | 原 README 试卷批注 / Original README exam annotation | 1638 × 766 | — |
 | [agent-overview.gif](./agent-overview.gif) | 个人 Agent 与生成清单 / Personal Agent and checklist | 1120 × 630 | 8.54 s |
 | [interactive-tools.gif](./interactive-tools.gif) | HTML 粒子实验 / Interactive HTML experiment | 960 × 540 | 8.17 s |
 | [blackboard.gif](./blackboard.gif) | 手绘黑板 / Freehand blackboard | 960 × 540 | 8.50 s |
@@ -38,3 +40,13 @@ Other sample materials come from the existing project website demos. Mewu-owned 
 [external-agents.jpg](./external-agents.jpg) 原样取自 [外部 Agent 插件](https://github.com/abnste/mewu-plugin-agent-connectors/blob/e3023f9426b3e97c70d077c5818af93d941f9d95/screenshots/settings-windows.jpg) 的公开截图，822 × 652，未重绘或裁切，适用该项目 MPL-2.0 许可。原项目记录为 Windows 原生 MewuAI 1.0.4 候选程序与插件 0.1.2；连接检测画面不代表所有客户端均通过完整模型对话测试。
 
 This unmodified image comes from the External Agents plugin at the fixed source commit above, under MPL-2.0. It records native Windows MewuAI 1.0.4 candidate UI with plugin 0.1.2. Connection detection does not establish successful model execution for every client.
+
+## 代码讲解录制与试卷案例 / Code recording and exam example
+
+`code-explanation.gif` 于 2026-10-27 从源码提交 `1a8a037e519e0af0a6453b7d205d3c2af1c3f55d` 的 Mewu 前端录制。保留原始 App、Composer、DrawingLayer 与样式，浏览器演示桥接仅提供案例背景、示例连接、预置回复和批注数据；画面中的框选自动引用、输入、发送、代码展开均通过真实界面操作完成。示例展示 `reduce` 未设置初始值导致空数组报错，再在原图标出问题和修正。未调用真实模型或原生系统接口，不作为这些能力的实测证明。[原始录屏](./code-explanation.webm) 为 1600 × 900，转换后保持完整画面、原速与宽高比。
+
+The code demo was recorded from the unchanged App, Composer, DrawingLayer, and styles at the source commit above. A browser-only bridge supplies the example background, connection, prepared reply, and annotation data. Selection with automatic referencing, typing, sending, and expanding the code block are actual UI interactions. It explains why `reduce` without an initial value fails on an empty array, then marks the issue and correction on the original. No live model or native operating-system call is claimed. The original recording preserves the complete 1600 × 900 frame; conversion keeps its aspect ratio and playback speed.
+
+试卷批注按要求直接复用原 README 的 `docs/images/exam-annotation-latest.jpg`，文件字节不变，不将它标为本次重录。AI 的识读、解答与批注需要结合原题核对。
+
+The exam example reuses the original README image byte for byte, as requested; it is not a new recording. Check AI interpretation, reasoning, and annotations against the original question.

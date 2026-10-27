@@ -1,5 +1,5 @@
 {
-  "recordedSource": "Mewu website component demos",
+  "recordedSource": "Mewu website component demos, current frontend recording, and original project screenshots; see per-asset provenance",
   "preparedExampleContent": true,
   "assets": [
     {
@@ -156,6 +156,42 @@
       "sourceSha256": "270c5e3a58e7007b86afd34bb6e17d60a58e48fffc7e125d4e4af2febb0fddc7",
       "cropped": false,
       "kind": "published native plugin screenshot"
+    },
+    {
+      "file": "code-explanation.gif",
+      "bytes": 3309527,
+      "dimensions": [
+        1280,
+        720
+      ],
+      "frames": 198,
+      "durationMs": 11000,
+      "sha256": "95b9a662f31968e3f2792571562270c0a982a7da0ece3df0cd3c2fd956618c21",
+      "source": "./code-explanation.webm",
+      "sourceSha256": "1da520a6d13b0c57c309c57e91d1fa4f55abe8d3dc5f73a7fe8c576fdb01ec43",
+      "sourceDimensions": [
+        1600,
+        900
+      ],
+      "sourceCommit": "1a8a037e519e0af0a6453b7d205d3c2af1c3f55d",
+      "recordedWith": "Current unchanged Mewu frontend components; browser-only bridge supplies prepared example replies and drawing data; actual pointer selection, typing, send, and expand-code interactions",
+      "preparedExampleContent": true,
+      "liveModelExecution": false,
+      "nativeOsExecution": false,
+      "cropped": false,
+      "playbackSpeed": 1
+    },
+    {
+      "file": "../../images/exam-annotation-latest.jpg",
+      "bytes": 280321,
+      "dimensions": [
+        1638,
+        766
+      ],
+      "sha256": "b8157782ae419217b34374994c056178c91621afb5df20ac419a54206f312cd9",
+      "source": "Original project README exam annotation screenshot, reused unchanged at user request",
+      "gitBlob": "f61eddd52bfcbe54693b38e0723c24227bf4c7dc",
+      "cropped": false
     }
   ]
 }
