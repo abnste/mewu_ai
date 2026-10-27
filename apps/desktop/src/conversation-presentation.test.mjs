@@ -45,7 +45,13 @@ const source = await readFile(new URL('./components/Composer.tsx', import.meta.u
 const transformed = transformSync(source, { filename: 'Composer.tsx', presets: [[solidPreset, { generate: 'ssr', hydratable: false }]], parserOpts: { plugins: ['typescript', 'jsx'] }, configFile: false, babelrc: false }).code;
 const composerModule = new SourceTextModule(stripTypeScriptTypes(transformed, { mode: 'transform' }));
 const icons = Object.fromEntries(['Bot', 'Check', 'ChevronDown', 'ChevronUp', 'CircleAlert', 'Cpu', 'FolderOpen', 'History', 'Link2', 'LoaderCircle', 'MessageSquare', 'Minus', 'RotateCcw', 'Send', 'Square', 'SquarePen', 'X'].map(name => [name, () => '']));
+const extensionState = await loadPlain('./extension-state.ts');
+const extensionController = new SourceTextModule(stripTypeScriptTypes(await readFile(new URL('./composer-extensions.ts',import.meta.url),'utf8'),{mode:'transform'}));
+await extensionController.link(name => name==='solid-js'?synthetic(solid):name==='./extension-state'?synthetic(extensionState):synthetic({extensionNative:false}));
+await extensionController.evaluate();
 await composerModule.link(name => {
+  if(name.endsWith('/composer-extensions'))return synthetic(extensionController.namespace);
+  if(name.endsWith('/extension-state'))return synthetic(extensionState);
   if (name.endsWith('.css')) return synthetic({});
   if (name === 'solid-js') return synthetic(solid);
   if (name === 'solid-js/web') return synthetic(web);

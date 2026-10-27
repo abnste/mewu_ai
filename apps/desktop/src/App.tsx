@@ -84,7 +84,7 @@ import { attachExtensionActions, extensionActionReason, type ExtensionActionRequ
 import { resolveExtensionAction, executeExtensionAction } from './extension-bridge';
 import * as extensions from './extension-bridge';
 import type { ExtensionRecord } from './extension-contracts';
-import { mergeExtensionRecords } from './extension-state';
+import { mergeExtensionRecords, extensionServices } from './extension-state';
 import { attachExtensionTriggers } from './extension-triggers';
 
 
@@ -117,7 +117,7 @@ export default function App() {
     activeScene: snapshot()?.scenes.find(scene => scene.id === snapshot()?.activeSceneId),
     agents: snapshot()?.agents ?? [], defaultConnectionId: snapshot()?.defaultConnectionId ?? null,
   }));
-  const agentAvailable = () => optionalAgentAvailable(capabilities());
+  const agentAvailable = () => optionalAgentAvailable(capabilities()) || Boolean(capabilities()?.agent && extensionServices(composerExtensions(), 'agent').length);
   const agentReady = () => optionalAgentReady(capabilities(), scene());
   const blackboardAvailable = () => Boolean(capabilities()?.blackboard);
   const [voiceCapabilities, setVoiceCapabilities] = createSignal<VoiceCapabilities>();
@@ -258,6 +258,7 @@ export default function App() {
   let stopExtensionTriggers: ReturnType<typeof attachExtensionTriggers> | undefined;
   let stopExtensionState: (() => void) | undefined;
   let extensionRecords: ExtensionRecord[] = [];
+  const [composerExtensions, setComposerExtensions] = createSignal<ExtensionRecord[]>([]);
   let pendingPin: { requestId: string; canceled: boolean } | undefined;
   let pendingMediaPin: { canceled: boolean } | undefined;
   let disposed = false;
@@ -475,6 +476,7 @@ export default function App() {
       const acceptExtensions = (value: ExtensionRecord[]) => {
         if (disposed) return;
         extensionRecords = mergeExtensionRecords(extensionRecords, value);
+        setComposerExtensions(extensionRecords);
         stopExtensionTriggers?.reconcile();
       };
       const stop = await extensions.subscribeExtensions(acceptExtensions);
@@ -1619,7 +1621,7 @@ export default function App() {
           <ExtensionTransientOverlay sceneId={currentId} disabled={exitPreparing()||Boolean(recording()||scroll())} onError={showError}/>
           <ExtensionSpaceCommands sceneId={currentId} disabled={busy()||sending()||exitPreparing()||selectionActive()||exportActive()||Boolean(recording()||scroll())||ownedScene().closed||ownedScene().frozen||ownedScene().run?.status==='running'} onError={showError}/>
         </nav>
-        <Show when={agentAvailable()}><Composer onRestoreArtifact={restoreCode} ready={agentReady()} onReferenceInserted={referenceInserted} referenceInsertion={referenceInsertion()} showButtonLabels={preferences().showButtonLabels} thinkingGlowEnabled={preferences().thinkingGlowEnabled} thinkingGlowColor={preferences().thinkingGlowColor} onVideoAnswer={action => void jumpToVideoAnswer(action)} onContinueJournal={continueJournal} voice={voiceControl()} onComposition={active => { if (scene()?.id !== currentId) return; voiceComposing = active; if (!active) voice.compositionEnded(); }} scene={ownedScene()} agents={snapshot()!.agents} connections={snapshot()!.connections.filter(value=>capabilities()?.configuredConnectionIds.includes(value.id))} draft={ownedDraft()} refs={ownedRefs()} stream={streams()[currentId]} error={sendErrors()[currentId]} expanded={expanded()[currentId] ?? false} position={composerPositions()[currentId]} onPosition={value => setComposerPositions(old => ({ ...old, [currentId]: value }))} selectionActive={selectionActive()} focusRequest={focusRequest()} sending={sending()} closing={Boolean(closingScene())} onDraft={setDraft} onSend={() => void send()} onCancel={() => void cancel()} onImport={() => void importFiles()} onFreeze={() => void freeze()} onClose={() => void closeScene(currentId)} onNew={() => void newConversation()} onCapture={() => void capture()} onSessions={() => setSessionsOpen(true)} onFocusRef={focusReference} onRemoveRef={toggleReference} onExpanded={value => setExpanded(old => ({ ...old, [currentId]: value }))} onAgent={agentId => void command({ type: 'set_agent', sceneId: currentId, agentId }).catch(showError)} onSelectConnection={connectionId => void command({ type: 'set_scene_connection', sceneId: currentId, connectionId }).catch(showError)} onConnection={() => void openConnection()} onError={showError} /></Show></Show>
+        <Show when={agentAvailable()}><Composer extensions={composerExtensions()} onRestoreArtifact={restoreCode} ready={agentReady()} onReferenceInserted={referenceInserted} referenceInsertion={referenceInsertion()} showButtonLabels={preferences().showButtonLabels} thinkingGlowEnabled={preferences().thinkingGlowEnabled} thinkingGlowColor={preferences().thinkingGlowColor} onVideoAnswer={action => void jumpToVideoAnswer(action)} onContinueJournal={continueJournal} voice={voiceControl()} onComposition={active => { if (scene()?.id !== currentId) return; voiceComposing = active; if (!active) voice.compositionEnded(); }} scene={ownedScene()} agents={snapshot()!.agents} connections={snapshot()!.connections.filter(value=>capabilities()?.configuredConnectionIds.includes(value.id))} draft={ownedDraft()} refs={ownedRefs()} stream={streams()[currentId]} error={sendErrors()[currentId]} expanded={expanded()[currentId] ?? false} position={composerPositions()[currentId]} onPosition={value => setComposerPositions(old => ({ ...old, [currentId]: value }))} selectionActive={selectionActive()} focusRequest={focusRequest()} sending={sending()} closing={Boolean(closingScene())} onDraft={setDraft} onSend={() => void send()} onCancel={() => void cancel()} onImport={() => void importFiles()} onFreeze={() => void freeze()} onClose={() => void closeScene(currentId)} onNew={() => void newConversation()} onCapture={() => void capture()} onSessions={() => setSessionsOpen(true)} onFocusRef={focusReference} onRemoveRef={toggleReference} onExpanded={value => setExpanded(old => ({ ...old, [currentId]: value }))} onAgent={agentId => void command({ type: 'set_agent', sceneId: currentId, agentId }).catch(showError)} onSelectConnection={connectionId => void command({ type: 'set_scene_connection', sceneId: currentId, connectionId }).catch(showError)} onConnection={() => void openConnection()} onError={showError} /></Show></Show>
         <Show when={sessionsOpen()}><SessionDock scenes={snapshot()!.scenes.filter(scene=>!scene.blackboardLink)} activeId={snapshot()!.activeSceneId} busy={busy()} onClose={() => setSessionsOpen(false)} onCloseScene={id => void closeScene(id)} onActivate={id => { if (id !== scene()!.id) void switchScene({ type: 'activate_scene', sceneId: id }); else setSessionsOpen(false); }} /></Show>
       </Show>;}}
     </Show>

@@ -35,7 +35,7 @@ function fixture(overrides = {}) {
     ({ send, keydown: ${expression(attribute(textarea, 'onKeyDown').expression)},
       click: ${expression(attribute(button, 'onClick').expression)},
       disabled: () => ${expression(attribute(button, 'disabled').expression)}, focusAnchor: () => focusAnchor });
-  `, { props, lastPointer: { x: 42, y: 18 }, setAtEnd: value => atEnd.push(value), reveal: () => revealed.push(true) });
+  `, { props, external: {pending: () => Boolean(props.enginePending)}, lastPointer: { x: 42, y: 18 }, setAtEnd: value => atEnd.push(value), reveal: () => revealed.push(true) });
   return { props, actual, sent, canceled, revealed, atEnd };
 }
 const event = overrides => ({ key: 'Enter', shiftKey: false, isComposing: false, keyCode: 13,
@@ -115,3 +115,5 @@ test('a pending send blocks subsequent keyboard or click events using current pr
   f.actual.click();
   assert.deepEqual(f.sent, [[], []]);
 });
+
+test("an in-flight engine/model change blocks sending until committed",()=>{const f=fixture({enginePending:true});f.actual.click();f.actual.keydown(event());assert.equal(f.sent.length,0);f.props.enginePending=false;f.actual.click();assert.equal(f.sent.length,1);});

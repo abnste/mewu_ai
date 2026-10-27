@@ -29,7 +29,7 @@ function fixture(block) {
     stopPluginEvents: undefined, stopRecordingEvents: undefined, stopScrollEvents: undefined,
     stopEvents: undefined, stopControlEvents: undefined,
     stopExtensionState: undefined, stopExtensionTriggers: undefined, extensionRecords: [],
-    triggerSceneId: () => 'own-scene', mergeExtensionRecords: (_, value) => value,
+    setComposerExtensions() {}, triggerSceneId: () => 'own-scene', mergeExtensionRecords: (_, value) => value,
     attachExtensionTriggers: () => { registrations.push('triggers'); return Object.assign(stop('triggers'), {reconcile() {}}); },
     extensions: { extensionNative: true, subscribeExtensions: () => response('extensions'),
       getExtensions: async () => block === 'extensionCatalog' ? pending.promise : [], invokeExtension: async () => {} },

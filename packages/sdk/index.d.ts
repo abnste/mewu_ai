@@ -31,7 +31,7 @@ export interface ServiceDescriptor {
   description?: string;
   inputSchema?: JsonObject;
   /** platforms narrows this feature only; requiresRegion requests a native region grant. */
-  metadata?: JsonObject & { platforms?: PluginPlatform[]; requiresRegion?: boolean; requiresMemory?:boolean; requiresProvider?:'agent'|'memory' };
+  metadata?: JsonObject & { platforms?: PluginPlatform[]; requiresRegion?: boolean; requiresMemory?:boolean; requiresProvider?:'agent'|'memory'; modelsService?:string };
 }
 export interface ServiceRegistration extends ServiceDescriptor { kind: ServiceKind }
 /** The host sets context; extension input cannot grant region or agent access. */
@@ -182,7 +182,7 @@ export interface ExtensionContext {
   /** Requires process.rpc. Fixed local executables only, no shell/installer.
    * Processes stop on invocation completion, cancellation or revocation. */
   readonly processes: {
-    resolve(candidates: string[], files?: string[]): Promise<{ platform: string; executables: string[]; files: string[] }>;
+    resolve(candidates: string[], files?: string[], searches?: {root:string; relativePath:string}[]): Promise<{ platform: string; executables: string[]; files: string[] }>;
     open(command: { executable: string; args: string[]; cwd?: string; env?: Record<string,string> }): Promise<{ id: string; cwd: string }>;
     write(id: string, message: JsonObject, bindings?: { frameId: string; pointer: string; encoding: 'base64' | 'dataUrl' }[]): Promise<JsonValue>;
     read(id: string, timeoutMs?: number): Promise<JsonObject | null>;

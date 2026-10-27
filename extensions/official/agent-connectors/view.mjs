@@ -22,7 +22,7 @@ button:hover{background:var(--field)}button:disabled{opacity:.45;cursor:default}
 </section>
 <div id="error" role="alert"></div><p class="help" id="hint"></p>
 <script>
-const $=id=>document.getElementById(id);let data,selected='codex',busy=true,disposed=false,transport='stdio';
+const $=id=>document.getElementById(id);let data,selected='codex',busy=true,disposed=false,transport='stdio',launchMode='manual';
 const drafts=new Map();
 let models=[],modelIndex=-1,allModels=false;
 const modelValues=()=>{const query=allModels?'':$('model').value.toLowerCase();return models.filter(m=>(m.name+' '+m.id).toLowerCase().includes(query));};
@@ -31,14 +31,15 @@ function drawModels(){const values=modelValues();$('models').replaceChildren(...
 $('choose-model').onclick=()=>{if($('models').hidden){allModels=true;modelIndex=models.findIndex(m=>m.id===$('model').value);$('model').focus();drawModels();}else hideModels();};$('model').oninput=()=>{allModels=false;modelIndex=-1;drawModels();};
 $('model').onkeydown=e=>{if(e.key==='Escape'&&!$('models').hidden){e.preventDefault();e.stopPropagation();hideModels();}if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();if($('models').hidden)allModels=true;const count=modelValues().length;modelIndex=count?(modelIndex<0?(e.key==='ArrowDown'?0:count-1):(modelIndex+(e.key==='ArrowDown'?1:-1)+count)%count):-1;drawModels();}if(e.key==='Enter'&&!$('models').hidden&&modelIndex>=0){e.preventDefault();$('model').value=modelValues()[modelIndex].id;hideModels();}};
 document.addEventListener('pointerdown',e=>{if(!$('model-field').contains(e.target))hideModels();});
-function config(){const args=JSON.parse($('args').value||'[]'),env=JSON.parse($('env').value||'{}');if(!Array.isArray(args)||!args.every(v=>typeof v==='string'))throw Error('启动参数需要填写 JSON 字符串数组');if(!env||Array.isArray(env)||typeof env!=='object'||!Object.values(env).every(v=>typeof v==='string'))throw Error('环境变量需要填写 JSON 字符串对象');return{executable:$('executable').value.trim(),args,...(selected==='workbuddy'&&transport==='workbuddy-http'?{transport}:{}),...(Object.keys(env).length?{env}:{}),model:$('model').value.trim(),cwd:$('cwd').value.trim(),effort:$('effort').value.trim()};}
+function config(){const args=JSON.parse($('args').value||'[]'),env=JSON.parse($('env').value||'{}');if(!Array.isArray(args)||!args.every(v=>typeof v==='string'))throw Error('启动参数需要填写 JSON 字符串数组');if(!env||Array.isArray(env)||typeof env!=='object'||!Object.values(env).every(v=>typeof v==='string'))throw Error('环境变量需要填写 JSON 字符串对象');return{executable:$('executable').value.trim(),args,launchMode,...(selected==='workbuddy'&&transport==='workbuddy-http'?{transport}:{}),...(Object.keys(env).length?{env}:{}),model:$('model').value.trim(),cwd:$('cwd').value.trim(),effort:$('effort').value.trim()};}
+$('executable').oninput=$('args').oninput=()=>{launchMode='manual';};
 function drawTransport(){$('transport-field').hidden=selected!=='workbuddy';$('transport-stdio').setAttribute('aria-pressed',String(transport==='stdio'));$('transport-desktop').setAttribute('aria-pressed',String(transport==='workbuddy-http'));}
 $('transport-stdio').onclick=()=>{transport='stdio';drawTransport();};$('transport-desktop').onclick=()=>{transport='workbuddy-http';drawTransport();};
 function controls(){for(const button of document.querySelectorAll('button,input,textarea'))button.disabled=busy;$('choose-model').disabled=busy||models.length===0;}
 function render(){
  const profile=data.profiles.find(p=>p.id===selected),value=drafts.get(selected)||data.connections[selected]||{args:profile.args};
  $('executable').value=value.executable||'';$('args').value=JSON.stringify(value.args||profile.args);$('env').value=JSON.stringify(value.env||{});$('model').value=value.model||'';$('cwd').value=value.cwd||'';$('effort').value=value.effort||'';
- transport=value.transport||'stdio';drawTransport();
+ transport=value.transport||'stdio';launchMode=value.launchMode||'manual';drawTransport();
  $('effort-field').hidden=selected!=='codex';models=[];hideModels();$('models').replaceChildren();$('status').textContent='';$('error').textContent='';
  $('hint').textContent=selected==='minimax'?'使用已安装并登录的 MiniMax Code CLI（mcode acp）。':selected==='workbuddy'?'自动检测可接入 WorkBuddy 桌面内置 ACP，也可指定 CodeBuddy CLI。':selected==='hermes'?'使用已配置 ACP 支持的 Hermes；记忆与技能沿用 Hermes 的设置。':'使用本机 Codex 登录；无需复制 API Key。';
  document.querySelector('nav').replaceChildren(...data.profiles.map(p=>{const b=document.createElement('button');b.type='button';b.role='tab';b.textContent=p.name;b.setAttribute('aria-selected',String(selected===p.id));b.onclick=()=>{try{drafts.set(selected,config());selected=p.id;render();}catch(e){$('error').textContent=e.message;}};return b;}));controls();
@@ -48,7 +49,7 @@ async function perform(type){
  try{
    const result=await mewu.call({type,provider:selected,...(type==='detect'?{}:{config:config(),expected:data.connections[selected]||null})});
    if(disposed)return;
-   if(type==='detect'){if(!result.executable)throw Error('未找到可用程序，请填写完整路径。Windows 的 Node/Python CLI 请指定运行程序，并在启动参数中填写脚本路径。');$('executable').value=result.executable;$('args').value=JSON.stringify(result.args);$('env').value=JSON.stringify(result.env||{});transport=result.transport||'stdio';drawTransport();$('status').textContent='已找到';}
+   if(type==='detect'){if(!result.executable)throw Error('未找到可用程序，请先安装官方 CLI，或填写运行程序及启动参数。');$('executable').value=result.executable;$('args').value=JSON.stringify(result.args);$('env').value=JSON.stringify(result.env||{});transport=result.transport||'stdio';launchMode=result.launchMode||'manual';drawTransport();$('status').textContent='已找到';}
    if(type==='test'){if(!result.ok)throw Error(result.error||'连接失败');models=result.models.map(m=>({id:m.id,name:m.name||m.id}));if(!$('model').value&&result.models.some(m=>m.default))$('model').value=result.models.find(m=>m.default).id;$('status').textContent='服务可连接'+(result.image?' · 支持图片':'');}
    if(type==='save'){data.connections[selected]=result.config;drafts.delete(selected);$('status').textContent='已保存';}
  }catch(e){$('status').textContent='';$('error').textContent=e.message||'操作失败';}finally{busy=false;controls();}

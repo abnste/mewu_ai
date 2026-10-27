@@ -15,7 +15,7 @@ export async function connectCodex(ctx,config){
     await peer.request('initialize',{clientInfo:{name:'mewu_agent_connectors',title:'Mewu',version:'0.1.0'}});
     await peer.send({method:'initialized',params:{}});
     const account=await peer.request('account/read',{refreshToken:false});
-    if(!account.account)throw Error('请先在 Codex 官方客户端登录');
+    if(!account.account&&account.requiresOpenaiAuth!==false)throw Error('请先在 Codex 官方客户端登录');
     const models=[];let cursor=null;
     for(let page=0;page<8;page++){
       const result=await peer.request('model/list',{limit:100,includeHidden:false,cursor});
@@ -35,14 +35,15 @@ export async function runCodex(ctx,config,input,session,checkpoint=async()=>{}){
       if(!/^[a-zA-Z0-9_-]+$/.test(name))throw Error('Codex MCP 名称不支持隔离');
       configOverrides[`mcp_servers.${name}.enabled`]=false;
     }
-    const options={cwd:peer.cwd,...(config.model?{model:config.model}:{}),approvalPolicy:'on-request',sandbox:'read-only',config:configOverrides,developerInstructions:soul(input)};
+    const model=config.model||models.find(value=>value.default)?.id;
+    const options={cwd:peer.cwd,...(model?{model}:{}),approvalPolicy:'on-request',sandbox:'read-only',config:configOverrides,developerInstructions:soul(input)};
     const resumed=Boolean(session?.id);
     const thread=await peer.request(resumed?'thread/resume':'thread/start',resumed?{...options,threadId:session.id}:{...options,ephemeral:false});
     const threadId=thread.thread?.id;if(typeof threadId!=='string'||!threadId)throw Error('Codex 未返回会话标识');
     await checkpoint({id:threadId});
     const content=[{type:'text',text:textInput(input,resumed)}],bindings=[];
     const images=imagesForTurn(input,resumed);
-    if(images.length&&config.model&&!models.find(m=>m.id===config.model)?.image)throw Error('所选 Codex 模型不支持图片');
+    if(images.length&&model&&!models.find(m=>m.id===model)?.image)throw Error('所选 Codex 模型不支持图片');
     for(const frameId of images){const index=content.length;content.push({type:'image',url:null});bindings.push({frameId,pointer:`/params/input/${index}/url`,encoding:'dataUrl'});}
     let answer='',reasoning='',completed,turnId;
     const early=[];

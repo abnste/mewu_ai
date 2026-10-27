@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 import {definePlugin} from '@mewu/sdk';
-import {profiles,validateConfig,detectProfile} from './profiles.mjs';
+import {profiles,validateConfig,detectProfile,resolveConfig} from './profiles.mjs';
+import {registerCatalog,selectedConfig} from './catalog.mjs';
 import {connectCodex,connectAcp,runCodex,runAcp} from './adapters.mjs';
 import {html} from './view.mjs';
 
@@ -25,16 +26,18 @@ export default definePlugin(async ctx=>{
     }
     if(input.type==='test'){
       try{
-        const connection=await (profile.protocol==='codex'?connectCodex:connectAcp)(ctx,config);
+        const connection=await (profile.protocol==='codex'?connectCodex:connectAcp)(ctx,{...await resolveConfig(ctx,config,profile),model:''});
         try{return {ok:true,models:connection.models,image:profile.protocol==='codex'?connection.models.some(m=>m.image):connection.initialized.agentCapabilities?.promptCapabilities?.image===true};}
         finally{await connection.peer.close();}
       }catch(error){return {ok:false,error:String(error?.message??'连接失败').slice(0,500)};}
     }
     throw Error('不支持的设置操作');
   });
-  for(const profile of profiles)ctx.agents.register({id:profile.id,title:profile.name,description:'使用本机官方客户端的登录与模型'},async(input,call)=>{
+  for(const profile of profiles){
+  const modelsService=registerCatalog(ctx,profile);
+  ctx.agents.register({id:profile.id,title:profile.name,description:'使用本机官方客户端的登录与模型',metadata:{modelsService}},async(input,call)=>{
     try{
-    const config=validateConfig((await ctx.configuration.get('connections'))?.[profile.id],profile);
+    const config=await selectedConfig(ctx,profile,call.context);
     const key=`sessions/${profile.id}/${call.context.agentId}/${call.context.sceneId}`;
     const saved=await ctx.storage.get(key);
     const fingerprint=JSON.stringify(config);
@@ -43,9 +46,9 @@ export default definePlugin(async ctx=>{
     return {content:result.content};
     }catch(error){
       // Explicit public diagnostics, never arbitrary exceptions, paths or stacks.
-      const publicErrors=['请先在该 Agent 的官方客户端或 CLI 中登录','请先在 Codex 官方客户端登录','请选择已安装的运行程序','所选 Codex 模型不可用','该 Agent 未声明图片支持'];
+      const publicErrors=['请先在该 Agent 的官方客户端或 CLI 中登录','请先在 Codex 官方客户端登录','请选择已安装的运行程序','所选 Codex 模型不可用','该 Agent 未声明图片支持','请先在外部 Agent 设置中检测并保存连接','未找到已安装的官方客户端，请在外部 Agent 设置中重新检测','无法启动外部程序，请检查运行程序和启动参数'];
       if(publicErrors.includes(error?.message))await ctx.events.emit('agent.text',error.message);
       throw error;
     }
-  });
+  });}
 });

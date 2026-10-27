@@ -1,6 +1,6 @@
 {
   "name": "@mewu/sdk",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Mewu API executable extension SDK",
   "type": "module",
   "license": "MPL-2.0",

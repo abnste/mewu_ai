@@ -143,3 +143,14 @@ Windows 的 layered 窗口同时具有 `WS_EX_TRANSPARENT` 时，鼠标输入由
 `list`、`page`、`credential`、`activate` 仅允许当前存活的设置界面调用。`credential` 将指定历史连接的凭据复制到当前插件的 `archive.<bindingId>` 托管名称，固定为原服务 origin，不返回明文。`activate` 校验历史连接版本、当前扩展绑定版本和本插件注册的记忆服务后才切换提供者。原账本、凭据与待处理任务保留，迁移读取本身不发送网络请求。
 
 运行期 `lookup` 和 `forget` 仅允许当前记忆调用的 Agent 访问自己的历史连接；返回提交状态和遗忘记录，插件不得重发不确定写入或恢复墓碑。插件停用、卸载、绑定变化或设置窗口关闭都会撤销这些调用的资格。
+
+
+### 对话条的 Agent 模型目录（Mewu 1.0.10+）
+
+Agent 注册描述可声明 `metadata: {modelsService: "models"}`。该 ID 必须指向同一插件注册的普通 `service`，不能引用其他插件。宿主按注册信息呈现引擎和模型菜单，不识别厂商名称。
+
+目录服务接收 `{type:"list"}`，返回 `{ok:true, models:[{id,name}], selectedModelId, selection}`。`selection` 是该会话的当前选择状态，首次可为 null；宿主原样传入 `{type:"select", modelId, expected:selection}`。空 `modelId` 表示默认。插件校验实时可用模型，用 `ctx.storage.compareAndSet` 保存，并返回同形状的提交结果；失败返回 `{ok:false,error}`。`context.agentId`、`context.sceneId` 由宿主提供，模型选择不能串入其他角色或会话。Agent 执行时应读取同一选择。最多 512 个模型，ID 和名称不超过 300 字符。
+
+宿主在发送期间禁止切换，切换会话、卸载、停用、升级后丢弃迟到目录；认证、模型探测及保存均由插件完成。仅注册目录不表示账号有权限或余额，首次实际请求仍可能失败。
+
+`process.installation-search` 能力允许 `ctx.processes.resolve(candidates, files, searches)` 的第三个可选参数：`[{root:"${localAppData}/Vendor/App/bin", relativePath:"client.exe"}]`。只检查明确根目录的一级版本子目录，不递归扫描磁盘、不解释 shell 或通配符；按修改时间从新到旧检测，每个根最多读取 256 项、选取 8 个版本，最多 8 个根。路径规则属于插件；宿主不包含厂商目录。旧宿主未声明该能力时不得发送 `searches`。手动配置必须保留，不因自动发现结果而被覆盖。

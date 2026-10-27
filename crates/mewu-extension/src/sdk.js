@@ -92,7 +92,7 @@ export function createContext(send) {
     }),
     model: Object.freeze({ invoke: request => host.call('model.invoke', request) }),
     processes: Object.freeze({
-      resolve: (candidates, files = []) => host.call('process.resolve', { candidates, files }),
+      resolve: (candidates, files = [], searches = []) => host.call('process.resolve', { candidates, files, ...(searches.length ? { searches } : {}) }),
       open: command => host.call('process.open', { command }),
       write: (id, message, bindings) => host.call('process.write', { id, message, ...(bindings ? { bindings } : {}) }),
       read: (id, timeoutMs = 250) => host.call('process.read', { id, timeoutMs }),

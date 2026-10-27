@@ -2,14 +2,16 @@
 
 一个独立的 Mewu 插件，在设置侧栏注册“外部 Agent”，在原 Agent 选择器中提供 Codex、MiniMax Code、WorkBuddy / CodeBuddy 和 Hermes。
 
-协议、安装路径规则、配置页面、模型查询、会话恢复和消息转换都在本插件中。宿主只提供设置插槽、隔离配置、受控的本机进程及 JSON 行通信；不包含这些平台的专用适配分支。需要包含这些新接口的 Mewu 开发版本，当前公开版 1.0.3 尚不支持。
+协议、安装路径规则、配置页面、模型查询、会话恢复和消息转换都在本插件中。宿主只提供设置插槽、隔离配置、受控的本机进程及 JSON 行通信；不包含这些平台的专用适配分支。对话条内的引擎与模型选择需要 Mewu 1.0.10 或更新版本；旧宿主仍可在 Agent 设置中绑定引擎。
 
 ## 使用
 
 1. 安装插件，打开设置 → 外部 Agent。
 2. 选择平台，自动检测或填写运行程序。Node/Python CLI 应选择本机运行程序，将入口脚本放在 JSON 启动参数的第一项。
-3. 点击测试连接，选择服务返回的模型并保存。留空模型时使用客户端默认值。
-4. 在设置 → Agent 与连接中，将角色的 Agent 提供方绑定到此插件的对应服务，然后从原对话条发送消息或截图。
+3. 点击测试连接，选择服务返回的模型并保存。Codex 留空时采用当前模型目录声明的默认模型，避免本机旧默认值失效。
+4. 在对话条的 Agent 菜单选择执行引擎，再从模型菜单选择该客户端实际提供的模型。原角色的人格、灵魂设定不变；引擎绑定属于角色，模型选择属于当前角色的当前会话。
+
+自动检测保存为动态定位，客户端升级后重新定位；手工编辑程序或启动参数会切回手动模式，插件不会覆盖用户指定的路径。支持原生 CLI、官方 Node/npm 安装及明确的用户自定义运行程序；不启动 cmd/PowerShell 包装器。Node 脚本与参数分别传递，支持空格及中文目录。不同安装器、登录状态和模型权限仍需分别验证，自动检测不代表所有客户端或模型都可用。
 
 插件不复制第三方的登录密钥。外部程序按其正常用户环境运行，继承其登录、代理、工具和原生运行时配置；`process.rpc` 是运行本机程序的权限，不是操作系统沙箱。启动参数使用数组传递，不通过 shell，也不自动下载客户端。
 
@@ -38,7 +40,7 @@
 入口为 `index.mjs`，无需 Node 依赖随插件安装。使用项目 SDK 打包器生成安装 ZIP，README 和测试文件不放入运行包。
 
 ```sh
-node tools/extension-market/cli.mjs pack extensions/official/agent-connectors --out out/agent-connectors-0.1.2.zip --file profiles.mjs --file rpc.mjs --file adapters.mjs --file view.mjs --file workbuddy.mjs --validator /path/to/mewu-plugin-validator
+node tools/extension-market/cli.mjs pack extensions/official/agent-connectors --out out/agent-connectors-0.1.3.zip --file profiles.mjs --file rpc.mjs --file adapters.mjs --file view.mjs --file workbuddy.mjs --file catalog.mjs --validator /path/to/mewu-plugin-validator
 ```
 
 一手参考：[ACP v1](https://agentclientprotocol.com/protocol/v1/overview)、[Codex App Server](https://developers.openai.com/codex/app-server)、[MiniMax Code](https://github.com/MiniMax-AI/minimax-code)、[CodeBuddy ACP](https://www.codebuddy.ai/docs/cli/acp)、[Hermes ACP](https://hermes-agent.nousresearch.com/docs/user-guide/features/acp/)。

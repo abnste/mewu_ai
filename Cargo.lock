@@ -3421,7 +3421,7 @@ dependencies = [
 
 [[package]]
 name = "mewu-desktop"
-version = "1.0.9"
+version = "1.0.10"
 dependencies = [
  "arboard",
  "async-io",

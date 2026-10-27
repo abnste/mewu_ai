@@ -21,7 +21,10 @@ struct Program {executable:String,args:Vec<String>,#[serde(default)]cwd:Option<S
 struct Message { id:String, #[serde(default)] message:Option<Value>, #[serde(default)] timeout_ms:Option<u64> }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Resolve { candidates:Vec<String>, #[serde(default)]files:Vec<String> }
+struct Resolve { candidates:Vec<String>, #[serde(default)]files:Vec<String>, #[serde(default)]searches:Vec<ProgramSearch> }
+#[derive(Deserialize)]
+#[serde(rename_all="camelCase",deny_unknown_fields)]
+struct ProgramSearch { root:String, relative_path:String }
 
 #[derive(Deserialize)]
 #[serde(rename_all="camelCase",deny_unknown_fields)]
@@ -79,12 +82,39 @@ fn resolve(candidates:Vec<String>)->Result<Value,String> {
     }
     Ok(json!({"platform":std::env::consts::OS,"executables":matches}))
 }
+// Explicit installation roots only. Never recursively scan drives or interpret
+// glob/shell expressions; newest immediate version directory wins.
+fn version_candidates(searches:Vec<ProgramSearch>)->Result<Vec<String>,String>{
+    if searches.len()>8{return Err("程序搜索目录过多".into());}
+    let mut result=Vec::new();
+    for search in searches {
+        let relative=PathBuf::from(&search.relative_path);
+        if search.relative_path.is_empty()||search.relative_path.len()>256||search.relative_path.chars().any(char::is_control)||relative.components().any(|p|!matches!(p,std::path::Component::Normal(_))){return Err("程序相对路径无效".into());}
+        let Some(root)=candidate(&search.root)? else{continue};
+        if !root.is_absolute(){return Err("程序搜索需要绝对目录".into());}
+        let Ok(entries)=std::fs::read_dir(&root) else{continue};
+        let mut versions=Vec::new();
+        for entry in entries.take(256).flatten(){
+            if entry.file_type().map(|t|t.is_dir()&&!t.is_symlink()).unwrap_or(false){
+                versions.push((entry.metadata().and_then(|m|m.modified()).unwrap_or(std::time::UNIX_EPOCH),entry.path()));
+            }
+        }
+        versions.sort_by(|a,b|b.0.cmp(&a.0).then_with(||a.1.cmp(&b.1)));
+        for (_,path) in versions.into_iter().take(8){result.push(path.join(&relative).to_string_lossy().into_owned());}
+    }
+    Ok(result)
+}
 impl Scope {
     pub(crate) fn call(&mut self,method:&str,params:Value,canceled:Arc<AtomicBool>)->Result<Value,String> {
         if method=="process.resolve" {
             let input:Resolve=serde_json::from_value(params).map_err(|_|"程序候选参数无效")?;
             if input.files.len()>64{return Err("文件候选过多".into());}
             let mut result=resolve(input.candidates)?;
+            if !input.searches.is_empty(){
+                let searched=resolve(version_candidates(input.searches)?)?;
+                let values=result["executables"].as_array_mut().unwrap();
+                for value in searched["executables"].as_array().unwrap(){if !values.contains(value){values.push(value.clone());}}
+            }
             let mut files=Vec::new();
             for value in input.files {
                 let Some(path)=candidate(&value)? else {continue};
@@ -130,6 +160,19 @@ impl Scope {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]fn installation_search_is_bounded_to_explicit_version_directories(){
+        let root=std::env::temp_dir().join(format!("mewu-program-search-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("old")).unwrap();
+        std::fs::create_dir_all(root.join("new")).unwrap();
+        let request=|relative:&str|ProgramSearch{root:root.to_string_lossy().into_owned(),relative_path:relative.into()};
+        let paths=version_candidates(vec![request("bin/client.exe")]).unwrap();
+        assert_eq!(paths.len(),2);
+        assert!(paths.iter().all(|p|PathBuf::from(p).starts_with(&root)));
+        assert!(version_candidates(vec![request("../outside")]).is_err());
+        assert!(version_candidates(vec![ProgramSearch{root:"relative".into(),relative_path:"app".into()}]).is_err());
+        assert!(version_candidates((0..9).map(|_|request("app")).collect()).is_err());
+        std::fs::remove_dir(root.join("old")).unwrap();std::fs::remove_dir(root.join("new")).unwrap();std::fs::remove_dir(root).unwrap();
+    }
     #[test]
     #[ignore="explicit local client configuration required; chat mode sends the supplied test prompt"]
     fn independent_agent_settings_probe_uses_real_quickjs_and_local_json_lines(){
@@ -140,7 +183,7 @@ mod tests {
         let root=std::path::Path::new(env!("CARGO_MANIFEST_DIR")).ancestors().nth(3).unwrap();
         // Authoring projects may contain README/tests; runtime packages contain
         // only the explicit manifest/module allowlist, exactly like CLI pack.
-        let files=["mewu-plugin.json","index.mjs","profiles.mjs","rpc.mjs","adapters.mjs","view.mjs","workbuddy.mjs"];
+        let files=["mewu-plugin.json","index.mjs","profiles.mjs","rpc.mjs","adapters.mjs","view.mjs","workbuddy.mjs","catalog.mjs"];
         let stage=file.parent().unwrap().join(uuid::Uuid::new_v4().to_string());
         std::fs::create_dir(&stage).unwrap();
         for file in files {std::fs::copy(root.join("extensions/official/agent-connectors").join(file),stage.join(file)).unwrap();}
@@ -177,7 +220,7 @@ mod tests {
             }}
             if !initialized {
                 if let Some(registrations)=runtime.poll_initialization().unwrap(){
-                    assert_eq!(registrations.len(),5);
+                    assert_eq!(registrations.len(),9);
                     let input=if chat {probe["input"].clone()}else{json!({"type":"test","provider":probe["provider"],"config":probe["config"]})};
                     runtime.begin_invoke(if chat {probe["provider"].as_str().unwrap()}else{"settings"},&input,&json!({"agentId":"probe","sceneId":"probe"})).unwrap();initialized=true;
                 }

@@ -5,7 +5,7 @@ import path from 'node:path';
 import activate from '../../../extensions/official/agent-connectors/index.mjs';
 import {connectCodex,runCodex,connectAcp,runAcp} from '../../../extensions/official/agent-connectors/adapters.mjs';
 import {openPeer} from '../../../extensions/official/agent-connectors/rpc.mjs';
-import {profiles,detectProfile,validateConfig} from '../../../extensions/official/agent-connectors/profiles.mjs';
+import {profiles,detectProfile,validateConfig,resolveConfig} from '../../../extensions/official/agent-connectors/profiles.mjs';
 import {workbuddyProcess} from '../../../extensions/official/agent-connectors/workbuddy.mjs';
 
 function fixture(answer){
@@ -15,12 +15,13 @@ function fixture(answer){
     configuration:{get:async key=>data.get('config/'+key)??null,compareAndSet:async(key,old,value)=>{
       if(JSON.stringify(data.get('config/'+key)??null)!==JSON.stringify(old))return false;data.set('config/'+key,structuredClone(value));return true;
     }},
-    storage:{get:async key=>data.get(key)??null,set:async(key,value)=>{data.set(key,structuredClone(value));}},
+    storage:{compareAndSet:async(key,expected,value)=>{if(JSON.stringify(data.get(key)??null)!==JSON.stringify(expected))return false;data.set(key,structuredClone(value));return true;},get:async key=>data.get(key)??null,set:async(key,value)=>{data.set(key,structuredClone(value));}},
     processes:{resolve:async()=>({platform:'windows',executables:['C:/local/agent.exe']}),open:async()=>({id:'process',cwd:'C:/workspace'}),close:async()=>{closed++;},
       write:async(id,message,bindings)=>{writes.push({message:structuredClone(message),bindings:structuredClone(bindings)});const reply=answer(message,queue);if(reply!==undefined)queue.push({id:message.id,result:reply});},
       read:async()=>queue.shift()??null},
     events:{emit:async(name,value)=>{events.push({name,value});}},
     ui:{register:(descriptor,handler)=>services.set(descriptor.id,{descriptor,handler})},
+    services:{register:(descriptor,handler)=>services.set(descriptor.id,{descriptor,handler})},
     agents:{register:(descriptor,handler)=>services.set(descriptor.id,{descriptor,handler})}
   };
   return {ctx,writes,events,services,data,queue,closed:()=>closed};
@@ -58,7 +59,7 @@ function acp(message,queue){
 }
 test('one independent package contributes settings and four Agent services without provider branches in host',async()=>{
   const f=fixture(()=>undefined);await activate(f.ctx);
-  assert.deepEqual([...f.services.keys()],['settings','codex','minimax','workbuddy','hermes']);
+  assert.deepEqual([...f.services.keys()],['settings','models-codex','codex','models-minimax','minimax','models-workbuddy','workbuddy','models-hermes','hermes']);
   assert.deepEqual(f.services.get('settings').descriptor.metadata,{surface:'settings'});
   const mount=await f.services.get('settings').handler({type:'mount'});
   assert.match(mount.html,/测试连接/);assert.equal(f.writes.length,0);
@@ -178,4 +179,61 @@ test('independent Agent emits only an intentional public login diagnostic before
   f.data.set('config/connections',{workbuddy:config});await activate(f.ctx);
   await assert.rejects(f.services.get('workbuddy').handler({task:'hello'},{context:{agentId:'a',sceneId:'s'}}),/登录/);
   assert.deepEqual(f.events,[{name:'agent.text',value:'请先在该 Agent 的官方客户端或 CLI 中登录'}]);
+});
+
+
+test('Codex custom-provider auth does not require an unrelated OpenAI login',async()=>{
+ const f=fixture((m,q)=>m.method==='account/read'?{account:null,requiresOpenaiAuth:false}:codex(m,q));
+ const connected=await connectCodex(f.ctx,config);assert.equal(connected.models.length,1);await connected.peer.close();
+});
+test('official Node CLI layouts resolve on Windows, macOS and Linux without shell shims or user-specific directories',async()=>{
+ for(const platform of ['windows','macos','linux'])for(const provider of ['codex','minimax']){
+  const f=fixture(()=>{}),profile=profiles.find(p=>p.id===provider);
+  const node=platform==='windows'?String.raw`\\?\C:\Custom Node\node.exe`:'/opt/custom/bin/node';
+  const script=platform==='windows'?String.raw`\\?\C:\Users\Other User\CLI\entry.js`:'/home/other/CLI/entry.js';
+  f.ctx.processes.resolve=async(candidates,files=[])=>{
+   if(platform==='windows')assert.ok(candidates.every(p=>!p.startsWith('/')));
+   if(candidates.includes('node'))return {platform,executables:[node]};
+   if(files.length)return {platform,executables:[],files:[script]};
+   return {platform,executables:[],files:[]};
+  };
+  const found=await detectProfile(f.ctx,profile);
+  assert.equal(found.executable,node);assert.equal(found.launchMode,'auto');
+  assert.deepEqual(found.args,[platform==='windows'?script.slice(4):script,...profile.args]);
+ }
+});
+test('automatic detection follows upgrades; manual executable, args and environment are preserved',async()=>{
+ const f=fixture(()=>{}),profile=profiles[0];
+ const manual={...config,args:['custom'],cwd:'C:/workspace',env:{CUSTOM:'kept'}};
+ assert.deepEqual(await resolveConfig(f.ctx,manual,profile),manual);
+ f.ctx.processes.resolve=async()=>({platform:'windows',executables:['C:/new version/codex.exe']});
+ const next=await resolveConfig(f.ctx,{...manual,launchMode:'auto'},profile);
+ assert.equal(next.executable,'C:/new version/codex.exe');assert.deepEqual(next.args,profile.args);assert.deepEqual(next.env,manual.env);assert.equal(next.cwd,manual.cwd);
+});
+test('desktop version directories are requested only through the advertised generic host capability',async()=>{
+ const f=fixture(()=>{});f.ctx.runtime.describe=async()=>({capabilities:['process.installation-search']});
+ f.ctx.processes.resolve=async(candidates,files,searches)=>{
+  if(searches){assert.equal(searches.length,2);assert.equal(searches[0].root,'${localAppData}/OpenAI/Codex/bin');return {platform:'windows',executables:['C:/desktop/new/codex.exe']};}
+  return {platform:'windows',executables:[]};
+ };
+ assert.equal((await detectProfile(f.ctx,profiles[0])).executable,'C:/desktop/new/codex.exe');
+});
+test('model catalogs are live, selection is CAS-protected and scoped to the conversation',async()=>{
+ const f=fixture(codex);f.data.set('config/connections',{codex:{...config,model:'retired'}});await activate(f.ctx);
+ const service=f.services.get('models-codex').handler,context={context:{agentId:'a',sceneId:'one'}};
+ assert.equal(f.services.get('codex').descriptor.metadata.modelsService,'models-codex');
+ const listed=await service({type:'list'},context);assert.equal(listed.ok,true);assert.equal(listed.selectedModelId,'retired');assert.equal(f.closed(),1);
+ const chosen=await service({type:'select',modelId:'model',expected:null},context);assert.equal(chosen.ok,true);
+ assert.equal((await service({type:'select',modelId:'',expected:null},context)).ok,false);
+ assert.equal((await service({type:'select',modelId:'invalid',expected:chosen.selection},context)).ok,false);
+ assert.equal((await service({type:'list'},{context:{agentId:'a',sceneId:'two'}})).selectedModelId,'retired');
+ await f.services.get('codex').handler({task:'hello'},context);
+ assert.equal(f.writes.find(w=>w.message.method==='thread/start').message.params.model,'model');
+ assert.equal((await service({type:'list'},{context:{}})).ok,false);
+});
+
+test('Codex default uses the live catalog instead of a stale CLI preference',async()=>{
+ const f=fixture((m,q)=>m.method==='model/list'?{data:[{model:'current',displayName:'Current',isDefault:true,inputModalities:['image']}]}:codex(m,q));
+ await runCodex(f.ctx,config,{task:'hello'});
+ assert.equal(f.writes.find(w=>w.message.method==='thread/start').message.params.model,'current');
 });

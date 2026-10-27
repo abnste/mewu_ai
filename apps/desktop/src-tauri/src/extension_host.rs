@@ -2082,7 +2082,7 @@ fn tool_initialization_read(method: &str) -> bool {
     matches!(method, "runtime.describe" | "configuration.get" | "storage.get" | "storage.list" | "services.list" | "objects.library.describe")
 }
 pub(crate) fn runtime_capabilities()->Value {
-    json!({"hostApi":mewu_extension::HOST_API,"capabilities":["ui.settings","configuration.shared","secrets.network","secrets.settings","memory.archive","process.jsonlines","process.frame-bindings"]})
+    json!({"hostApi":mewu_extension::HOST_API,"capabilities":["ui.settings","configuration.shared","secrets.network","secrets.settings","memory.archive","process.jsonlines","process.frame-bindings","process.installation-search"]})
 }
 
 fn bridge_impl(
