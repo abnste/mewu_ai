@@ -19,6 +19,8 @@ export function parseConnectionParameters(text: string): ConnectionParameters {
   return value as ConnectionParameters;
 }
 export function validateConnectionProfile(profile: ConnectionProfile, requireModel = true) {
+  const contextWindow = profile.advanced.contextWindowTokens;
+  if (contextWindow != null && (!Number.isInteger(contextWindow) || contextWindow < 8192 || contextWindow > 2097152)) throw new Error('上下文窗口须为 8192–2097152 tokens');
   if (!profile.name.trim() || [...profile.name.trim()].length > 80 || /[\x00-\x1f\x7f]/.test(profile.name)) throw new Error('连接名称需为 1 至 80 字，不能包含控制字符');
   if (!/^[a-z\d._-]{1,80}$/i.test(profile.providerId)) throw new Error('服务商标识无效');
   let url: URL;

@@ -12,7 +12,7 @@ use sha2::{Digest, Sha256};
 use std::{collections::HashSet, future::Future, sync::Arc, time::Duration};
 
 const MAX_ROUNDS: usize = mewu_core::MAX_AGENT_MODEL_ROUNDS as usize;
-const MAX_CALLS: usize = 32;
+const MAX_CALLS: usize = mewu_core::MAX_AGENT_TOOL_CALLS;
 const MAX_TOOL_OUTPUT: usize = 128 * 1024;
 const MAX_TOTAL_TOOL_OUTPUT: usize = 512 * 1024;
 const RUN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
@@ -204,7 +204,9 @@ where
     } else {
         request.insert("tools".into(), Value::Array(tools));
     }
+    let policy_body = json!({"_mewu_context_window":body.get("_mewu_context_window")});
     let mut body = provider_transport::request_body(transport.protocol, body)?;
+    let mut turn_context = crate::agent_turn_context::TurnContext::new(&body, &policy_body)?;
     let mut answer = String::new();
     let mut call_count = 0usize;
     let mut seen_ids = HashSet::new();
@@ -212,6 +214,7 @@ where
     let mut reasoning_bytes = 0usize;
     for round in 0..MAX_ROUNDS {
         journal.active()?;
+        turn_context.prepare(&transport, key, &mut body, ||journal.active()).await?;
         let request_hash = format!(
             "{:x}",
             Sha256::digest(serde_json::to_vec(&body).map_err(|_| "模型请求格式无效")?)
@@ -336,6 +339,7 @@ where
         for call in &turn.tool_calls {
             seen_ids.insert(call.id.clone());
         }
+        turn_context.model(&turn);
         provider_transport::append_turn(transport.protocol, &mut body, &turn)?;
         for (call, prepared) in turn.tool_calls.into_iter().zip(committed.tools) {
             journal.active()?;
@@ -346,14 +350,10 @@ where
                 journal.not_sent(&prepared.lease, NotSentReason::NotAdvertised)?;
                 json!({"error":"本次处理没有启用该工具，请仅使用已提供的工具"}).to_string()
             };
-            if content.len() > MAX_TOOL_OUTPUT {
-                return Err("工具结果超过长度上限".into());
-            }
+            let content = project_output(content, output_bytes);
             output_bytes = output_bytes.saturating_add(content.len());
-            if output_bytes > MAX_TOTAL_TOOL_OUTPUT {
-                return Err("工具结果总量超过上限".into());
-            }
             journal.active()?;
+            turn_context.result(&call_id, &content);
             provider_transport::append_result(transport.protocol, &mut body, &call_id, content)?;
         }
     }
@@ -390,12 +390,15 @@ where
             .map(|turn| turn.content);
     }
     request.insert("tools".into(), Value::Array(tools));
+    let policy_body = json!({"_mewu_context_window":body.get("_mewu_context_window")});
     let mut body = provider_transport::request_body(transport.protocol, body)?;
+    let mut turn_context = crate::agent_turn_context::TurnContext::new(&body, &policy_body)?;
     let mut answer = String::new();
     let mut call_count = 0;
     let mut seen_ids = HashSet::new();
     let mut output_bytes = 0usize;
     for round in 0..MAX_ROUNDS {
+        turn_context.prepare(&transport, key, &mut body, ||Ok(())).await?;
         let mut first_text = true;
         let mut overflow = false;
         let turn = provider_transport::stream_turn(&transport, key, body.clone(), |delta| {
@@ -445,6 +448,7 @@ where
             }
         }
         call_count += turn.tool_calls.len();
+        turn_context.model(&turn);
         provider_transport::append_turn(transport.protocol, &mut body, &turn)?;
         for call in turn.tool_calls {
             let call_id = call.id.clone();
@@ -458,18 +462,20 @@ where
                     Err(_) => return Err("工具执行已中止".into()),
                 }
             };
-            let mut content = serde_json::to_string(&result).map_err(|_| "工具结果格式无效")?;
-            if content.len() > MAX_TOOL_OUTPUT {
-                content = json!({"error":"工具结果超过长度上限，请缩小查询范围"}).to_string();
-            }
+            let content = project_output(serde_json::to_string(&result).map_err(|_| "工具结果格式无效")?, output_bytes);
             output_bytes = output_bytes.saturating_add(content.len());
-            if output_bytes > MAX_TOTAL_TOOL_OUTPUT {
-                return Err("工具结果总量超过上限".into());
-            }
+            turn_context.result(&call_id, &content);
             provider_transport::append_result(transport.protocol, &mut body, &call_id, content)?;
         }
     }
     Err("工具处理已达到轮次上限".into())
+}
+
+fn project_output(content: String, used: usize) -> String {
+    // Reserve room for one omission receipt per possible call. Even at the end
+    // of a large batch, every dispatched call receives a paired model result.
+    let available = MAX_TOTAL_TOOL_OUTPUT.saturating_sub(MAX_CALLS * 1024).saturating_sub(used);
+    mewu_agent_runtime::project_tool_output(content, MAX_TOOL_OUTPUT.min(available))
 }
 
 fn advertised_names(tools: &[Value]) -> Result<HashSet<String>, String> {
@@ -1473,25 +1479,34 @@ mod tests {
                 .as_str()
                 .unwrap()
                 .len()
-                < 256
+                < 1024
         );
         drop(requests);
-        let fixture = Fixture::new(vec![calls(&["a", "b", "c", "d", "e"], "remember", "")]);
+        let fixture = Fixture::new(vec![calls(&["a", "b", "c", "d", "e"], "remember", ""), final_text("done")]);
+        let mut large_context = body(); large_context["_mewu_context_window"]=json!(2097152);
         let result = run(
             fixture.url.clone(),
             "",
-            body(),
+            large_context,
             tools(),
             |_| {},
             |_| async { Ok(json!("x".repeat(127 * 1024))) },
         )
         .await;
-        assert!(result.unwrap_err().contains("工具结果总量"));
-        assert_eq!(fixture.requests.lock().unwrap().len(), 1);
+        assert_eq!(result.unwrap(), "done");
+        let requests=fixture.requests.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        let outputs=&requests[1]["messages"].as_array().unwrap()[2..];
+        assert_eq!(outputs.len(),5);
+        assert!(outputs.iter().map(|v|v["content"].as_str().unwrap().len()).sum::<usize>()<MAX_TOTAL_TOOL_OUTPUT);
+        assert!(outputs.last().unwrap()["content"].as_str().unwrap().contains("outputOmitted"));
     }
 
     #[tokio::test(flavor = "current_thread")]
     async fn answer_budget_is_shared_by_model_rounds_and_visible_deltas() {
+        // This test isolates the answer budget; context compaction has a separate
+        // multi-protocol test below and must not consume this two-response fixture.
+        let mut request = body(); request["_mewu_context_window"] = json!(2097152);
         let text = "x".repeat(ai::MAX_ANSWER_BYTES / 2 + 1);
         // Exercise cumulative deltas across two valid turns. A single 1 MiB
         // SSE line measures parser/runner throughput instead of this budget.
@@ -1514,7 +1529,7 @@ mod tests {
         let result = run(
             fixture.url.clone(),
             "",
-            body(),
+            request,
             tools(),
             |delta| visible.push_str(delta),
             |_| {
@@ -1532,6 +1547,57 @@ mod tests {
         assert_eq!(fixture.requests.lock().unwrap().len(), 2);
         assert!(visible.len() > text.len());
         assert!(visible.len() <= ai::MAX_ANSWER_BYTES);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn completed_tool_batches_compact_in_all_protocols_without_reexecuting_or_leaking_reasoning() {
+        use mewu_core::{ConnectionProtocol as P,ConnectionAuthMode};
+        for protocol in [P::ChatCompletions,P::OpenAiResponses,P::AnthropicMessages] {
+            let first=match protocol {
+                P::ChatCompletions=>calls(&["once"],"remember",""),
+                P::OpenAiResponses=>provider_transport::tests::responses_with_reasoning("",Some("once"),Some("private reasoning")),
+                P::AnthropicMessages=>provider_transport::tests::anthropic_with_reasoning("",Some("once"),Some("private reasoning")),
+            };
+            let finished=match protocol {
+                P::ChatCompletions=>final_text("已完成，继续原任务"),
+                P::OpenAiResponses=>provider_transport::tests::responses_with_reasoning("已完成，继续原任务",None,None),
+                P::AnthropicMessages=>provider_transport::tests::anthropic_with_reasoning("已完成，继续原任务",None,None),
+            };
+            let mut responses=vec![first];responses.extend(std::iter::repeat_n(finished,32));
+            let fixture=Fixture::new(responses);let mut executed=0;
+            let mut request=body();request["_mewu_context_window"]=json!(8192);
+            let result=run_with_transport(Transport{url:fixture.url.clone(),protocol,auth_mode:ConnectionAuthMode::None},"",request,tools(),|_|{},|_|{
+                executed+=1;async {Ok(json!({"observed":"界".repeat(4000)}))}
+            }).await.unwrap();
+            assert_eq!(executed,1);assert_eq!(result,"已完成，继续原任务");
+            let requests=fixture.requests.lock().unwrap();assert!(requests.len()>2);
+            assert!(requests[0].get("_mewu_context_window").is_none());
+            for summary in &requests[1..requests.len()-1] {
+                assert!(summary.get("tools").is_none());
+                let serialized=summary.to_string();
+                for private in ["private reasoning","opaque encrypted reasoning","signed opaque state","reasoning_content"] {
+                    assert!(!serialized.contains(private),"{protocol:?}: {private}");
+                }
+            }
+            let last=requests.last().unwrap();assert!(last.get("tools").is_some());
+            let field=if protocol==P::OpenAiResponses{"input"}else{"messages"};
+            let projected=last[field].to_string();assert!(projected.contains("test"));
+            assert!(projected.contains("本次任务已完成步骤"));
+            assert!(!projected.contains("tool_use_id"));assert!(!projected.contains("tool_call_id"));
+            assert!(!projected.contains("function_call_output"));
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn invalid_compaction_never_executes_a_tool_or_retries_the_prior_side_effect() {
+        let fixture=Fixture::new(vec![calls(&["once"],"remember",""),calls(&["injected"],"remember","")]);
+        let mut request=body();request["_mewu_context_window"]=json!(8192);
+        let mut executed=0;
+        let result=run(fixture.url.clone(),"",request,tools(),|_|{},|_|{
+            executed+=1;async {Ok(json!("界".repeat(4000)))}
+        }).await;
+        assert!(result.is_err());assert_eq!(executed,1);
+        assert_eq!(fixture.requests.lock().unwrap().len(),2);
     }
 
     #[tokio::test(flavor = "current_thread")]

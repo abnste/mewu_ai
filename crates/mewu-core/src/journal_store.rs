@@ -1045,7 +1045,7 @@ pub(super) fn respond_local(
 }
 fn dispatched_budget(db: &SqlConnection, run: &str) -> Result<()> {
     let count:i64=db.query_row("SELECT count(*) FROM agent_run_events WHERE run_id=?1 AND json_extract(metadata,'$.summary.kind')='tool' AND json_extract(metadata,'$.summary.phase') NOT IN ('prepared','not_sent')",[run],|r|r.get(0))?;
-    if count >= 16 {
+    if count >= crate::MAX_AGENT_TOOL_CALLS as i64 {
         return Err(j::bad("本次工具调用次数已达上限"));
     }
     Ok(())
@@ -1067,6 +1067,7 @@ fn tool_label(binding: &ToolBinding) -> String {
                 "skills_list" => "查找技能",
                 "skill_read" => "读取技能",
                 "plugin_project" => "制作插件",
+                "session_read" => "读取会话",
                 _ => name,
             }
         }
@@ -1516,5 +1517,34 @@ mod projection_read_tests {
             .db
             .authorizer(None::<fn(AuthContext<'_>) -> Authorization>)
             .unwrap();
+    }
+}
+
+#[cfg(test)]
+mod runtime_budget_tests {
+    use super::*;
+    #[test]
+    fn execution_and_loop_share_the_same_tool_budget() {
+        let mut store=Store::open_in_memory().unwrap();let scene=store.snapshot().active_scene_id;
+        store.apply(SceneCommand::SetDraft{scene_id:scene.clone(),draft:"bounded workflow".into()}).unwrap();
+        let run=store.begin_run(&scene).unwrap().run_id;
+        let mut executed=0;
+        for round in 0..5 {
+            let model=store.begin_model_request(&scene,&run,ModelDispatchInput{round,projected_request_sha256:"a".repeat(64)}).unwrap();
+            let count=if round==4{1}else{8};
+            let calls=(0..count).map(|n|ProposedTool{call_id:format!("r{round}-{n}"),binding:ToolBinding::Local{name:"session_read".into()},arguments_wire_sha256:"b".repeat(64)}).collect();
+            let turn=store.record_model_turn(&model,CompletePublicTurn{text:String::new(),calls}).unwrap();
+            for tool in turn.tools {
+                if executed==MAX_AGENT_TOOL_CALLS {
+                    assert!(store.mark_tool_dispatched(&tool.lease).is_err());
+                    store.record_tool_not_sent(&tool.lease,NotSentReason::BudgetExhausted).unwrap();
+                } else {
+                    store.mark_tool_dispatched(&tool.lease).unwrap();
+                    store.record_tool_response(&tool.lease,ObservedToolResult{response_kind:ToolResponseKind::LocalRead,returned_error:Some(false),observed_encoding:"json".into(),observed_bytes:2,observed_sha256:"c".repeat(64),retained_content:JournalContent::Json{value:serde_json::json!({})},references:vec![],model_visible_json:Some("{}".into())}).unwrap();
+                    executed+=1;
+                }
+            }
+        }
+        assert_eq!(executed,MAX_AGENT_TOOL_CALLS);
     }
 }

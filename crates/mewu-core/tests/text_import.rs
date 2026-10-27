@@ -138,7 +138,7 @@ fn batch_import_adds_all_items_and_references_in_one_commit_preserving_draft() {
         .unwrap()
         .pragma_query_value(None, "user_version", |r| r.get(0))
         .unwrap();
-    assert_eq!(pragma, 11);
+    assert_eq!(pragma, mewu_core::STORAGE_SCHEMA_VERSION);
     drop(store);
     assert_eq!(Store::open(&db.0).unwrap().snapshot(), snapshot);
 }

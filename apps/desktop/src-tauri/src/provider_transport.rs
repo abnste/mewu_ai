@@ -191,7 +191,8 @@ fn content_parts(
 }
 
 /// Convert the host's canonical messages once. Later rounds extend this native body.
-pub fn request_body(protocol: ConnectionProtocol, canonical: Value) -> Result<Value, String> {
+pub fn request_body(protocol: ConnectionProtocol, mut canonical: Value) -> Result<Value, String> {
+    if let Some(object) = canonical.as_object_mut() { object.remove("_mewu_context_window"); }
     for (name, maximum) in [
         (
             "temperature",

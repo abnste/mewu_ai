@@ -10,6 +10,8 @@ fn invalid(message: &str) -> CoreError {
 }
 
 pub fn validate_connection_profile(profile: &ConnectionProfile) -> Result<()> {
+    mewu_agent_runtime::ContextPolicy::new(profile.advanced.context_window_tokens)
+        .map_err(CoreError::Invalid)?;
     if Uuid::parse_str(&profile.id)
         .map(|id| id.to_string() != profile.id)
         .unwrap_or(true)

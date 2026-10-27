@@ -10,7 +10,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 const APPLICATION_ID: i64 = 0x4d455755;
-pub(crate) const DB_SCHEMA_VERSION: u32 = 11;
+pub(crate) const DB_SCHEMA_VERSION: u32 = crate::STORAGE_SCHEMA_VERSION;
 
 const SNAPSHOT_PADDING_MIN_BYTES: usize = 1024 * 1024;
 const SNAPSHOT_PADDING_BUCKET_BYTES: usize = 64 * 1024;
@@ -46,6 +46,8 @@ fn pad_snapshot_payload(payload: &mut String) {
 mod agent_cleanup_store;
 #[path = "journal_store.rs"]
 mod journal_store;
+#[path = "context_store.rs"]
+mod context_store;
 #[path = "memory_ledger_store.rs"]
 mod memory_ledger_store;
 #[path = "video_annotations_store.rs"]
@@ -348,7 +350,7 @@ impl Store {
                 transaction.pragma_update(None, "application_id", APPLICATION_ID)?;
                 (state, 0)
             }
-            1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | DB_SCHEMA_VERSION => {
+            1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | DB_SCHEMA_VERSION => {
                 if app_id != APPLICATION_ID {
                     return Err(invalid("数据库应用标识不匹配"));
                 }
@@ -390,6 +392,10 @@ impl Store {
             // The schema fence prevents their history cleanup deleting that media.
             extension_objects::migrate(&transaction)?;
         }
+        if version < 12 {
+            context_store::migrate(&transaction)?;
+        }
+        context_store::validate(&transaction)?;
         // Old payload fields are an import source only. Modern snapshots must
         // never broadcast or rewrite the entire durable memory collection.
         state.memories.clear();
@@ -413,7 +419,7 @@ impl Store {
             // Connection migration and its version gate are one transaction:
             // a v2 binary must never overwrite the new routing identities.
             validate_snapshot(&state)?;
-            let changed = if matches!(version, 6 | 7 | 8 | 9 | 10) && !recovering {
+            let changed = if matches!(version, 6 | 7 | 8 | 9 | 10 | 11) && !recovering {
                 // Rich/video layouts add empty, independent binary tables. Keep
                 // the exact existing document payload during this migration,
                 // including fields derived only for the in-memory view.
@@ -2721,6 +2727,7 @@ impl Store {
         }
         crate::external_memory::on_snapshot_change(&transaction, &self.state, &next)?;
         crate::journal::on_snapshot_change(&transaction, &self.state, &mut next)?;
+        context_store::prune(&transaction, &self.state, &next)?;
         if let Some((run_id, input)) = initial_video {
             crate::video_annotations::register_input(&transaction, &mut next, &run_id, input)?;
         }

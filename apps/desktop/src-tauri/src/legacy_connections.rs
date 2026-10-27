@@ -325,6 +325,7 @@ fn prepare_profile(value: Value, old_directory: &Path) -> Result<Prepared, SkipR
         credential_id: None,
         revision: 1,
         advanced: ConnectionAdvanced {
+            context_window_tokens: None,
             protocol,
             auth_mode,
             request_path: None,

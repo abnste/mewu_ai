@@ -277,6 +277,15 @@ fn append_memory_context(body: &mut Value, result: &Value) -> Result<(), String>
     Ok(())
 }
 
+/// Optional memory service failure must not destroy an otherwise valid task.
+/// This is a fixed host diagnostic, never a raw remote error/credential echo.
+pub(crate) fn append_memory_unavailable(body:&mut Value)->Result<(),String> {
+    let system=body.pointer("/messages/0/content").and_then(Value::as_str).map(str::to_owned)
+        .ok_or("模型缺少系统消息")?;
+    body["messages"][0]["content"]=json!(format!("{system}\n本次长期记忆服务检索未完成。可以继续当前任务，但不能把检索失败说成没有记忆，不能编造已记住的事实或宣称记忆已保存；需要时说明暂时无法核实。不要自动重复未知状态的写入操作。"));
+    Ok(())
+}
+
 #[cfg(test)] mod memory_tests {
     use super::*;
     #[test] fn memory_is_reference_data_and_does_not_replace_the_current_request() {
@@ -295,5 +304,12 @@ fn append_memory_context(body: &mut Value, result: &Value) -> Result<(), String>
         assert_eq!(body,before);
         assert!(!error.contains("private remote response"));
         assert!(memory_result(&result).is_err());
+    }
+    #[test] fn unavailable_memory_preserves_current_task_without_inventing_empty_or_saved_state() {
+        let mut body=json!({"messages":[{"role":"system","content":"rules"},{"role":"user","content":"current task"}]});
+        append_memory_unavailable(&mut body).unwrap();
+        assert_eq!(body["messages"][1]["content"],"current task");
+        assert!(body["messages"][0]["content"].as_str().unwrap().contains("不能把检索失败说成没有记忆"));
+        assert!(body.get("tools").is_none());
     }
 }

@@ -20,7 +20,7 @@ fn workspace(host: &Host) -> Result<Workspace, String> {
     }
     Ok(ws)
 }
-pub fn handles(name: &str) -> bool { matches!(name, "skills_list" | "skill_read" | "plugin_project") }
+pub fn handles(name: &str) -> bool { matches!(name, "skills_list" | "skill_read" | "plugin_project" | "session_read") }
 pub fn binding(name: &str) -> Option<ToolBinding> { handles(name).then(|| ToolBinding::Local { name: name.into() }) }
 pub fn definitions() -> Vec<Value> {
     let tool=|name:&str, description:&str, properties:Value, required:Value| json!({"type":"function","function":{"name":name,"description":description,"parameters":{"type":"object","properties":properties,"required":required,"additionalProperties":false}}});
@@ -32,6 +32,7 @@ pub fn definitions() -> Vec<Value> {
     // One structural contract: the schema given to the model is derived from
     // the same Serde types that execute its call, including the full manifest.
     definitions[2]["function"]["parameters"]=project_call_schema();
+    definitions.push(crate::agent_session::definition());
     definitions
 }
 pub fn augment_request(body: &mut Value, host: &Host) -> Result<(), String> {
@@ -106,7 +107,7 @@ struct BTreeEmpty {}
 pub async fn execute(app: AppHandle, scene: String, run: String, call: ModelToolCall, lease: DispatchLease) -> Result<CommittedToolOutput, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let host=app.state::<Host>();
-        let _workspace_gate=WORKSPACE_GATE.lock().map_err(|_|"插件工程当前不可用")?;
+        let _workspace_gate=if call.name=="session_read" {None} else {Some(WORKSPACE_GATE.lock().map_err(|_|"插件工程当前不可用")?)};
         host.exit.ensure_background()?;
         let mut engine=host.lock()?;
         if !crate::run_is_authorized(&engine,&scene,&run,None) { return Err("运行已结束".into()); }
@@ -117,7 +118,10 @@ pub async fn execute(app: AppHandle, scene: String, run: String, call: ModelTool
         // tool/model request; an already-dispatched atomic draft save may finish
         // and is recorded, but never installs. Explicit service checks execute
         // only in the isolated workspace runtime, without live host capabilities.
-        let result=workspace(&host).and_then(|ws| perform(&ws,&call));
+        let result=if call.name=="session_read" {
+            let engine=host.lock()?;
+            crate::agent_session::read(&engine.store,&scene,&run,&call.arguments)
+        } else { workspace(&host).and_then(|ws| perform(&ws,&call)) };
         let mut failed=result.is_err();
         let mut value=result.unwrap_or_else(|error|json!({"isError":true,"error":error,"installed":false,"correction":"修正具体错误后再调用；不要原样重复失败的参数。"}));
         if value.pointer("/result/passed")==Some(&Value::Bool(false)) {
@@ -184,7 +188,9 @@ mod tests {
     }
     #[test]
     fn tools_are_independent_of_memory_and_do_not_offer_auto_install_or_shell(){
-        let defs=definitions(); assert_eq!(defs.len(),3);
+        let defs=definitions();
+        assert_eq!(defs.iter().map(|v|v["function"]["name"].as_str().unwrap()).collect::<Vec<_>>(),
+            vec!["skills_list","skill_read","plugin_project","session_read"]);
         for tool in &defs { let name=tool["function"]["name"].as_str().unwrap();assert!(binding(name).is_some()); }
         assert!(binding("shell").is_none()); assert!(binding("install_extension").is_none());
         let root=tempfile::tempdir().unwrap(); let ws=Workspace::open(root.path()).unwrap();

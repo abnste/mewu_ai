@@ -782,6 +782,9 @@ pub struct ConnectionParameters {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ConnectionAdvanced {
+    /// Host-side context policy, never forwarded as a provider request parameter.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_window_tokens: Option<u32>,
     #[serde(default)]
     pub protocol: ConnectionProtocol,
     #[serde(default)]

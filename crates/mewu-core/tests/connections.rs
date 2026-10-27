@@ -291,7 +291,7 @@ fn v2_migration_preserves_memory_and_history_and_fixed_legacy_secret_reference()
     assert_eq!(
         db.pragma_query_value(None, "user_version", |r| r.get::<_, u32>(0))
             .unwrap(),
-        11
+        mewu_core::STORAGE_SCHEMA_VERSION
     );
     assert_eq!(snapshot.schema_version, 1);
     let mut cleared = migrated.clone();

@@ -3431,6 +3431,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "mewu-agent-runtime"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "mewu-agent-workspace"
 version = "0.1.0"
 dependencies = [
@@ -3461,6 +3470,7 @@ dependencies = [
 name = "mewu-core"
 version = "1.0.0"
 dependencies = [
+ "mewu-agent-runtime",
  "rusqlite",
  "serde",
  "serde_json",
@@ -3499,6 +3509,7 @@ dependencies = [
  "jsonschema",
  "libc",
  "libloading 0.8.9",
+ "mewu-agent-runtime",
  "mewu-agent-workspace",
  "mewu-control",
  "mewu-core",

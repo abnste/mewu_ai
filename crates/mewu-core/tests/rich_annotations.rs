@@ -805,7 +805,7 @@ fn db6_upgrade_and_failed_upgrade_preserve_the_old_document_and_version() {
             assert_eq!(
                 db.pragma_query_value(None, "user_version", |r| r.get::<_, u32>(0))
                     .unwrap(),
-                11
+                mewu_core::STORAGE_SCHEMA_VERSION
             );
             let after = rows(&db, "app_state");
             assert_eq!(after[0][3], before[0][3]);

@@ -7,6 +7,7 @@ license = "MPL-2.0"
 description = "Persistent scene and agent domain for Mewu"
 
 [dependencies]
+mewu-agent-runtime = { path = "../mewu-agent-runtime" }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.151", features = ["float_roundtrip"] }
 rusqlite = { version = "0.40.2", features = ["bundled", "hooks"] }

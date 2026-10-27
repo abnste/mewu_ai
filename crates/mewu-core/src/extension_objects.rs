@@ -90,7 +90,7 @@ mod tests {
         drop(Store::open(&path).unwrap());
         {
             let db=SqlConnection::open(&path).unwrap();
-            assert_eq!(db.query_row::<u32,_,_>("PRAGMA user_version",[],|r|r.get(0)).unwrap(),11);
+            assert_eq!(db.query_row::<u32,_,_>("PRAGMA user_version",[],|r|r.get(0)).unwrap(),DB_SCHEMA_VERSION);
             assert_eq!(db.query_row::<String,_,_>("SELECT payload FROM app_state WHERE id=1",[],|r|r.get(0)).unwrap(),before);
             db.execute_batch("DROP TABLE extension_objects;").unwrap();
         }

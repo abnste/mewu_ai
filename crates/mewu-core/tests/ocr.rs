@@ -186,7 +186,7 @@ fn background_completion_preserves_frozen_scene_and_survives_close_restore_and_r
     let version: u32 = sql
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 11);
+    assert_eq!(version, mewu_core::STORAGE_SCHEMA_VERSION);
     assert_eq!(reopened.snapshot().schema_version, 1);
 }
 

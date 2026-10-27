@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 #![cfg_attr(not(test), windows_subsystem = "windows")]
 mod agent_loop;
+mod agent_context;
+mod agent_session;
+mod agent_turn_context;
 mod app_control_host;
 mod app_control_integration;
 mod control_run_stream;
@@ -2424,7 +2427,6 @@ fn start_run_with_extensions(
                 let extension_memory_enabled = context.agent.memory_enabled;
                 let extension_custom_memory = extension_memory_enabled && extension_host::has_binding(&app2, &extension_agent_id, "memory")?;
                 let app3 = app2.clone();
-                let tools3 = run_tools.clone();
                 let origin3 = plugin_origin.clone();
                 let visual3 = visual.clone();
                 let video3 = video.clone();
@@ -2435,7 +2437,7 @@ fn start_run_with_extensions(
                     .find(|message| message.role == mewu_core::MessageRole::User)
                     .map(|message| message.text.clone())
                     .unwrap_or_default();
-                let mut body =
+                let context =
                     tauri::async_runtime::spawn_blocking(move || -> Result<_, String> {
                         let host = app3.state::<Host>();
                         let mut context = context;
@@ -2527,7 +2529,18 @@ fn start_run_with_extensions(
                             .skip(current_scene.conversation_start.unwrap_or(0))
                             .cloned()
                             .collect();
-                        let mut body = ai::request_body(&context, &host.assets)?;
+                        Ok(context)
+                    })
+                    .await
+                    .map_err(|_| "准备消息失败")??;
+                let prepared_context = agent_context::prepare(&app2, &context, &transport, &key, &run_tools.definitions(), &journal).await?;
+                let app3 = app2.clone();
+                let tools3 = run_tools.clone();
+                let visual3 = visual.clone();
+                let video3 = video.clone();
+                let mut body = tauri::async_runtime::spawn_blocking(move || -> Result<_, String> {
+                        let host = app3.state::<Host>();
+                        let mut body = ai::request_body_with_context(&context, &host.assets, prepared_context.first_kept, prepared_context.summary.as_deref())?;
                         if let Some(scope) = &visual3 {
                             ai::bind_visual_request_targets(&mut body, &scope.input)?;
                         }
@@ -2542,14 +2555,15 @@ fn start_run_with_extensions(
                     })
                     .await
                     .map_err(|_| "准备消息失败")??;
-                if !extension_custom_memory {
-                }
                 let extension_filtered_tools: Vec<_> = run_tools.definitions().into_iter().filter(|tool| {
                     !extension_custom_memory || tool.pointer("/function/name").and_then(serde_json::Value::as_str).is_none_or(|name| agent_tools::label(name).is_none())
                 }).collect();
                 if extension_custom_memory { body["tools"] = serde_json::Value::Array(extension_filtered_tools.clone()); }
                 if extension_memory_enabled {
-                    extension_agent::recall(&app2, &extension_agent_id, &scene_id, &memory_query, &mut body).await?;
+                    if extension_agent::recall(&app2, &extension_agent_id, &scene_id, &memory_query, &mut body).await.is_err() {
+                        journal.active()?;
+                        extension_agent::append_memory_unavailable(&mut body)?;
+                    }
                 }
                 let answer = agent_loop::run_recorded_with_reasoning(
                     transport,

@@ -1268,5 +1268,6 @@
   "服务检查通过": "Service checks passed",
   "检查未通过": "Checks failed",
   "检查记录不可用": "Check record unavailable",
-  "尚未验证": "Not verified"
+  "尚未验证": "Not verified",
+  "上下文窗口（tokens）": "Context window (tokens)"
 }

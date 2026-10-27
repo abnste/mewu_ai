@@ -6,6 +6,7 @@ use serde_json::Value;
 /// inspect → generate → validate → correct → package workflow needs more than
 /// six model turns. Keep the event budget bounded (12 model + 48 tool receipts).
 pub const MAX_AGENT_MODEL_ROUNDS: u32 = 12;
+pub const MAX_AGENT_TOOL_CALLS: usize = 32;
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields, try_from = "String")]

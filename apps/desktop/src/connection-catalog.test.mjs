@@ -29,6 +29,19 @@ function profile(baseUrl = 'https://api.example.test') {
     advanced: { protocol: 'chat_completions', authMode: 'bearer', requestPath: null, requestParameters: { temperature: .4 } } };
 }
 
+test('context window is a host option, validated without entering provider JSON', () => {
+  const value = profile();
+  for (const window of [null, 8192, 65536, 2097152]) {
+    value.advanced.contextWindowTokens = window;
+    assert.doesNotThrow(() => policy.validateConnectionProfile(value));
+  }
+  for (const window of [0, 8191, 2097153, 1.5, Infinity, '65536']) {
+    value.advanced.contextWindowTokens = window;
+    assert.throws(() => policy.validateConnectionProfile(value));
+  }
+  assert.deepEqual(value.advanced.requestParameters, { temperature: .4 });
+});
+
 test('catalog correction changes only the exact draft URL and waits for explicit save', () => {
   const original = draft.connectionDraft(profile());
   original.key = 'synthetic-key-draft'; original.parametersText = '{ "temperature": 0.4 }';
