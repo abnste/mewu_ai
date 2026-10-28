@@ -14,13 +14,44 @@ pub struct Sequence {
     other: std::collections::HashSet<u32>,
 }
 impl Sequence {
+    /// Only physical keyboard keys have matching keyboard-hook releases.
+    /// Mouse buttons and aggregate Shift/Ctrl/Alt aliases must not be seeded.
+    pub fn physical_keyboard(key: u32) -> bool {
+        (7..=254).contains(&key) && !matches!(key, 0x10..=0x12)
+    }
     pub fn seed_down(&mut self, key: u32, now: u64) {
+        if !Self::physical_keyboard(key) {
+            return;
+        }
         if matches!(key, 0x5b | 0x5c) && self.held.is_none() {
             self.held = Some((key, now));
             self.forwarded = true;
         } else {
             self.other.insert(key);
         }
+    }
+    /// A release may come from another input producer. It can retire prior
+    /// OS-visible state, but cannot release a Win gesture we are suppressing.
+    pub fn observed_release(&mut self, key: u32) -> bool {
+        self.other.remove(&key);
+        if self.forwarded && self.held.is_some_and(|(held, _)| held == key) {
+            self.held = None;
+            self.forwarded = false;
+            return true;
+        }
+        false
+    }
+    /// Called by the message-loop timer, never inside LowLevelKeyboardProc.
+    /// Reconcile missed releases without consulting the deliberately suppressed
+    /// OS state of our own held Win, or manufacturing a new key activation.
+    pub fn reconcile_releases(&mut self, is_down: impl Fn(u32) -> bool) -> bool {
+        self.other.retain(|key| is_down(*key));
+        if self.forwarded && self.held.is_some_and(|(key, _)| !is_down(key)) {
+            self.held = None;
+            self.forwarded = false;
+            return true;
+        }
+        false
     }
     pub fn key(&mut self, key: u32, down: bool, now: u64, threshold: u32) -> Decision {
         let mut decision = Decision::default();
@@ -80,6 +111,42 @@ impl Sequence {
 mod tests {
     use super::*;
     #[test]
+    fn startup_mouse_buttons_and_generic_modifier_aliases_cannot_disable_holds_forever() {
+        for key in [0x01, 0x02, 0x04, 0x05, 0x06, 0x10, 0x11, 0x12] {
+            let mut s = Sequence::default();
+            s.seed_down(key, 0);
+            let down = s.key(0x5b, true, 1000, 400);
+            assert!(
+                down.consume && down.pressed,
+                "stale non-physical keyboard seed {key:x}"
+            );
+        }
+    }
+    #[test]
+    fn missed_and_injected_releases_retire_only_os_visible_state() {
+        let mut s = Sequence::default();
+        s.seed_down(0xa2, 0);
+        s.reconcile_releases(|_| false);
+        assert!(s.key(0x5b, true, 100, 400).pressed);
+        assert!(!s.observed_release(0x5b));
+        assert!(!s.reconcile_releases(|_| false));
+        assert!(!s.key(0x5b, true, 450, 400).pressed);
+        assert!(s.key(0x5b, false, 500, 400).replay.is_empty());
+        let mut held = Sequence::default();
+        held.seed_down(0xa2, 0);
+        held.reconcile_releases(|key| key == 0xa2);
+        assert!(!held.key(0x5b, true, 100, 400).consume);
+        let mut stale_win = Sequence::default();
+        stale_win.seed_down(0x5b, 0);
+        assert!(stale_win.observed_release(0x5b));
+        assert!(stale_win.key(0x5b, true, 100, 400).pressed);
+        let mut canceled = Sequence::default();
+        canceled.key(0x5b, true, 0, 400);
+        canceled.key(0x41, true, 10, 400);
+        assert!(canceled.reconcile_releases(|_| false));
+        assert!(canceled.key(0x5b, true, 500, 400).pressed);
+    }
+    #[test]
     fn short_tap_is_replayed_once_and_long_hold_never_opens_start() {
         for key in [0x5b, 0x5c] {
             let mut s = Sequence::default();
@@ -137,10 +204,10 @@ mod tests {
         s.seed_down(0x5b, 0);
         assert_eq!(s.key(0x5b, false, 1000, 400).replay, vec![]);
         let mut s = Sequence::default();
-        s.seed_down(0x10, 0);
+        s.seed_down(0xa0, 0);
         assert!(!s.key(0x5b, true, 1, 400).consume);
         s.key(0x5b, false, 2, 400);
-        s.key(0x10, false, 3, 400);
+        s.key(0xa0, false, 3, 400);
         assert!(s.key(0x5b, true, 1000, 400).pressed);
     }
 }

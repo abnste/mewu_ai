@@ -16,8 +16,8 @@ use windows_sys::Win32::{
     System::{LibraryLoader::GetModuleHandleW, Threading::GetCurrentThreadId},
     UI::{
         Input::KeyboardAndMouse::{
-            GetAsyncKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT,
-            KEYEVENTF_KEYUP,
+            GetAsyncKeyState, MapVirtualKeyW, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD,
+            KEYBDINPUT, KEYEVENTF_KEYUP, MAPVK_VSC_TO_VK_EX,
         },
         WindowsAndMessaging::*,
     },
@@ -46,12 +46,41 @@ fn seed() {
     KEYS.with(|cell| {
         let mut keys = cell.borrow_mut();
         *keys = Default::default();
-        for key in 1..256 {
-            if unsafe { GetAsyncKeyState(key) } < 0 {
+        for key in 7..=254 {
+            if crate::hold_sequence::Sequence::physical_keyboard(key)
+                && unsafe { GetAsyncKeyState(key as i32) } < 0
+            {
                 keys.seed_down(key as u32, clock());
             }
         }
     });
+}
+fn physical_key(event: &KBDLLHOOKSTRUCT) -> u32 {
+    match event.vkCode {
+        0x10 => {
+            let key = unsafe { MapVirtualKeyW(event.scanCode, MAPVK_VSC_TO_VK_EX) };
+            if matches!(key, 0xa0 | 0xa1) {
+                key
+            } else {
+                event.vkCode
+            }
+        }
+        0x11 => {
+            if event.flags & LLKHF_EXTENDED != 0 {
+                0xa3
+            } else {
+                0xa2
+            }
+        }
+        0x12 => {
+            if event.flags & LLKHF_EXTENDED != 0 {
+                0xa5
+            } else {
+                0xa4
+            }
+        }
+        key => key,
+    }
 }
 thread_local! {static KEYS:RefCell<crate::hold_sequence::Sequence>=RefCell::new(Default::default());}
 fn clock() -> u64 {
@@ -88,7 +117,7 @@ unsafe extern "system" fn keyboard(code: i32, w: WPARAM, l: LPARAM) -> LRESULT {
     if EDITING.load(Ordering::Acquire) && KEYS.with(|keys| keys.borrow().held.is_none()) {
         return CallNextHookEx(null_mut(), code, w, l);
     }
-    if event.dwExtraInfo == TAG || event.flags & (LLKHF_INJECTED | LLKHF_LOWER_IL_INJECTED) != 0 {
+    if event.dwExtraInfo == TAG {
         return CallNextHookEx(null_mut(), code, w, l);
     }
     let down = matches!(w as u32, WM_KEYDOWN | WM_SYSKEYDOWN);
@@ -96,14 +125,18 @@ unsafe extern "system" fn keyboard(code: i32, w: WPARAM, l: LPARAM) -> LRESULT {
     if !down && !up {
         return CallNextHookEx(null_mut(), code, w, l);
     }
+    let key = physical_key(event);
+    if event.flags & (LLKHF_INJECTED | LLKHF_LOWER_IL_INJECTED) != 0 {
+        if up && KEYS.with(|cell| cell.borrow_mut().observed_release(key)) {
+            post(RELEASE);
+        }
+        return CallNextHookEx(null_mut(), code, w, l);
+    }
     let consumed = std::panic::catch_unwind(|| {
         KEYS.with(|cell| {
-            let decision = cell.borrow_mut().key(
-                event.vkCode,
-                down,
-                clock(),
-                THRESHOLD.load(Ordering::Acquire),
-            );
+            let decision =
+                cell.borrow_mut()
+                    .key(key, down, clock(), THRESHOLD.load(Ordering::Acquire));
             if (decision.pressed && !post(PRESS)) || (decision.released && !post(RELEASE)) {
                 FAULT.store(true, Ordering::Release);
                 ENABLED.store(false, Ordering::Release);
@@ -232,11 +265,27 @@ pub fn configure(app: &AppHandle, milliseconds: u32) -> Result<(), String> {
                     let _ = tx.send(false);
                     return;
                 }
+                let state_timer = SetTimer(null_mut(), 0, 500, None);
+                if state_timer == 0 {
+                    UnhookWindowsHookEx(keyboard_hook);
+                    THREAD.store(0, Ordering::Release);
+                    let _ = tx.send(false);
+                    return;
+                }
                 seed();
                 ENABLED.store(true, Ordering::Release);
                 let _ = tx.send(true);
                 while GetMessageW(&mut message, null_mut(), 0, 0) > 0 {
                     match message.message {
+                        WM_TIMER if message.wParam == state_timer => {
+                            let released = KEYS.with(|cell| {
+                                cell.borrow_mut()
+                                    .reconcile_releases(|key| GetAsyncKeyState(key as i32) < 0)
+                            });
+                            if released {
+                                post(RELEASE);
+                            }
+                        }
                         PRESS | RELEASE => {
                             let pressed = message.message == PRESS;
                             if pressed && mouse_hook.is_null() {
@@ -286,6 +335,7 @@ pub fn configure(app: &AppHandle, milliseconds: u32) -> Result<(), String> {
                     }
                 });
                 UnhookWindowsHookEx(keyboard_hook);
+                KillTimer(null_mut(), state_timer);
                 if !mouse_hook.is_null() {
                     UnhookWindowsHookEx(mouse_hook);
                 }
@@ -306,5 +356,30 @@ pub fn disable() {
     if THREAD.load(Ordering::Acquire) != 0 {
         STOPPING.store(true, Ordering::Release);
         post(STOP);
+    }
+}
+
+#[cfg(test)]
+mod modifier_tests {
+    use super::*;
+    #[test]
+    fn modifier_releases_use_the_same_physical_identity_as_startup_state() {
+        for (vk, scan, flags, expected) in [
+            (0x10, 0x2a, 0, 0xa0),
+            (0x10, 0x36, 0, 0xa1),
+            (0x11, 0, 0, 0xa2),
+            (0x11, 0, LLKHF_EXTENDED, 0xa3),
+            (0x12, 0, 0, 0xa4),
+            (0x12, 0, LLKHF_EXTENDED, 0xa5),
+        ] {
+            let event = KBDLLHOOKSTRUCT {
+                vkCode: vk,
+                scanCode: scan,
+                flags,
+                time: 0,
+                dwExtraInfo: 0,
+            };
+            assert_eq!(physical_key(&event), expected);
+        }
     }
 }
