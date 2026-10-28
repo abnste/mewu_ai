@@ -97,7 +97,46 @@ struct State {
     owner: String,
     recognition: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 }
+/// Presentation continuity only, not authority to capture or adopt pixels. The
+/// native operation must independently validate its source and new snapshot.
+#[derive(Clone)]
+pub(crate) struct CaptureContinuation {
+    generation: u64,
+    scene: String,
+}
 impl State {
+    fn source_stale(&self, snapshot: &mewu_core::Snapshot) -> bool {
+        self.view.active
+            && self.view.scene_id.as_ref().is_some_and(|scene| {
+                snapshot.active_scene_id != *scene
+                    || !snapshot
+                        .scenes
+                        .iter()
+                        .any(|value| value.id == *scene && !value.closed && !value.frozen)
+            })
+    }
+    fn capture_continuation(&self, scene: &str) -> Option<CaptureContinuation> {
+        (self.view.active && self.view.scene_id.as_deref() == Some(scene)).then(|| {
+            CaptureContinuation {
+                generation: self.view.generation,
+                scene: scene.into(),
+            }
+        })
+    }
+    fn continue_capture(&mut self, source: &CaptureContinuation, scene: &str) -> bool {
+        if !self.view.active
+            || self.view.generation != source.generation
+            || self.view.scene_id.as_deref() != Some(source.scene.as_str())
+            || scene.is_empty()
+        {
+            return false;
+        }
+        if let Some(token) = self.recognition.take() {
+            token.store(true, Ordering::Release);
+        }
+        self.view.scene_id = Some(scene.into());
+        true
+    }
     fn retain_speech(&mut self, scene: &str) -> bool {
         if !self.view.active || self.view.scene_id.as_deref() != Some(scene) {
             return false;
@@ -163,6 +202,94 @@ mod release_tests {
         pending.view.scene_id = None;
         assert!(pending.release("hold-rule", 0));
         assert!(!pending.view.held && !pending.view.interacted);
+    }
+    #[test]
+    fn native_capture_continuation_preserves_quick_mode_and_retires_old_pixels() {
+        let mut state = active();
+        state.view.interacted = true;
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        state.recognition = Some(cancel.clone());
+        assert!(state.capture_continuation("other").is_none());
+        let source = state.capture_continuation("scene").unwrap();
+        assert!(state.continue_capture(&source, "approved-recording-scene"));
+        assert!(cancel.load(Ordering::Acquire));
+        assert_eq!(
+            state.view.scene_id.as_deref(),
+            Some("approved-recording-scene")
+        );
+        assert_eq!(state.view.generation, 8);
+        assert!(state.view.active && state.view.held && state.view.interacted);
+        assert!(!state.continue_capture(&source, "unrelated"));
+        assert!(state.release("hold-rule", 8));
+        assert!(!state.close_requested());
+    }
+    #[test]
+    fn stale_or_closed_continuations_cannot_reactivate_or_change_another_invocation() {
+        for change in ["closed", "generation", "scene", "empty"] {
+            let mut state = active();
+            let source = state.capture_continuation("scene").unwrap();
+            match change {
+                "closed" => state.view.active = false,
+                "generation" => state.view.generation += 1,
+                "scene" => state.view.scene_id = Some("different".into()),
+                _ => {}
+            }
+            let before = state.view.scene_id.clone();
+            assert!(!state.continue_capture(&source, if change == "empty" { "" } else { "new" }));
+            assert_eq!(state.view.scene_id, before);
+        }
+    }
+    #[test]
+    fn durable_capture_adoption_keeps_history_and_only_the_explicit_continuation_keeps_quick_mode()
+    {
+        use mewu_core::{Asset, AssetKind, Region, SceneCommand, Store};
+        let mut store = Store::open_in_memory().unwrap();
+        let image = || Asset {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: "test.png".into(),
+            kind: AssetKind::Image,
+            path: "test-owned.png".into(),
+            width: Some(640),
+            height: Some(480),
+            origin_x: None,
+            origin_y: None,
+            scale_factor: None,
+            capture_coordinates: None,
+        };
+        let old = store
+            .adopt_capture_background(image())
+            .unwrap()
+            .active_scene_id;
+        store
+            .apply(SceneCommand::AddRegion {
+                scene_id: old.clone(),
+                region: Region {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    x: 10.,
+                    y: 10.,
+                    width: 300.,
+                    height: 200.,
+                    ..Default::default()
+                },
+            })
+            .unwrap();
+        let mut state = active();
+        state.view.scene_id = Some(old.clone());
+        let continuation = state.capture_continuation(&old).unwrap();
+        let adopted = store.adopt_capture_background(image()).unwrap();
+        assert_ne!(old, adopted.active_scene_id);
+        assert!(adopted
+            .scenes
+            .iter()
+            .any(|scene| scene.id == old && scene.frozen && scene.regions.len() == 1));
+        assert!(state.source_stale(&adopted));
+        assert!(state.continue_capture(&continuation, &adopted.active_scene_id));
+        assert!(!state.source_stale(&adopted));
+        let unrelated = store.adopt_capture_background(image()).unwrap();
+        if unrelated.active_scene_id != adopted.active_scene_id {
+            assert!(state.source_stale(&unrelated));
+        }
+        assert!(!state.continue_capture(&continuation, &unrelated.active_scene_id));
     }
 }
 fn state() -> &'static Mutex<State> {
@@ -251,18 +378,29 @@ pub fn scene_closed(app: &AppHandle, scene: &str) {
         clear(app, generation);
     }
 }
+#[cfg(target_os = "linux")]
+pub(crate) fn capture_continuation(scene: &str) -> Option<CaptureContinuation> {
+    state()
+        .lock()
+        .ok()
+        .and_then(|state| state.capture_continuation(scene))
+}
+#[cfg(target_os = "linux")]
+pub(crate) fn continue_capture(app: &AppHandle, source: Option<&CaptureContinuation>, scene: &str) {
+    let Some(source) = source else {
+        return;
+    };
+    if let Ok(mut state) = state().lock() {
+        if state.continue_capture(source, scene) {
+            publish(app, &state.view);
+        }
+    }
+}
 pub fn reconcile(app: &AppHandle, snapshot: &mewu_core::Snapshot) {
-    let stale = state().lock().ok().and_then(|s| {
-        s.view.scene_id.as_ref().and_then(|scene| {
-            (s.view.active
-                && (snapshot.active_scene_id != *scene
-                    || !snapshot
-                        .scenes
-                        .iter()
-                        .any(|value| value.id == *scene && !value.closed && !value.frozen)))
-            .then_some(s.view.generation)
-        })
-    });
+    let stale = state()
+        .lock()
+        .ok()
+        .and_then(|s| s.source_stale(snapshot).then_some(s.view.generation));
     if let Some(generation) = stale {
         clear(app, generation);
     }

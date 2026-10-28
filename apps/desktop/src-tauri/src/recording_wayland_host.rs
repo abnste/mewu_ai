@@ -121,6 +121,22 @@ pub(crate) fn completed_result(id:&str)->Result<Option<Result<(),String>>,String
         .filter(|(finished,_)|finished==id).map(|(_,result)|result.clone()))
 }
 fn emit(app:&AppHandle,value:&Option<recording::Status>){
+    if value.is_none(){
+        let target=app.clone();
+        let _=app.run_on_main_thread(move||{
+            use gtk::prelude::*;
+            // A queued terminal event must not undo its successor's input mask.
+            if status().is_ok_and(|value|value.is_none()){
+                if let Some(window)=target.get_webview_window("space"){
+                    if let Ok(widget)=window.gtk_window(){
+                        widget.input_shape_combine_region(None);
+                        widget.set_accept_focus(true);
+                        widget.display().flush();
+                    }
+                }
+            }
+        });
+    }
     crate::recording_tray_linux::refresh(app,value.as_ref().map(|status|status.phase));
     let _=app.emit_to("space","recording-status",value);
 }
@@ -186,6 +202,7 @@ pub(crate) async fn prepare_wayland_recording(app:AppHandle,window:WebviewWindow
     if before.active_scene_id!=scene_id{return Err("会话已变化".into());}
     let old=before.scenes.iter().find(|s|s.id==scene_id).ok_or("会话不存在")?;
     if old.closed||old.frozen||old.run.as_ref().is_some_and(|r|r.status==mewu_core::RunStatus::Running){return Err("请先完成当前会话".into());}
+    let quick_continuation=crate::quick_capture::capture_continuation(&scene_id);
     {
         let s=state().lock().map_err(|_|"录屏状态不可用")?;
         if let Some(l)=&s.lease {
@@ -266,6 +283,10 @@ pub(crate) async fn prepare_wayland_recording(app:AppHandle,window:WebviewWindow
                         lease.scene_id=snapshot.active_scene_id.clone();lease.background=Some(asset);
                     }else{return Err("录屏准备已取消".into());}
                 }
+                // The Portal may replace the source scene after monitor consent.
+                // Carry only this exact invocation's presentation intent before
+                // normal publish reconciles it; never revive a retired mode.
+                crate::quick_capture::continue_capture(&run_app,quick_continuation.as_ref(),&snapshot.active_scene_id);
                 let published=crate::publish(&run_app,&snapshot);
                 preview_received.store(true,Ordering::Release);
                 if let Some(tx)=ready_tx.take(){let _=tx.send(Ok(published));}Ok(())
@@ -330,6 +351,31 @@ pub(crate) fn tray_admission(app:&AppHandle,nonce:&str)->Result<(),String>{
     }
     Ok(())
 }
+async fn prepare_countdown_input(app:&AppHandle,window:&WebviewWindow,id:&str)->Result<(),String>{
+    let (send,receive)=tokio::sync::oneshot::channel();
+    let target=window.clone();let owner=app.clone();let id=id.to_owned();
+    window.run_on_main_thread(move||{
+        use gtk::prelude::*;
+        let result=(||{
+            if send.is_closed(){return Err("录屏倒计时已取消".to_string());}
+            tray_admission(&owner,&id)?;
+            if target.label()!="space"{return Err("录屏父窗口已变化".into());}
+            let widget=target.gtk_window().map_err(|_|"录屏父窗口不可用")?;
+            if !widget.is_mapped(){return Err("录屏父窗口已隐藏".into());}
+            // CSS pointer-events cannot pass input to another application.
+            // Use GTK's native Wayland input region for this owned surface;
+            // keep the live mask/countdown painted until the normal unmap ack.
+            widget.input_shape_combine_region(Some(&gtk::cairo::Region::create()));
+            widget.set_accept_focus(false);
+            widget.display().flush();
+            Ok(())
+        })();
+        let _=send.send(result);
+    }).map_err(|_|"无法释放倒计时期间的桌面输入")?;
+    tokio::time::timeout(Duration::from_secs(2),receive).await
+        .map_err(|_|"录屏倒计时输入准备超时".to_string())?
+        .map_err(|_|"录屏倒计时输入准备中断".to_string())?
+}
 
 pub(crate) async fn start(app:AppHandle,window:WebviewWindow,scene_id:String,region_id:String,
     audio:crate::recording_audio_host::RecordingAudioSelection,grant:crate::plugins::RecordingGrant)->Result<bool,String>{
@@ -362,6 +408,7 @@ pub(crate) async fn start(app:AppHandle,window:WebviewWindow,scene_id:String,reg
     // Keep the same capture surface visible for 3/2/1. It must be unmapped and
     // acknowledged before Start; a monitor stream cannot exclude this window.
     crate::recording_tray_linux::present(&app,&id).await?;
+    prepare_countdown_input(&app,&window,&id).await?;
     // Preparation owns the transition through the live Portal worker. Starting
     // must share that exact guard, not try to acquire its own held lock again.
     let transition={let s=state().lock().map_err(|_|"录屏状态不可用")?;
