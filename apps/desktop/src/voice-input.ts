@@ -84,7 +84,7 @@ export class VoiceInput {
   progress(value: VoiceProgress) {
     const ticket = this.ticket;
     if (!ticket || ticket.request.requestId !== value.requestId || ticket.scope.sceneId !== value.sceneId) return;
-    const order = { starting: 0, listening: 1, stopping: 2 };
+    const order = { starting: 0, listening: 1, recognizing: 2, stopping: 3 };
     if (!(value.phase in order) || order[value.phase] < order[ticket.phase]) return;
     ticket.phase = value.phase; this.publish(ticket);
   }

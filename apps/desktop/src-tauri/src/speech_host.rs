@@ -387,6 +387,9 @@ pub async fn run_plugin_dictation(
         move |phase| {
             let host = progress_app.state::<Host>();
             if host.exit.is_running() && host.speech.authorized(&progress_id, &progress_token) {
+                if phase == VoicePhase::Recognizing {
+                    crate::quick_capture::speech_touch(&progress_app, &progress_scene);
+                }
                 let _ = progress_app.emit_to(
                     "space",
                     "voice-progress",

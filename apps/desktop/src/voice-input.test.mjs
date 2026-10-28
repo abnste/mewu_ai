@@ -92,6 +92,12 @@ checks.push('Bounded Unicode/literal append preserves current text; installed Ch
   assert.equal(f.pending().phase, 'listening'); f.runs[0].resolve(f.result(0, 'bad', { requestId: 'old' })); await tick(); assert.equal(f.writes.length, 0); assert.match(f.errors[0], /失效/);
   checks.push('Progress has exact request/scene and monotonic phase; mismatched returned result never inserts');
 }
+{
+  const f=fixture();f.input.start('system');f.input.progress({requestId:'request-1',sceneId:'scene',phase:'recognizing'});assert.equal(f.pending().phase,'recognizing');
+  f.input.progress({requestId:'request-1',sceneId:'scene',phase:'listening'});assert.equal(f.pending().phase,'recognizing');
+  f.runs[0].resolve(f.result(0));await tick();assert.equal(f.draft(),'A 语音');
+  checks.push('Speech activity is an owned forward phase; later listening notifications never roll it back');
+}
 const synthetic = values => new SyntheticModule(Object.keys(values), function () { for (const [key, value] of Object.entries(values)) this.setExport(key, value); });
 async function bridgeFixture(native, failListen = false) {
   const calls = [], events = new Map(), stopped = [];

@@ -74,6 +74,7 @@ pub struct DictationResult {
 pub enum VoicePhase {
     Starting,
     Listening,
+    Recognizing,
     Stopping,
 }
 
@@ -618,7 +619,7 @@ mod platform {
         }
         check_cancel(cancel)?;
         progress(VoicePhase::Listening);
-        let result = listen(&context, language, cancel);
+        let result = listen(&context, language, cancel, progress);
         progress(VoicePhase::Stopping);
         // Cleanup completes before the worker emits its final message. If a driver
         // stalls in any COM call, the supervising process kills only this worker job.
@@ -628,9 +629,11 @@ mod platform {
         context: &ISpRecoContext,
         language: String,
         cancel: &AtomicBool,
+        progress: &mut dyn FnMut(VoicePhase),
     ) -> Result<DictationResult, SpeechError> {
         let started = Instant::now();
         let mut heard = false;
+        let mut recognizing = false;
         let mut candidate = None;
         loop {
             check_cancel(cancel)?;
@@ -642,6 +645,16 @@ mod platform {
             }
             for event in events(context)? {
                 check_cancel(cancel)?;
+                // SAPI distinguishes audible input from a recognizable phrase.
+                // Noise alone must not retain a temporary voice interaction.
+                // https://learn.microsoft.com/en-us/previous-versions/windows/desktop/ee431845(v=vs.85)
+                if !recognizing
+                    && [SPEI_PHRASE_START.0, SPEI_HYPOTHESIS.0, SPEI_RECOGNITION.0]
+                        .contains(&event.id())
+                {
+                    recognizing = true;
+                    progress(VoicePhase::Recognizing);
+                }
                 match event.id() {
                     id if id == SPEI_SOUND_START.0 || id == SPEI_PHRASE_START.0 => heard = true,
                     id if id == SPEI_RECOGNITION.0 => {
@@ -825,20 +838,19 @@ mod platform {
                 builder.InitFromPhrase(&phrase).unwrap();
                 recognizer.0.EmulateRecognition(&builder).unwrap();
             }
-            let started = Instant::now();
-            let mut found = None;
-            while found.is_none() && started.elapsed() < Duration::from_secs(5) {
-                for event in events(&context).unwrap() {
-                    if event.id() == SPEI_RECOGNITION.0 {
-                        found = Some(event.text().unwrap());
-                    }
-                }
-                std::thread::sleep(Duration::from_millis(10));
-            }
-            let text =
-                found.expect("emulated recognition arrived through the production event decoder");
+            let mut phases = Vec::new();
+            let result = listen(
+                &context,
+                "zh-CN".into(),
+                &AtomicBool::new(false),
+                &mut |phase| phases.push(phase),
+            )
+            .expect("emulated recognition passed through the production listener");
+            assert_eq!(phases, vec![VoicePhase::Recognizing]);
             assert_eq!(
-                text.chars()
+                result
+                    .text
+                    .chars()
                     .filter(|c| !c.is_whitespace())
                     .collect::<String>(),
                 "你好世界"

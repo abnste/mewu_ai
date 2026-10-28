@@ -73,6 +73,14 @@ pub fn mouse_touch() {
         TOUCHED.store(generation, Ordering::Release);
     }
 }
+pub fn speech_touch(app: &AppHandle, scene: &str) {
+    if let Ok(mut state) = state().lock() {
+        if state.retain_speech(scene) {
+            TOUCHED.store(state.view.generation, Ordering::Release);
+            publish(app, &state.view);
+        }
+    }
+}
 
 #[derive(Default, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -90,6 +98,13 @@ struct State {
     recognition: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 }
 impl State {
+    fn retain_speech(&mut self, scene: &str) -> bool {
+        if !self.view.active || self.view.scene_id.as_deref() != Some(scene) {
+            return false;
+        }
+        self.view.interacted = true;
+        true
+    }
     fn release(&mut self, owner: &str, touched: u64) -> bool {
         if self.owner != owner || !self.view.held {
             return false;
@@ -119,6 +134,17 @@ mod release_tests {
             owner: "hold-rule".into(),
             recognition: None,
         }
+    }
+    #[test]
+    fn actual_speech_retains_only_its_active_scene_and_silent_release_still_closes() {
+        let mut silent = active();
+        assert!(!silent.retain_speech("other"));
+        silent.release("hold-rule", 0);
+        assert!(silent.close_requested());
+        assert!(silent.retain_speech("scene"));
+        assert!(!silent.close_requested());
+        silent.view.active = false;
+        assert!(!silent.retain_speech("scene"));
     }
     #[test]
     fn release_is_source_bound_idempotent_and_only_untouched_invocations_close() {

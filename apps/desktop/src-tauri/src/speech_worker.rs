@@ -177,6 +177,7 @@ struct Protocol {
     config: WorkerConfig,
     ready: bool,
     listening: bool,
+    recognizing: bool,
     stopping: bool,
     count: usize,
     terminal: Option<Result<WorkerOutput, SpeechError>>,
@@ -187,6 +188,7 @@ impl Protocol {
             config,
             ready: false,
             listening: false,
+            recognizing: false,
             stopping: false,
             count: 0,
             terminal: None,
@@ -215,6 +217,11 @@ impl Protocol {
                 match phase {
                     VoicePhase::Listening if !self.listening && !self.stopping => {
                         self.listening = true
+                    }
+                    VoicePhase::Recognizing
+                        if self.listening && !self.recognizing && !self.stopping =>
+                    {
+                        self.recognizing = true
                     }
                     VoicePhase::Stopping if !self.stopping => self.stopping = true,
                     _ => return Err(SpeechError::Protocol),
@@ -620,6 +627,44 @@ mod tests {
             }),
             Err(SpeechError::Protocol)
         );
+    }
+    #[test]
+    fn recognizing_requires_owned_listening_and_cannot_repeat_or_go_backwards() {
+        let mut p = Protocol::new(config());
+        p.accept(WorkerEvent::Ready { version: VERSION }).unwrap();
+        assert_eq!(
+            p.accept(WorkerEvent::Progress {
+                phase: VoicePhase::Recognizing
+            }),
+            Err(SpeechError::Protocol)
+        );
+        p.accept(WorkerEvent::Progress {
+            phase: VoicePhase::Listening,
+        })
+        .unwrap();
+        assert_eq!(
+            p.accept(WorkerEvent::Progress {
+                phase: VoicePhase::Recognizing
+            }),
+            Ok(Some(VoicePhase::Recognizing))
+        );
+        assert_eq!(
+            p.accept(WorkerEvent::Progress {
+                phase: VoicePhase::Recognizing
+            }),
+            Err(SpeechError::Protocol)
+        );
+        assert_eq!(
+            p.accept(WorkerEvent::Progress {
+                phase: VoicePhase::Listening
+            }),
+            Err(SpeechError::Protocol)
+        );
+        p.accept(WorkerEvent::Progress {
+            phase: VoicePhase::Stopping,
+        })
+        .unwrap();
+        p.accept(result()).unwrap();
     }
     #[test]
     fn frame_reader_is_bounded_and_preserves_buffered_cancel() {

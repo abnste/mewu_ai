@@ -9,6 +9,6 @@ export default function QuickVoice(props:{voice?:VoiceControl;ready?:boolean;tex
     <Show when={props.text}><div class="quick-voice-answer"><Markdown text={props.text!}/></div></Show>
     <Show when={props.draft&&!props.voice?.pending}><div class="quick-voice-transcript">{props.draft}</div></Show>
     <Show when={props.error}><div class="quick-voice-error" role="status">{props.error}</div></Show>
-    <Show when={props.voice}>{voice=><div class="quick-voice-bubble" classList={{listening:voice().pending?.phase==='listening',thinking:props.thinking}}><VoiceInputButton {...voice()} disabled={voice().disabled||props.ready===false} onMenu={()=>{}}/></div>}</Show>
+    <Show when={props.voice}>{voice=><div class="quick-voice-bubble" classList={{listening:voice().pending?.phase==='listening'||voice().pending?.phase==='recognizing',thinking:props.thinking}}><VoiceInputButton {...voice()} disabled={voice().disabled||props.ready===false} onMenu={()=>{}}/></div>}</Show>
   </aside>;
 }
