@@ -90,6 +90,7 @@ interface Props {
   quickText?:import('../contracts').OcrDocument;
   quickImages?:import('../window-snap').SnapBounds[];
   onQuickCopied?:()=>void;
+  closeAfterCopy?:boolean;
   onActiveRegionChange?: (sceneId: string, regionId: string | undefined) => void;
   onFocusComposer?: () => void;
   onBeforeExport?: () => Promise<void>;
@@ -899,7 +900,7 @@ export default function SpaceCanvas(props: Props) {
     const saved=()=>props.scene.items.find(value=>value.id===itemId&&value.asset.id===assetId);
     const current=()=>!disposed&&props.scene.id===sceneId&&!props.scene.closed&&!props.scene.frozen&&Boolean(saved())&&(fence===undefined||JSON.stringify(saved())===fence);
     setExporting(true);props.onExportActivity?.(true);
-    try{return await finishCapture({prepare:async()=>{await props.onBeforeExport?.();fence=JSON.stringify(saved());},current,export:()=>exportImageItem(sceneId,itemId,assetId,copy,copy?'annotated':variant),close:copy&&closeSpace?()=>props.onCopyClose?.(sceneId)??Promise.resolve(false):undefined});}
+    try{return await finishCapture({prepare:async()=>{await props.onBeforeExport?.();fence=JSON.stringify(saved());},current,export:()=>exportImageItem(sceneId,itemId,assetId,copy,copy?'annotated':variant),close:copy?async()=>{if(!closeSpace&&!props.closeAfterCopy)return true;return props.onCopyClose?.(sceneId)??false;}:undefined});}
     catch(error){if(!disposed)props.onError(error instanceof Error?error.message:String(error));return false;}
     finally{if(!disposed){setExporting(false);props.onExportActivity?.(false);}}
   }
@@ -924,16 +925,16 @@ export default function SpaceCanvas(props: Props) {
           else { const url = URL.createObjectURL(blob), link = document.createElement('a'); link.href = url; link.download = `截图_${new Date().toISOString().replace(/[:.]/g, '-')}.png`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); }
           return true;
         }
-      }, close: copy && closeSpace ? () => props.onCopyClose?.(sceneId) ?? Promise.resolve(false) : undefined });
+      }, close: copy ? async () => { if (!closeSpace && !props.closeAfterCopy) return true; return props.onCopyClose?.(sceneId) ?? false; } : undefined });
     } catch (error) { if (!disposed) props.onError(error instanceof Error ? error.message : '操作失败'); return false; }
     finally { if (!disposed) { setExporting(false); props.onExportActivity?.(false); } }
   }
-  return <main ref={canvas} tabIndex={-1} class="space-canvas capture-surface" classList={{ 'capture-blackboard':props.blackboard, 'can-select': !props.blackboard&&Boolean(props.scene.background), 'capture-dragging': activity(), 'capture-add-mode': forceNew() }} onPointerDown={begin} aria-label={t("AI 空间")}>
+  return <main ref={canvas} tabIndex={-1} class="space-canvas capture-surface" classList={{ 'capture-quick':props.closeAfterCopy, 'capture-drawing':Boolean(drawingSession()||imageDrawing()), 'capture-blackboard':props.blackboard, 'can-select': !props.blackboard&&Boolean(props.scene.background), 'capture-dragging': activity(), 'capture-add-mode': forceNew() }} onPointerDown={begin} aria-label={t("AI 空间")}>
     <Show when={props.recordingSelection}><span class="capture-recording-hint" role="status">{t("框选录制范围")}</span></Show>
     <Show when={visibleCodes()}>{view => <SelectionCodeCard result={view().result} region={display(props.scene.regions.find(region => region.id === view().result.regionId)!)} toolbar={toolbarVisible() ? toolbarBox() : undefined} hidden={codesPaused()} disabled={Boolean(props.codeActionBusy)} onAction={(token, id, action) => props.onCodeAction?.(token, id, action) ?? Promise.resolve(false)} />}</Show>
     <Show when={!props.blackboard && pointerNative && props.scene.background}>{background => <PointerInspector sceneId={props.scene.id} background={background()} imageBox={geometry()} dimensions={pointerSelectionDimensions(selection(), geometry(), activeRegion())} disabled={props.busy || exporting() || props.scene.frozen || props.scene.closed || backgroundError() || Boolean(drawingSession() || imageDrawing() || pluginMenu() || ocrPending() || props.translationPending) || props.scene.regions.some(region => ocrVisible(region) || translationVisible(region))} blockedAt={(x, y) => toolbarVisible() && contains(toolbarBox(), x, y, TOLERANCE)} onReady={value => { pointerInspector = value; }} onError={props.onError} />}</Show>
     <Show when={props.scene.background?.id} keyed>{id => <img ref={image => backgroundAttached(image, id)} class="screen-background capture-background" data-asset={id} src={assetUrl(props.scene.background!)} style={geometry().nativePixels ? { left: '0px', top: '0px', width: `${geometry().width}px`, height: `${geometry().height}px` } : undefined} alt={t("屏幕截图")} draggable={false} decoding="sync" onLoad={event => backgroundLoaded(event.currentTarget, id)} onError={event => backgroundFailed(event.currentTarget, id)} />}</Show>
-    <Show when={props.quickText&&!drawingSession()&&!imageDrawing()&&!props.scene.regions.length}>{value=><div class="quick-ocr" style={{left:`${geometry().x}px`,top:`${geometry().y}px`,width:`${geometry().width}px`,height:`${geometry().height}px`}}><OcrTextLayer document={props.quickText!} active hitOnly onClose={()=>{window.getSelection()?.removeAllRanges();canvas.focus();}} onError={props.onError} onSelecting={setSelectionActivity} onCopied={props.onQuickCopied}/></div>}</Show>
+    <Show when={props.quickText&&!drawingSession()&&!imageDrawing()}>{value=><div class="quick-ocr" style={{left:`${geometry().x}px`,top:`${geometry().y}px`,width:`${geometry().width}px`,height:`${geometry().height}px`}}><OcrTextLayer document={props.quickText!} active hitOnly onClose={()=>{window.getSelection()?.removeAllRanges();canvas.focus();}} onError={props.onError} onSelecting={setSelectionActivity} onCopied={props.onQuickCopied}/></div>}</Show>
     <svg class="capture-mask" width="100%" height="100%" aria-hidden="true">
       <defs><mask id="region-cutouts" maskUnits="userSpaceOnUse"><rect width="100%" height="100%" fill="white" />
         <For each={regionIds()}>{id => {

@@ -5,6 +5,7 @@ pub struct Decision {
     pub consume: bool,
     pub pressed: bool,
     pub released: bool,
+    pub clear_os_modifier: Option<u32>,
     pub replay: Vec<(u32, bool)>,
 }
 #[derive(Default)]
@@ -75,6 +76,7 @@ impl Sequence {
                 self.held = Some((key, now));
                 decision.consume = !self.forwarded;
                 decision.pressed = !self.forwarded;
+                decision.clear_os_modifier = decision.pressed.then_some(key);
                 return decision;
             }
             if let Some((held, began)) = self.held {
@@ -152,6 +154,7 @@ mod tests {
             let mut s = Sequence::default();
             let first = s.key(key, true, 100, 400);
             assert!(first.consume && first.pressed);
+            assert_eq!(first.clear_os_modifier, Some(key));
             assert_eq!(
                 s.key(key, true, 150, 400),
                 Decision {
@@ -168,6 +171,19 @@ mod tests {
             assert!(long.consume && long.released);
             assert!(long.replay.is_empty());
         }
+    }
+    #[test]
+    fn only_the_first_owned_win_down_clears_the_os_modifier_state() {
+        let mut keys = Sequence::default();
+        assert_eq!(keys.key(0x5b, true, 0, 400).clear_os_modifier, Some(0x5b));
+        assert_eq!(keys.key(0x5b, true, 100, 400).clear_os_modifier, None);
+        let chord = keys.key(0x43, true, 200, 400);
+        assert_eq!(chord.clear_os_modifier, None);
+        assert_eq!(chord.replay, vec![(0x5b, false)]);
+        assert_eq!(keys.key(0x5b, false, 500, 400).clear_os_modifier, None);
+        let mut already_down = Sequence::default();
+        already_down.seed_down(0x5b, 0);
+        assert_eq!(already_down.key(0x5b, true, 100, 400).clear_os_modifier, None);
     }
     #[test]
     fn existing_and_new_windows_chords_preserve_modifier_order_and_cancel_hold() {

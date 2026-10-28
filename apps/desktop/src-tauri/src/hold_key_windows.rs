@@ -17,7 +17,7 @@ use windows_sys::Win32::{
     UI::{
         Input::KeyboardAndMouse::{
             GetAsyncKeyState, MapVirtualKeyW, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD,
-            KEYBDINPUT, KEYEVENTF_KEYUP, MAPVK_VSC_TO_VK_EX,
+            KEYBDINPUT, KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, MAPVK_VSC_TO_VK_EX,
         },
         WindowsAndMessaging::*,
     },
@@ -26,6 +26,7 @@ const PRESS: u32 = WM_APP + 0x501;
 const RELEASE: u32 = WM_APP + 0x502;
 const STOP: u32 = WM_APP + 0x503;
 const TAG: usize = 0x4d455755;
+const STATE_TAG: usize = 0x4d455756;
 static ENABLED: AtomicBool = AtomicBool::new(false);
 static THREAD: AtomicU32 = AtomicU32::new(0);
 static THRESHOLD: AtomicU32 = AtomicU32::new(400);
@@ -103,26 +104,35 @@ fn clock() -> u64 {
 fn post(message: u32) -> bool {
     unsafe { PostThreadMessageW(THREAD.load(Ordering::Acquire), message, 0, 0) != 0 }
 }
-fn replay(key: u32, up: bool) -> bool {
-    let input = INPUT {
+fn modifier_release_input(key: u32) -> INPUT {
+    INPUT {
         r#type: INPUT_KEYBOARD,
         Anonymous: INPUT_0 {
             ki: KEYBDINPUT {
                 wVk: key as u16,
                 wScan: 0,
-                dwFlags: if up { KEYEVENTF_KEYUP } else { 0 },
+                dwFlags: KEYEVENTF_KEYUP | KEYEVENTF_EXTENDEDKEY,
                 time: 0,
-                dwExtraInfo: TAG,
+                dwExtraInfo: STATE_TAG,
             },
         },
-    };
-    unsafe { SendInput(1, &input, std::mem::size_of::<INPUT>() as i32) == 1 }
+    }
 }
 unsafe extern "system" fn keyboard(code: i32, w: WPARAM, l: LPARAM) -> LRESULT {
-    if code < 0 || !ENABLED.load(Ordering::Acquire) {
+    if code < 0 || l == 0 {
         return CallNextHookEx(null_mut(), code, w, l);
     }
     let event = &*(l as *const KBDLLHOOKSTRUCT);
+    // Like PowerToys' modifier remapping, retire Windows' asynchronous modifier
+    // state as well as suppressing the original message. Otherwise Win+click
+    // can still open the system capture UI while Mewu owns this hold. This
+    // tagged key-up updates OS state without becoming an application shortcut.
+    if event.dwExtraInfo == STATE_TAG {
+        return 1;
+    }
+    if !ENABLED.load(Ordering::Acquire) {
+        return CallNextHookEx(null_mut(), code, w, l);
+    }
     if EDITING.load(Ordering::Acquire) && KEYS.with(|keys| keys.borrow().held.is_none()) {
         return CallNextHookEx(null_mut(), code, w, l);
     }
@@ -146,6 +156,15 @@ unsafe extern "system" fn keyboard(code: i32, w: WPARAM, l: LPARAM) -> LRESULT {
             let decision =
                 cell.borrow_mut()
                     .key(key, down, clock(), THRESHOLD.load(Ordering::Acquire));
+            if let Some(key) = decision.clear_os_modifier {
+                let input = modifier_release_input(key);
+                if SendInput(1, &input, std::mem::size_of::<INPUT>() as i32) != 1 {
+                    cell.borrow_mut().forwarded = true;
+                    FAULT.store(true, Ordering::Release);
+                    ENABLED.store(false, Ordering::Release);
+                    return false;
+                }
+            }
             if (decision.pressed && !post(PRESS)) || (decision.released && !post(RELEASE)) {
                 FAULT.store(true, Ordering::Release);
                 ENABLED.store(false, Ordering::Release);
@@ -333,16 +352,8 @@ pub fn configure(app: &AppHandle, milliseconds: u32) -> Result<(), String> {
                     }
                 }
                 ENABLED.store(false, Ordering::Release);
-                KEYS.with(|cell| {
-                    let keys = cell.borrow();
-                    if !keys.forwarded {
-                        if let Some((key, _)) = keys.held {
-                            if GetAsyncKeyState(key as i32) < 0 {
-                                let _ = replay(key, false);
-                            }
-                        }
-                    }
-                });
+                // Cancel our suppressed gesture on shutdown. Never manufacture
+                // a Win-down after the OS state was deliberately cleared.
                 UnhookWindowsHookEx(keyboard_hook);
                 KillTimer(null_mut(), state_timer);
                 if !mouse_hook.is_null() {
@@ -371,6 +382,17 @@ pub fn disable() {
 #[cfg(test)]
 mod modifier_tests {
     use super::*;
+    #[test]
+    fn modifier_state_reset_is_a_tagged_extended_key_up_not_a_new_win_press() {
+        for key in [0x5b, 0x5c] {
+            let input = modifier_release_input(key);
+            assert_eq!(input.r#type, INPUT_KEYBOARD);
+            let keyboard = unsafe { input.Anonymous.ki };
+            assert_eq!(keyboard.wVk, key as u16);
+            assert_eq!(keyboard.dwFlags, KEYEVENTF_KEYUP | KEYEVENTF_EXTENDEDKEY);
+            assert_eq!(keyboard.dwExtraInfo, STATE_TAG);
+        }
+    }
     #[test]
     fn capture_editor_invalidation_keeps_the_held_gesture_until_physical_release() {
         let editing = AtomicBool::new(false);

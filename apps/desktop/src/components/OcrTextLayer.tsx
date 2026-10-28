@@ -9,6 +9,7 @@ import './ocr.css';
 interface Props { document: OcrDocument; active: boolean; label?: string; repeatLabel?: string; onClose: () => void; onRepeat?: () => void; onError: (message: string) => void; onSelecting?: (value: boolean) => void;hitOnly?:boolean;onCopied?:()=>void }
 
 export default function OcrTextLayer(props: Props) {
+  let disposed = false;
   let surface!: HTMLDivElement, textHost!: HTMLSpanElement;
   let pointer: number | undefined, anchor = -1;
   const key = createMemo(() => JSON.stringify(props.document));
@@ -67,13 +68,14 @@ export default function OcrTextLayer(props: Props) {
   async function copy(all: boolean) {
     const text = all ? layout().text : selectedText(); setMenu(undefined);
     if (!text) return;
-    try { await navigator.clipboard.writeText(text); props.onCopied?.(); }
+    const authority = key();
+    try { await navigator.clipboard.writeText(text); if (!disposed && props.active && key() === authority) props.onCopied?.(); }
     catch { props.onError('无法复制文字'); }
   }
   function clipboard(event: ClipboardEvent) {
     const text = selectedText();
     event.stopPropagation();
-    if (text && event.clipboardData) { event.preventDefault(); event.clipboardData.setData('text/plain', text);setTimeout(()=>props.onCopied?.(),0); }
+    if (text && event.clipboardData) { const authority = key(); event.preventDefault(); event.clipboardData.setData('text/plain', text);setTimeout(()=>{if(!disposed&&props.active&&key()===authority)props.onCopied?.();},0); }
   }
   function keydown(event: KeyboardEvent) {
     event.stopPropagation();
@@ -91,7 +93,7 @@ export default function OcrTextLayer(props: Props) {
   document.addEventListener('selectionchange', changed);
   createEffect(on(key, () => { finish(); clearSelection(); setMenu(undefined); }));
   createEffect(() => { if (!props.active) { finish(); clearSelection(); setMenu(undefined); } });
-  onCleanup(() => { finish(); clearSelection(); document.removeEventListener('selectionchange', changed); });
+  onCleanup(() => { disposed = true; finish(); clearSelection(); document.removeEventListener('selectionchange', changed); });
   return <div ref={surface} class="ocr-text-layer" classList={{ 'ocr-active': props.active }} tabIndex={0} role="textbox" aria-label={props.label ?? t('识别文字')} aria-readonly="true" aria-multiline="true" onPointerDown={begin} onPointerMove={move} onPointerUp={event => { move(event); finish(event); }} onPointerCancel={finish} onLostPointerCapture={finish} onKeyDown={keydown} onCopy={clipboard} onContextMenu={event => { event.preventDefault(); event.stopPropagation(); surface.focus({ preventScroll: true }); const box = surface.getBoundingClientRect(); setMenu({ x: Math.max(0, Math.min(event.clientX - box.x, box.width - 112)), y: Math.max(0, Math.min(event.clientY - box.y, box.height - 138)) }); }}>
     <span ref={textHost} class="ocr-readable-text">{layout().text}</span>
     <Show when={props.hitOnly}><svg class="quick-ocr-hits" viewBox={`0 0 ${props.document.width} ${props.document.height}`} preserveAspectRatio="none"><g transform={`rotate(${props.document.textAngle??0} ${props.document.width/2} ${props.document.height/2})`}><For each={hitWords()}>{box=><rect x={box.x} y={box.y} width={box.width} height={box.height}/>}</For></g></svg></Show>

@@ -123,3 +123,18 @@ test('actual shared drawing save drains strokes/history and text before selected
   await context.done(false, false, false, 'original');
   assert.deepEqual(events, ['strokes', 'history', 'text', [false, false, 'original']]);
 });
+
+test('quick copy closes only after successful copy and never closes after leaving quick mode', async () => {
+  const actual = declarations(await raw('./components/SpaceCanvas.tsx'), ['exportRegion', 'exportImage'], true);
+  for (const kind of ['region', 'image']) for (const mode of ['quick', 'ordinary', 'failed', 'withdrawn', 'save']) {
+    const closed = [], scene = { id: 'scene', background: { id: 'background' }, regions: [{ id: 'region', x: 1, y: 2, width: 30, height: 20 }], items: [{ id: 'item', asset: { id: 'asset' } }] };
+    let busy = false;
+    const props = { scene, closeAfterCopy: mode !== 'ordinary', busy: false, onBeforeExport: async () => {}, onCopyClose: async id => { closed.push(id); return true; }, onError: message => { throw Error(message); } };
+    const output = async () => { if (mode === 'withdrawn') props.closeAfterCopy = false; return mode !== 'failed'; };
+    const context = createContext({ JSON, disposed: false, native: true, finishCapture: completion.namespace.finishCapture, props, exporting: () => busy, setExporting: value => busy = value, exportNativeRegion: output, exportImageItem: output });
+    runInContext(actual, context);
+    const result = kind === 'region' ? await context.exportRegion(scene.regions[0], mode !== 'save') : await context.exportImage(scene.items[0], mode !== 'save');
+    assert.equal(result, mode !== 'failed');
+    assert.deepEqual(closed, mode === 'quick' ? ['scene'] : []);
+  }
+});
