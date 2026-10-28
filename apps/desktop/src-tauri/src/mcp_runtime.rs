@@ -1056,7 +1056,7 @@ pub(crate) async fn run_agent_command(
     timeout: Option<Duration>,
     log_path: PathBuf,
     active: Arc<dyn Fn() -> Result<(), String> + Send + Sync>,
-    on_output: impl Fn(&str, &str),
+    mut on_output: impl FnMut(&str, &str),
 ) -> Result<Value, String> {
     use tokio::io::AsyncReadExt;
     let (executable, cwd) = match validate_user_command(&config) {
@@ -1121,6 +1121,7 @@ pub(crate) async fn run_agent_command(
     let mut tick = tokio::time::interval(Duration::from_millis(20));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut exited_at = None;
+    let mut preview = crate::command_output_preview::Preview::default();
     let writer = async move {
         if let Some(input) = input {
             stdin
@@ -1148,6 +1149,7 @@ pub(crate) async fn run_agent_command(
             value=stderr.read(&mut eb),if !err_eof=>Some(("stderr",value,&eb[..])),
             _=tick.tick()=>{
                 if let Err(reason)=active(){error=Some(format!("Command canceled: {reason}. Partial effects must be inspected before retrying."));break;}
+                preview.due(began.elapsed(), |stream,text|on_output(stream,text));
                 let status=state.child.lock().map_err(|_|"命令状态不可用")?.as_mut().ok_or("命令已停止")?.try_wait().map_err(|_|"无法读取命令退出状态")?;
                 if let Some(status)=status{
                     exit=Some(status);let finished=exited_at.get_or_insert_with(tokio::time::Instant::now);
@@ -1203,7 +1205,7 @@ pub(crate) async fn run_agent_command(
                         tail.drain(..start);
                     }
                     if !text.is_empty() {
-                        on_output(stream, &text);
+                        preview.push(stream, &text);
                     }
                 }
                 Err(e) => {
@@ -1215,6 +1217,9 @@ pub(crate) async fn run_agent_command(
     }
     log.flush()
         .map_err(|_| "无法提交命令输出；执行结果需要核对")?;
+    if active().is_ok() {
+        preview.finish(began.elapsed(), |stream, text| on_output(stream, text));
+    }
     // Normal completion is invocation-owned too: no untracked descendant may
     // keep the application's pipe/reaper capacity forever after shell exit.
     state.kill();
@@ -1996,12 +2001,14 @@ mod tests {
             "[Console]::Out.Write('中文🙂'); [Console]::Error.Write('错误'); exit 7",
             "[Console]::Out.Write(('中文🙂' * 20000))",
             "Start-Sleep -Seconds 20",
+            "0..14999 | ForEach-Object { Write-Output \"LOG_$_\" }",
         ];
         #[cfg(not(windows))]
         let commands = [
             "printf '中文🙂'; printf '错误' >&2; exit 7",
             "for ((n=0;n<20000;n++)); do printf '中文🙂'; done",
             "sleep 20",
+            "for ((n=0;n<15000;n++)); do printf 'LOG_%s\\n' \"$n\"; done",
         ];
         for (i, command) in commands.iter().enumerate() {
             let call = mewu_agent_tools::ShellCall {
@@ -2016,13 +2023,14 @@ mod tests {
                 cwd: Some(root.path().to_string_lossy().into_owned()),
             };
             let path = root.path().join(format!("{i}.log"));
+            let mut previews = Vec::new();
             let result = run_agent_command(
                 config,
                 input,
                 Some(Duration::from_secs(if i == 2 { 1 } else { 15 })),
                 path.clone(),
                 Arc::new(|| Ok(())),
-                |_, _| {},
+                |stream, text| previews.push((stream.to_owned(), text.to_owned())),
             )
             .await
             .unwrap();
@@ -2037,13 +2045,31 @@ mod tests {
             if i == 1 {
                 assert_eq!(result["isError"], false, "{result}");
                 assert_eq!(result["truncated"], true);
-                let full = std::fs::read_to_string(path).unwrap();
+                let full = std::fs::read_to_string(&path).unwrap();
                 assert_eq!(full, "中文🙂".repeat(20000));
                 assert!(!result["output"].as_str().unwrap().contains('\u{fffd}'));
             }
             if i == 2 {
                 assert_eq!(result["isError"], true);
                 assert!(result["error"].as_str().unwrap().contains("timed out"));
+            }
+            if i == 3 {
+                assert_eq!(result["isError"], false, "{result}");
+                let full = std::fs::read_to_string(&path).unwrap();
+                let lines = full.lines().collect::<Vec<_>>();
+                assert_eq!(lines.len(), 15000);
+                assert_eq!(lines[0], "LOG_0");
+                assert_eq!(lines[14999], "LOG_14999");
+                assert!(!previews.is_empty());
+                assert!(previews
+                    .iter()
+                    .all(|(_, text)| text.len() <= mewu_agent_tools::MAX_OUTPUT));
+                let bounded =
+                    16 * ((result["wallTimeSeconds"].as_f64().unwrap() / 0.04).ceil() as usize + 1);
+                assert!(
+                    previews.len() <= bounded,
+                    "preview callbacks must be batched, not one per read"
+                );
             }
             assert!(wait_until_idle(Duration::from_secs(3)).await);
         }

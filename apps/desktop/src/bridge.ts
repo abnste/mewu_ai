@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
-import { invoke, isTauri } from '@tauri-apps/api/core';
+import * as tauriCore from '@tauri-apps/api/core';
+const { invoke, isTauri } = tauriCore;
 import { listen } from '@tauri-apps/api/event';
 import type { Asset, ConnectionProbe, ConnectionProfile, ConnectionTestResult, DiscoverMcpServer, DrawingCommand, DrawingEdit, MemoryEntry, MemoryPage, ModelCatalog, ProviderPreset, RunEvent, Scene, SceneCommand, Snapshot, VisualAnnotationGrant } from './contracts';
 import { normalizeConnectionPath, validateConnectionProfile } from './connection-policy';
@@ -20,9 +21,11 @@ import type { AppControlCompletion } from './app-control';
 import type { ScrollStatus } from './scroll-bridge';
 
 export const native = isTauri();
-export async function registerControlRenderer(): Promise<{ rendererId: string }> {
+export async function registerControlRenderer(receive: (request: unknown) => void): Promise<{ rendererId: string }> {
   if (!native) throw new Error('此操作需要桌面应用');
-  return invoke('register_control_renderer');
+  const requests = new tauriCore.Channel<unknown>();
+  requests.onmessage = receive;
+  return invoke('register_control_renderer', { requests });
 }
 export async function confirmControlRenderer(rendererId:string):Promise<void>{if(!native)throw new Error('此操作需要桌面应用');await invoke('confirm_control_renderer',{rendererId});}
 export async function claimControlRequest(rendererId: string, id: string, nonce: string): Promise<void> {

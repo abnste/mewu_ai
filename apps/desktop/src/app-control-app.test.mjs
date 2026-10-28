@@ -271,15 +271,15 @@ test('actual reference setter rejects foreign targets and restores its own faile
   assert.deepEqual(plain(removed.f.calls[0]), ['removeReferenceObject', 'region', 'region', true]);
 });
 
-test('actual mount installs the space listener before native registration and binds claim completion to that renderer', async () => {
+test('actual mount installs the command receiver before registration and binds claim completion to that renderer', async () => {
   const { f, scope } = fixture(); let actions, stops = 0;
   Object.assign(scope, {
     stopControlEvents: undefined, draft: () => 'draft', refs: () => [],
-    attachAppControl: async value => { f.calls.push(['listen']); actions = value; return () => { stops++; }; },
+    attachAppControl: async value => { f.calls.push(['listen']); actions = value; return Object.assign(() => { stops++; }, { receive: () => {} }); },
   });
   Object.assign(scope.bridge, {
     native: true,
-    registerControlRenderer: async () => { f.calls.push(['register']); return { rendererId: 'renderer' }; },
+    registerControlRenderer: async receive => { assert.equal(typeof receive, 'function'); f.calls.push(['register']); return { rendererId: 'renderer' }; },
     confirmControlRenderer: async id => { f.calls.push(['ready', id]); },
     claimControlRequest: async (...args) => { f.calls.push(['claim', ...args]); },
     completeControlRequest: async (...args) => { f.calls.push(['complete', ...args]); },
@@ -305,13 +305,16 @@ test('actual bridge wrappers use fixed native commands, exact renderer nonce fie
   const names = ['registerControlRenderer', 'claimControlRequest', 'completeControlRequest', 'getRecordingStatus', 'getScrollStatus', 'exportControlImage'];
   const selected = bridgeAst.program.body.filter(node => node.type === 'ExportNamedDeclaration' && names.includes(node.declaration?.id?.name));
   assert.equal(selected.length, names.length);
-  const calls = [], scope = { native: true, invoke: async (command, args) => { calls.push([command, args]); return command === 'export_control_image' ? { path: 'D:/out.png' } : { rendererId: 'renderer' }; } };
+  const calls = [], scope = { native: true, tauriCore: { Channel: class {} }, invoke: async (command, args) => { calls.push([command, args]); return command === 'export_control_image' ? { path: 'D:/out.png' } : { rendererId: 'renderer' }; } };
   vm.createContext(scope); vm.runInContext(selected.map(node => stripTypeScriptTypes(bridgeSource.slice(node.declaration.start, node.declaration.end), { mode: 'transform' })).join('\n'), scope);
-  await scope.registerControlRenderer(); await scope.claimControlRequest('renderer', 'id', 'nonce');
+  let received;
+  await scope.registerControlRenderer(value => { received = value; });
+  calls[0][1].requests.onmessage('actual-channel-message'); assert.equal(received, 'actual-channel-message');
+  await scope.claimControlRequest('renderer', 'id', 'nonce');
   await scope.completeControlRequest('renderer', { id: 'id', nonce: 'nonce', error: { code: 'CONFLICT', message: 'changed', executed: false } });
   await scope.getRecordingStatus(); await scope.getScrollStatus(); await scope.exportControlImage('scene', 'region', 'D:/out.png', 'original');
   assert.deepEqual(plain(calls), [
-    ['register_control_renderer', null], ['claim_control_request', { rendererId: 'renderer', id: 'id', nonce: 'nonce' }],
+    ['register_control_renderer', { requests: {} }], ['claim_control_request', { rendererId: 'renderer', id: 'id', nonce: 'nonce' }],
     ['complete_control_request', { rendererId: 'renderer', id: 'id', nonce: 'nonce', error: { code: 'CONFLICT', message: 'changed', executed: false } }],
     ['get_recording_status', null], ['get_scroll_status', null], ['export_control_image', { sceneId: 'scene', regionId: 'region', path: 'D:/out.png', variant: 'original' }],
   ]);

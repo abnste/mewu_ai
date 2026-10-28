@@ -17,7 +17,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
+use tauri::{ipc::Channel, AppHandle, Emitter, Manager, WebviewWindow};
 
 const MAX_PENDING: usize = 32;
 const MAX_URGENT: usize = 8;
@@ -25,6 +25,7 @@ const MAX_RECEIPTS: usize = 128;
 const MAX_RESULT: usize = 256 * 1024;
 const TTL: Duration = Duration::from_secs(600);
 const CLAIM_TIMEOUT: Duration = Duration::from_secs(300);
+const MAX_DELIVERIES: u8 = 3;
 const METHODS: &[&str] = &[
     "capture.open",
     "capture.quick",
@@ -63,7 +64,7 @@ struct Context {
 }
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct Event {
+pub(crate) struct Event {
     id: String,
     nonce: String,
     method: String,
@@ -89,7 +90,39 @@ struct Operation {
     phase: Phase,
     since: Instant,
     result: Option<Result<Value, ControlError>>,
+    notification: Option<Event>,
+    last_notification: Instant,
+    delivery_attempts: u8,
     native_authority: Option<NativeAuthority>,
+}
+impl Operation {
+    fn delivery_failed(&mut self) -> bool {
+        if self.phase != Phase::Queued {
+            return false;
+        }
+        self.phase = Phase::Complete;
+        self.notification = None;
+        self.result = Some(Err(error(ErrorCode::Unavailable, "空间未接收请求")));
+        true
+    }
+    /// Redeliver only an unclaimed notification, with its ORIGINAL nonce and
+    /// target. Claim is the execution acknowledgement; claimed/unknown effects
+    /// are never sent again. Renderer reload still invalidates the whole lease.
+    fn notification(&mut self, renderer: Option<&str>, ready: bool) -> Option<Event> {
+        if !ready
+            || renderer != Some(self.renderer_id.as_str())
+            || self.phase != Phase::Queued
+            || self.since.elapsed() >= Duration::from_secs(30)
+            || self.last_notification.elapsed() < Duration::from_millis(500)
+            || self.delivery_attempts >= MAX_DELIVERIES
+        {
+            return None;
+        }
+        let notification = self.notification.clone()?;
+        self.last_notification = Instant::now();
+        self.delivery_attempts += 1;
+        Some(notification)
+    }
 }
 /// An in-process capability, never deserializable from CLI, IPC or plugin data.
 /// Native automation uses the same renderer flush/claim/receipt lane as CLI,
@@ -184,6 +217,7 @@ pub(crate) fn admit_feature(
 #[derive(Default)]
 struct Inner {
     renderer_id: Option<String>,
+    requests: Option<Channel<Event>>,
     ready: bool,
     operations: HashMap<String, Operation>,
 }
@@ -483,6 +517,7 @@ pub(crate) fn renderer_invalidated(app: &AppHandle) {
     if let Some(runtime) = app.try_state::<Runtime>() {
         if let Ok(mut inner) = runtime.inner.lock() {
             inner.renderer_id = None;
+            inner.requests = None;
             inner.ready = false;
             for operation in inner
                 .operations
@@ -496,6 +531,7 @@ pub(crate) fn renderer_invalidated(app: &AppHandle) {
                 };
                 operation.phase = Phase::Complete;
                 operation.result = Some(Err(failure));
+                operation.notification = None;
             }
         }
     }
@@ -511,15 +547,15 @@ fn space(window: &WebviewWindow) -> Result<(), String> {
 pub(crate) fn register_control_renderer(
     app: AppHandle,
     window: WebviewWindow,
+    requests: Channel<Event>,
 ) -> Result<Value, String> {
     space(&window)?;
     renderer_invalidated(&app);
     let id = uuid::Uuid::new_v4().to_string();
-    app.state::<Runtime>()
-        .inner
-        .lock()
-        .map_err(|_| "控制状态不可用")?
-        .renderer_id = Some(id.clone());
+    let runtime = app.state::<Runtime>();
+    let mut inner = runtime.inner.lock().map_err(|_| "控制状态不可用")?;
+    inner.renderer_id = Some(id.clone());
+    inner.requests = Some(requests);
     Ok(json!({"rendererId":id}))
 }
 pub(crate) fn renderer_ready(app: &AppHandle) -> bool {
@@ -577,6 +613,7 @@ pub(crate) fn claim_control_request(
         return Err("控制请求已过期或撤销".into());
     }
     op.phase = Phase::Claimed;
+    op.notification = None;
     op.since = Instant::now();
     Ok(())
 }
@@ -650,6 +687,7 @@ pub(crate) fn complete_control_request(
     };
     op.result = Some(outcome);
     op.phase = Phase::Complete;
+    op.notification = None;
     Ok(())
 }
 
@@ -795,6 +833,7 @@ fn dispatch_inner(app: &AppHandle, request: Request, revision: u64) -> Result<Va
         }
         "operation.get" => {
             let query: Id = params(request.params)?;
+            redeliver(app, &query.id);
             let runtime = app.state::<Runtime>();
             let mut inner = runtime
                 .inner
@@ -837,6 +876,34 @@ fn expire(operation: &mut Operation) {
             "操作未及时返回，结果未知，请检查当前状态",
         )));
     }
+    if operation.phase == Phase::Complete {
+        operation.notification = None;
+    }
+}
+fn redeliver(app: &AppHandle, id: &str) {
+    let Some(runtime) = app.try_state::<Runtime>() else {
+        return;
+    };
+    let delivery = {
+        let Ok(mut inner) = runtime.inner.lock() else {
+            return;
+        };
+        let renderer = inner.renderer_id.clone();
+        let ready = inner.ready;
+        let Some(channel) = inner.requests.clone() else {
+            return;
+        };
+        let Some(op) = inner.operations.get_mut(id) else {
+            return;
+        };
+        expire(op);
+        op.notification(renderer.as_deref(), ready)
+            .map(|event| (channel, event))
+    };
+    // Sending must not hold the lease lock: the frontend may claim immediately.
+    if let Some((channel, event)) = delivery {
+        let _ = channel.send(event);
+    }
 }
 fn enqueue(app: &AppHandle, mut request: Request, revision: u64) -> Result<Value, ControlError> {
     enqueue_authorized(app, request, revision, None)
@@ -866,7 +933,7 @@ fn enqueue_authorized(
             0
         };
     let runtime = app.state::<Runtime>();
-    let event = {
+    let (channel, event) = {
         let mut inner = runtime
             .inner
             .lock()
@@ -906,11 +973,24 @@ fn enqueue_authorized(
             .renderer_id
             .clone()
             .ok_or_else(|| error(ErrorCode::Unavailable, "Mewu 界面尚未就绪"))?;
+        let channel = inner
+            .requests
+            .clone()
+            .filter(|_| inner.ready)
+            .ok_or_else(|| error(ErrorCode::Unavailable, "Mewu 界面尚未就绪"))?;
         let nonce = uuid::Uuid::new_v4().to_string();
+        let event = Event {
+            id: request.id.clone(),
+            nonce: nonce.clone(),
+            method: request.method,
+            params: request.params,
+            scene_id: context.scene_id,
+            revision: context.revision,
+        };
         inner.operations.insert(
             request.id.clone(),
             Operation {
-                method: request.method.clone(),
+                method: event.method.clone(),
                 feature_dispatched: false,
                 fingerprint,
                 nonce: nonce.clone(),
@@ -919,26 +999,24 @@ fn enqueue_authorized(
                 phase: Phase::Queued,
                 since: Instant::now(),
                 result: None,
+                notification: Some(event.clone()),
+                last_notification: Instant::now(),
+                delivery_attempts: 1,
                 native_authority,
             },
         );
-        Event {
-            id: request.id.clone(),
-            nonce,
-            method: request.method,
-            params: request.params,
-            scene_id: context.scene_id,
-            revision: context.revision,
-        }
+        (channel, event)
     };
-    if app.emit_to("space", "mewu-control-request", event).is_err() {
+    if channel.send(event).is_err() {
         if let Ok(mut inner) = runtime.inner.lock() {
             if let Some(op) = inner.operations.get_mut(&request.id) {
-                op.phase = Phase::Complete;
-                op.result = Some(Err(error(ErrorCode::Unavailable, "空间未接收请求")));
+                // A transport failure cannot undo a concurrent successful
+                // claim or completed effect. Its receipt remains authoritative.
+                if op.delivery_failed() {
+                    return Err(error(ErrorCode::Unavailable, "空间未接收请求"));
+                }
             }
         }
-        return Err(error(ErrorCode::Unavailable, "空间未接收请求"));
     }
     Ok(json!({"operationId":request.id,"status":"queued"}))
 }
@@ -968,6 +1046,9 @@ pub(crate) async fn execute_native(
         let stopped = (authority)()
             .err()
             .or_else(|| (Instant::now() >= deadline).then(|| "操作等待超时".to_string()));
+        if stopped.is_none() {
+            redeliver(app, &id);
+        }
         let terminal = {
             let runtime = app.state::<Runtime>();
             let mut inner = runtime.inner.lock().map_err(|_| "操作状态不可用")?;
@@ -986,6 +1067,7 @@ pub(crate) async fn execute_native(
                 };
                 op.result = Some(Err(failure));
                 op.phase = Phase::Complete;
+                op.notification = None;
                 op.result.clone()
             } else {
                 None
@@ -1032,6 +1114,83 @@ mod catalog_tests;
 mod tests {
     use super::*;
     #[test]
+    fn only_unclaimed_current_renderer_notifications_can_be_redelivered() {
+        let event = Event {
+            id: "operation".into(),
+            nonce: "same-nonce".into(),
+            method: "chat.send".into(),
+            params: json!({"text":"one request"}),
+            scene_id: Some("scene".into()),
+            revision: Some(7),
+        };
+        let make = || Operation {
+            method: event.method.clone(),
+            feature_dispatched: false,
+            fingerprint: [0; 32],
+            nonce: event.nonce.clone(),
+            renderer_id: "renderer".into(),
+            plugin_revision: 7,
+            phase: Phase::Queued,
+            since: Instant::now(),
+            result: None,
+            notification: Some(event.clone()),
+            last_notification: Instant::now() - Duration::from_secs(1),
+            delivery_attempts: 1,
+            native_authority: None,
+        };
+        for (renderer, ready) in [(Some("old"), true), (Some("renderer"), false), (None, true)] {
+            assert!(make().notification(renderer, ready).is_none());
+        }
+        let mut op = make();
+        let resent = op.notification(Some("renderer"), true).unwrap();
+        assert_eq!(
+            serde_json::to_value(resent).unwrap(),
+            serde_json::to_value(&event).unwrap()
+        );
+        assert!(
+            op.notification(Some("renderer"), true).is_none(),
+            "rate limit applies before another status poll"
+        );
+        op.last_notification = Instant::now() - Duration::from_secs(1);
+        assert!(op.notification(Some("renderer"), true).is_some());
+        op.last_notification = Instant::now() - Duration::from_secs(1);
+        assert!(
+            op.notification(Some("renderer"), true).is_none(),
+            "bounded delivery cannot flood a nonresponsive renderer"
+        );
+        for phase in [Phase::Claimed, Phase::Complete] {
+            let mut op = make();
+            op.phase = phase;
+            assert!(
+                op.notification(Some("renderer"), true).is_none(),
+                "claim/unknown outcomes must never be replayed"
+            );
+        }
+        let mut op = make();
+        op.since = Instant::now() - Duration::from_secs(31);
+        assert!(op.notification(Some("renderer"), true).is_none());
+        expire(&mut op);
+        assert!(op.notification.is_none());
+        assert_eq!(
+            op.result.unwrap().unwrap_err().outcome,
+            ExecutionOutcome::NotSent
+        );
+        for phase in [Phase::Claimed, Phase::Complete] {
+            let mut op = make();
+            op.phase = phase;
+            op.result = Some(Ok(json!({"executed":true})));
+            assert!(!op.delivery_failed());
+            assert_eq!(op.result.unwrap().unwrap(), json!({"executed":true}));
+        }
+        let mut failed = make();
+        assert!(failed.delivery_failed());
+        assert!(failed.notification.is_none());
+        assert_eq!(
+            failed.result.unwrap().unwrap_err().outcome,
+            ExecutionOutcome::NotSent
+        );
+    }
+    #[test]
     fn feature_admission_binds_nonce_renderer_method_authority_and_exactly_one_dispatch() {
         let make = || Operation {
             method: "capture.quick".into(),
@@ -1043,6 +1202,9 @@ mod tests {
             phase: Phase::Claimed,
             since: Instant::now(),
             result: None,
+            notification: None,
+            last_notification: Instant::now(),
+            delivery_attempts: 1,
             native_authority: None,
         };
         let mut inner = Inner {
@@ -1106,6 +1268,9 @@ mod tests {
             phase,
             since: Instant::now(),
             result: None,
+            notification: None,
+            last_notification: Instant::now(),
+            delivery_attempts: 1,
             native_authority: Some(NativeAuthority(
                 Arc::new(|| panic!("reading provenance must not invoke an effect or grant")),
                 Some(origin),
@@ -1173,6 +1338,9 @@ mod tests {
             phase: Phase::Queued,
             since: Instant::now() - Duration::from_secs(31),
             result: None,
+            notification: None,
+            last_notification: Instant::now(),
+            delivery_attempts: 1,
             native_authority: None,
         };
         expire(&mut op);

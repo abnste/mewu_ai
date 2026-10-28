@@ -346,19 +346,21 @@ export function createAppControl(actions: AppControlActions, options: AppControl
   return { handle, dispose() { disposed = true; } };
 }
 
-export type AppControlListen = (name: 'mewu-control-request', handler: (event: { payload: unknown }) => void,
-  options: { target: 'space' }) => Promise<() => void>;
+export interface AppControlAttachment {
+  (): void;
+  receive(value: unknown): void;
+}
 /** Install only in the first-party space. There is no browser/demo control path. */
-export async function attachAppControl(actions: AppControlActions, injectedListen?: AppControlListen,
-  options?: AppControlOptions): Promise<() => void> {
+export async function attachAppControl(actions: AppControlActions,
+  options?: AppControlOptions): Promise<AppControlAttachment> {
   const adapter = createAppControl(actions, options);
-  const listen: AppControlListen = injectedListen ?? (await import('@tauri-apps/api/event')).listen;
-  let stop: (() => void) | undefined;
-  try {
-    stop = await listen('mewu-control-request', event => {
-      // A lost completion transport is not a reason to repeat an operation.
-      void adapter.handle(event.payload).catch(() => {});
-    }, { target: 'space' });
-  } catch (error) { adapter.dispose(); throw error; }
-  return () => { adapter.dispose(); stop?.(); stop = undefined; };
+  // This receiver is installed synchronously before the native registration.
+  // A command channel owns its callback; a hidden window's global event-table
+  // registration is not a delivery acknowledgement.
+  return Object.assign(() => adapter.dispose(), {
+    receive(value: unknown) {
+      // Lost completion transport must never repeat an already executed action.
+      void adapter.handle(value).catch(() => {});
+    },
+  });
 }

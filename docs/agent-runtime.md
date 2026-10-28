@@ -99,6 +99,9 @@ Shell invocation owns its Job/process group, stdout and stderr. Nonzero exit,
 argument errors and timeouts become model-visible results. Revocation is checked
 while waiting to start and while running; cancellation stops the process tree.
 The model receives a bounded UTF-8 tail; the output file retains up to 32 MiB.
+Display previews are batched every 40 ms, with bounded UTF-8 tails and retained
+stdout/stderr ordering. This does not trim the complete output file or invent
+a successful result; it prevents tiny pipe reads from flooding the WebView.
 Detached background services are not yet a managed Agent capability: a child
 holding pipes after its shell exits is stopped and reported, never called a
 success. A separate two-command pool prevents persistent MCP connections from

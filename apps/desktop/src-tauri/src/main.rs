@@ -9,6 +9,7 @@ mod agent_tools;
 mod agent_turn_context;
 mod ai;
 mod app_control_host;
+mod command_output_preview;
 mod app_control_integration;
 mod app_update;
 mod asset_host;

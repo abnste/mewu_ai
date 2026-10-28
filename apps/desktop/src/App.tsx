@@ -582,7 +582,7 @@ export default function App() {
         });
         if (disposed) { stop(); return; }
         stopControlEvents = stop;
-        const registration = await bridge.registerControlRenderer();
+        const registration = await bridge.registerControlRenderer(stop.receive);
         if (disposed) { stopControlEvents(); stopControlEvents = undefined; return; }
         rendererId = registration.rendererId;
         await bridge.confirmControlRenderer(rendererId);

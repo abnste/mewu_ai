@@ -210,6 +210,16 @@ mewu run get $controlScene --limit 5
 
 `chat.send` 沿用当前 Agent 底座、灵魂设定、模型和记忆提供方，不绕过其配置。要覆盖草稿或引用选择时，可提交 `expectedDraft`、`expectedRefs` 防止覆盖用户并发修改。
 
+The native host registers a command channel owned by the first-party space.
+An accepted operation is still queued until that renderer flushes edits and
+claims its exact nonce. Status observation may redeliver an unclaimed notification
+at most twice, using the same operation identity; the renderer deduplicates it.
+Claimed, completed, canceled, expired or reloaded operations are never dispatched
+again. An unknown result remains unknown and must be inspected before any new
+mutation is requested.
+
+原生宿主通过第一方空间注册的命令通道交付请求。“已接受”仍表示排队，界面保存未提交编辑并认领精确 nonce 后才可执行。状态查询最多补送两次尚未认领的通知，始终使用原操作标识，由界面去重；已经认领、完成、取消、过期或随界面重载失效的操作不会重新派发。结果未知时仍需核对实际状态，不能当作未执行而重试写入。
+
 For manual drawing, inspect the target region again and submit a complete `drawing.apply` command from the catalog example. The text drawing schema supports `bold`, `italic`, `underline` and `strikethrough`; a two-point text box wraps at its width. Undo and redo also require the current target revision.
 
 手动绘制前重新读取目标区域，再按目录示例提交完整 `drawing.apply` 命令。文字支持加粗、斜体、下划线和删除线；两个点构成可自动换行的文字框。撤销和重做同样需要当前目标修订号。

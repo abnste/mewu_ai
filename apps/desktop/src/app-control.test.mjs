@@ -218,14 +218,22 @@ test('completion transport failure is not retried and does not poison later requ
   assert.equal(f.calls.filter(Array.isArray).length, 2); assert.equal(completions, 2);
 });
 
-test('attachment listens only on the first-party space and disposes queued callbacks', async () => {
-  const f = fixture(); let listener, unlistens = 0;
-  const detach = await api.attachAppControl(f.actions, async (name, handler, options) => {
-    assert.equal(name, 'mewu-control-request'); assert.deepEqual(options, { target: 'space' }); listener = handler;
-    return () => { unlistens++; };
-  });
-  listener({ payload: request() }); await turn(); assert.equal(f.completed[0].result.accepted, true);
-  detach(); detach(); assert.equal(unlistens, 1);
-  listener({ payload: request('scene.new', {}, { id: 'late' }) }); await turn(); notSent(f.completed[1], 'NOT_READY');
-  await assert.rejects(api.attachAppControl(f.actions, async () => { throw Error('listen failed'); }), /listen failed/);
+test('command receiver exists before registration and disposal rejects late notifications', async () => {
+  const f = fixture(); const detach = await api.attachAppControl(f.actions);
+  detach.receive(request()); await turn(); assert.equal(f.completed[0].result.accepted, true);
+  detach(); detach();
+  detach.receive(request('scene.new', {}, { id: 'late' })); await turn(); notSent(f.completed[1], 'NOT_READY');
+});
+
+test('redelivered notification while flushing and after completion never executes twice', async () => {
+  const f = fixture(); let release;
+  f.actions.flush = () => new Promise(resolve => { release = resolve; });
+  const detach = await api.attachAppControl(f.actions);
+  detach.receive(request()); await turn();
+  for (let i = 0; i < 4; i++) detach.receive(request());
+  assert.equal(f.calls.filter(Array.isArray).length, 0);
+  release(); await turn();
+  detach.receive(request()); await turn();
+  assert.equal(f.calls.filter(Array.isArray).length, 1); assert.equal(f.completed.length, 1);
+  detach();
 });
