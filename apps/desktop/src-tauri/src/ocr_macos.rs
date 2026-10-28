@@ -87,9 +87,11 @@ impl OcrDiagnostics {
 
 fn diagnostic_error_domain(domain: &str) -> &'static str {
     match domain {
-        "VNErrorDomain" => "vision",
+        "com.apple.Vision" => "vision",
         "NSCocoaErrorDomain" => "cocoa",
         "NSOSStatusErrorDomain" => "os_status",
+        "NSPOSIXErrorDomain" => "posix",
+        "NSMachErrorDomain" => "mach",
         "com.apple.CoreML" | "com.apple.CoreML.ErrorDomain" => "core_ml",
         _ => "other",
     }
@@ -649,9 +651,14 @@ mod tests {
 
     #[test]
     fn error_diagnostics_classify_only_fixed_domains_without_echoing_unknown_values() {
-        assert_eq!(diagnostic_error_domain("VNErrorDomain"), "vision");
+        // The exported symbol's name is not its NSString value. Verify against
+        // the framework so diagnostics cannot silently classify Vision as other.
+        let native = unsafe { objc2_vision::VNErrorDomain }.unwrap();
+        assert_eq!(diagnostic_error_domain(&native.to_string()), "vision");
+        assert_eq!(diagnostic_error_domain("VNErrorDomain"), "other");
         assert_eq!(diagnostic_error_domain("NSCocoaErrorDomain"), "cocoa");
         assert_eq!(diagnostic_error_domain("NSOSStatusErrorDomain"), "os_status");
+        assert_eq!(diagnostic_error_domain("NSPOSIXErrorDomain"), "posix");
         assert_eq!(diagnostic_error_domain("com.apple.CoreML"), "core_ml");
         assert_eq!(diagnostic_error_domain("private-path-or-input"), "other");
     }
