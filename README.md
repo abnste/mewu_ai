@@ -42,7 +42,7 @@
 - **Plugins and event triggers:** extend Agents, memory, tools, and UI independently. Official Hooks supports schedules, prompts, completed replies, global shortcuts, and app/plugin events, connecting Mewu operations, MCP, commands, and keyboard/mouse actions.
 - **Skills and self-made plugins:** the built-in Agent can read portable `SKILL.md` skills, create and validate plugin projects, and prepare an installable package. Review permissions before installation under Installed → Self-made. Plugins can reorder the original screenshot toolbar through the [generic layout service](./docs/plugin-toolbar-layout.md). See [skills and authoring](./docs/agent-skills.md).
 
-The native Agent loads image/video annotation skills on demand, keeps original conversation history when compacting context, and exposes paginated session recall separately from long-term memory. See [Agent runtime](./docs/agent-runtime.md) and [repeatable evaluation](./docs/agent-evaluation.md).
+The native Agent uses local file tools and discovered Shell/PowerShell to read, write, edit, search, and run commands with your OS account permissions. Portable skills can include scripts; an ordinary local task does not require creating a plugin. It loads image/video annotation skills on demand, keeps original conversation history when compacting context, and exposes paginated session recall separately from long-term memory. See [Agent runtime](./docs/agent-runtime.md) and [repeatable evaluation](./docs/agent-evaluation.md).
 
 Capture, drawing, and recording work without AI setup. AI conversations, translation, and generated content require a configured service.
 

@@ -31,6 +31,11 @@ Do not replace model-produced arguments or files with handwritten successes.
 | Conversation compaction | Goal survives, original history readable, no dropped current input or private reasoning leak |
 | Memory off/unavailable | Current session still usable; unavailable memory is not reported as empty or saved |
 | Plugin authoring | Real model-generated project, service checks, ordinary install review; no fabricated GUI success |
+| Local file lifecycle | Create, read, edit, find, grep, rename and delete only disposable fixture files; verify actual bytes and absence |
+| Shell error recovery | A real nonzero exit reaches the model; a separate corrected command succeeds without claiming the failure succeeded |
+| Skill authoring | Agent writes valid portable metadata and a real script; skills_list discovers it, skill_read loads it, and execution computes a fixture result |
+| Skill restart | After a normal app restart, the same skill and script remain discoverable and produce the expected result without recreation |
+| Public network lookup | Execute an actual request, verify a current value against an independent official source, and include its source URL; a remembered answer does not pass |
 
 Use normal skills and tools rather than forcing a model-specific backend. Keep
 credentials and personal histories out of fixtures, reports and published assets.

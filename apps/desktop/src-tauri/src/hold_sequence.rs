@@ -17,6 +17,11 @@ pub struct Sequence {
     suppressed_wins: std::collections::HashSet<u32>,
 }
 impl Sequence {
+    /// A suppressed physical Win is still ours after the capture closes. It is
+    /// retired by its physical release, never inferred from our OS-state reset.
+    pub fn owned_modifier(&self) -> Option<u32> {
+        self.held.filter(|_| !self.forwarded).map(|(key, _)| key)
+    }
     /// Only physical keyboard keys have matching keyboard-hook releases.
     /// Mouse buttons and aggregate Shift/Ctrl/Alt aliases must not be seeded.
     pub fn physical_keyboard(key: u32) -> bool {
@@ -149,6 +154,22 @@ impl Sequence {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn deferred_state_clear_cannot_intercept_a_chord_or_an_already_released_key() {
+        let mut keys = Sequence::default();
+        keys.key(0x5b, true, 0, 400);
+        assert_eq!(keys.owned_modifier(), Some(0x5b));
+        keys.key(0x43, true, 100, 400);
+        assert_eq!(keys.owned_modifier(), None);
+        keys.key(0x43, false, 120, 400);
+        keys.key(0x5b, false, 150, 400);
+        keys.key(0x5c, true, 200, 400);
+        keys.key(0x5c, false, 900, 400);
+        assert_eq!(keys.owned_modifier(), None);
+        keys.key(0x5b, true, 1000, 400);
+        keys.key(0x1b, true, 1500, 400);
+        assert_eq!(keys.owned_modifier(), Some(0x5b));
+    }
     #[test]
     fn keys_in_an_owned_long_hold_never_replay_win_down_to_the_system() {
         for win in [0x5b, 0x5c] {

@@ -29,7 +29,7 @@
   <br /><sub>截图、提问、原位标注。</sub>
 </p>
 
-内置 Agent 按需读取图片标注、视频标注与任务检查技能；上下文压缩保留原始会话，可分页回读，长期记忆继续通过独立接口提供。参见 [Agent 运行时](./docs/agent-runtime.md)与[验收流程](./docs/agent-evaluation.md)。
+内置 Agent 使用本地文件工具和自动发现的 Shell／PowerShell，以当前系统账户权限读写、修改、检索文件及运行命令；标准技能可携带脚本，普通本机任务无需先制作插件。它按需读取图片标注、视频标注与任务检查技能；上下文压缩保留原始会话，可分页回读，长期记忆继续通过独立接口提供。参见 [Agent 运行时](./docs/agent-runtime.md)与[验收流程](./docs/agent-evaluation.md)。
 
 ## 功能
 

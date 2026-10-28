@@ -27,6 +27,9 @@ const RELEASE: u32 = WM_APP + 0x502;
 const STOP: u32 = WM_APP + 0x503;
 const TAG: usize = 0x4d455755;
 const STATE_TAG: usize = 0x4d455756;
+// Unassigned, non-character key used by PowerToys to mask lone Win releases.
+// Never use Ctrl/Alt/Shift as a mask: that would change the user's real chord.
+const MENU_MASK_KEY: u16 = 0xff;
 static ENABLED: AtomicBool = AtomicBool::new(false);
 static THREAD: AtomicU32 = AtomicU32::new(0);
 static THRESHOLD: AtomicU32 = AtomicU32::new(400);
@@ -118,6 +121,31 @@ fn modifier_release_input(key: u32) -> INPUT {
         },
     }
 }
+fn masked_modifier_release(key: u32) -> [INPUT; 3] {
+    let mask = |up| INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: MENU_MASK_KEY,
+                wScan: 0,
+                dwFlags: if up { KEYEVENTF_KEYUP } else { 0 },
+                time: 0,
+                dwExtraInfo: TAG,
+            },
+        },
+    };
+    // The mask must reach the OS BEFORE the state-only Win release. Suppressing
+    // all three messages leaves the shell's lone-Win Start action armed.
+    [mask(false), mask(true), modifier_release_input(key)]
+}
+unsafe fn release_os_modifier(key: u32) -> bool {
+    let inputs = masked_modifier_release(key);
+    SendInput(
+        inputs.len() as u32,
+        inputs.as_ptr(),
+        std::mem::size_of::<INPUT>() as i32,
+    ) == inputs.len() as u32
+}
 unsafe extern "system" fn keyboard(code: i32, w: WPARAM, l: LPARAM) -> LRESULT {
     if code < 0 || l == 0 {
         return CallNextHookEx(null_mut(), code, w, l);
@@ -156,9 +184,12 @@ unsafe extern "system" fn keyboard(code: i32, w: WPARAM, l: LPARAM) -> LRESULT {
             let decision =
                 cell.borrow_mut()
                     .key(key, down, clock(), THRESHOLD.load(Ordering::Acquire));
-            if let Some(key) = decision.clear_os_modifier {
-                let input = modifier_release_input(key);
-                if SendInput(1, &input, std::mem::size_of::<INPUT>() as i32) != 1 {
+            // Initial down is cleared by PRESS on this same hook thread AFTER
+            // the original callback returns. LowLevelKeyboardProc runs before
+            // async key state is updated; clearing inside that callback can be
+            // overtaken by the original Win down and leave Win+click active.
+            if let Some(key) = decision.clear_os_modifier.filter(|_| !decision.pressed) {
+                if !release_os_modifier(key) {
                     cell.borrow_mut().forwarded = true;
                     FAULT.store(true, Ordering::Release);
                     ENABLED.store(false, Ordering::Release);
@@ -316,6 +347,16 @@ pub fn configure(app: &AppHandle, milliseconds: u32) -> Result<(), String> {
                         }
                         PRESS | RELEASE => {
                             let pressed = message.message == PRESS;
+                            if pressed {
+                                let owned = KEYS.with(|keys| keys.borrow().owned_modifier());
+                                let Some(key) = owned else { continue };
+                                if !release_os_modifier(key) {
+                                    KEYS.with(|keys| keys.borrow_mut().forwarded = true);
+                                    FAULT.store(true, Ordering::Release);
+                                    ENABLED.store(false, Ordering::Release);
+                                    continue;
+                                }
+                            }
                             if pressed && mouse_hook.is_null() {
                                 mouse_hook = SetWindowsHookExW(
                                     WH_MOUSE_LL,
@@ -354,6 +395,9 @@ pub fn configure(app: &AppHandle, milliseconds: u32) -> Result<(), String> {
                 ENABLED.store(false, Ordering::Release);
                 // Cancel our suppressed gesture on shutdown. Never manufacture
                 // a Win-down after the OS state was deliberately cleared.
+                if let Some(key) = KEYS.with(|keys| keys.borrow().owned_modifier()) {
+                    let _ = release_os_modifier(key);
+                }
                 UnhookWindowsHookEx(keyboard_hook);
                 KillTimer(null_mut(), state_timer);
                 if !mouse_hook.is_null() {
@@ -382,6 +426,25 @@ pub fn disable() {
 #[cfg(test)]
 mod modifier_tests {
     use super::*;
+    #[test]
+    fn menu_mask_is_balanced_and_os_visible_before_each_owned_win_release() {
+        for key in [0x5b, 0x5c] {
+            let inputs = masked_modifier_release(key);
+            let keyboard = inputs.map(|input| unsafe { input.Anonymous.ki });
+            assert_eq!(
+                keyboard.map(|key| key.wVk),
+                [MENU_MASK_KEY, MENU_MASK_KEY, key as u16]
+            );
+            assert_eq!(keyboard.map(|key| key.dwExtraInfo), [TAG, TAG, STATE_TAG]);
+            assert_eq!(
+                keyboard.map(|key| key.dwFlags),
+                [0, KEYEVENTF_KEYUP, KEYEVENTF_KEYUP | KEYEVENTF_EXTENDEDKEY]
+            );
+            assert!(keyboard
+                .iter()
+                .all(|key| key.dwFlags & KEYEVENTF_KEYUP != 0 || key.wVk == MENU_MASK_KEY));
+        }
+    }
     #[test]
     fn modifier_state_reset_is_a_tagged_extended_key_up_not_a_new_win_press() {
         for key in [0x5b, 0x5c] {
@@ -414,7 +477,10 @@ mod modifier_tests {
         for value in [true, true, false, false] {
             change_editing(&editing, value, || resets += 1);
         }
-        assert_eq!(resets, 2, "only actual editor transitions reset the transport");
+        assert_eq!(
+            resets, 2,
+            "only actual editor transitions reset the transport"
+        );
     }
     #[test]
     fn modifier_releases_use_the_same_physical_identity_as_startup_state() {
