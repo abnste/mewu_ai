@@ -27,7 +27,7 @@ const actual = ['drawingInput', 'diagnoseInput', 'cacheKey', 'gestureIdentity', 
 const module = new SourceTextModule(transform(`
 import { DrawingMouseInput,recordDrawingInput,DrawingInputPhase,drawingResizeHandles, resizedDrawingPoints, drawingDraftKey, settleDrawingEdit, richSourceIdentity, imagePort } from 'dependencies';
 export function fixture(props, svg, window) { props.port=imagePort(props);
-  let strokeQueue, historyLane; const strokeVersion=()=>0;
+  let strokeQueue, historyLane; const strokeVersion=()=>0,setCopyModifier=()=>{};
   let cancelGesture, refreshConstraint, disposed = false, serial = 0, flight, pendingValue = false, draft, finishing = false;
   let selectedId = props.region.drawings[0].id, activeTool = 'select', editValue;
   const errors = [], tool = () => activeTool, selected = () => selectedId, edit = () => editValue;
