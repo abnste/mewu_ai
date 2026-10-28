@@ -50,25 +50,109 @@ pub fn write(prepared: PreparedTableClipboard) -> Result<(), String> {
 pub(crate) enum FileDropPublication {
     Unpublished { error: String },
     Published { warning: Option<String> },
+    Uncertain { error: String },
 }
 
 /// `path` belongs to a verified, independently copied host file. Keep its lease
 /// through this call; stable files must not be deleted on an unknown outcome.
 pub(crate) fn publish_file_drop(
+    window: tauri::WebviewWindow,
     path: &std::path::Path,
-    accept: impl FnOnce() -> Result<(), String>,
+    accept: impl FnOnce() -> Result<(), String> + Send + 'static,
 ) -> FileDropPublication {
     #[cfg(windows)]
     {
+        let _ = window;
         windows::publish_file_drop(path, accept)
     }
-    #[cfg(not(windows))]
+    #[cfg(unix)]
     {
-        let _ = (path, accept);
+        publish_unix_file(window, path, accept)
+    }
+    #[cfg(not(any(windows, unix)))]
+    {
+        let _ = (window, path, accept);
         FileDropPublication::Unpublished {
             error: "视频文件复制目前仅支持 Windows".into(),
         }
     }
+}
+
+#[cfg(unix)]
+fn publish_unix_file(
+    window: tauri::WebviewWindow,
+    path: &std::path::Path,
+    accept: impl FnOnce() -> Result<(), String> + Send + 'static,
+) -> FileDropPublication {
+    if !path.is_absolute() || path.to_str().is_none() {
+        return FileDropPublication::Unpublished {
+            error: "视频文件路径无效".into(),
+        };
+    }
+    let path = path.to_owned();
+    let target = window.clone();
+    let (send, receive) = std::sync::mpsc::sync_channel(1);
+    if window
+        .run_on_main_thread(move || {
+            let prepared = (|| {
+                if target.label() != "space" || !target.is_visible().unwrap_or(false) {
+                    return Err("截图窗口已关闭".to_owned());
+                }
+                #[cfg(target_os = "linux")]
+                {
+                    use gtk::prelude::WidgetExt;
+                    let display = target.gtk_window().map_err(|_| "截图窗口已关闭")?.display();
+                    Ok((linux::Data::file(&path)?, display))
+                }
+                #[cfg(target_os = "macos")]
+                {
+                    arboard::Clipboard::new().map_err(|_| "无法打开剪贴板".to_owned())
+                }
+            })();
+            let result = match prepared {
+                Err(error) => FileDropPublication::Unpublished { error },
+                Ok(prepared) => match crate::table_host::CLIPBOARD.try_lock() {
+                    Err(_) => FileDropPublication::Unpublished {
+                        error: "剪贴板正在使用".into(),
+                    },
+                    Ok(_clipboard) => match accept() {
+                        Err(error) => FileDropPublication::Unpublished { error },
+                        Ok(()) => {
+                            #[cfg(target_os = "linux")]
+                            let published = prepared.0.publish_on(&prepared.1);
+                            #[cfg(target_os = "macos")]
+                            let published = {
+                                let mut clipboard = prepared;
+                                clipboard
+                                    .set()
+                                    .file_list(&[path])
+                                    .map_err(|_| "无法复制视频文件".to_owned())
+                            };
+                            match published {
+                                Ok(()) => FileDropPublication::Published { warning: None },
+                                // The OS may have accepted a format before reporting
+                                // failure. Keep the independent file but report error.
+                                Err(error) => FileDropPublication::Uncertain { error },
+                            }
+                        }
+                    },
+                },
+            };
+            let _ = send.send(result);
+        })
+        .is_err()
+    {
+        return FileDropPublication::Unpublished {
+            error: "无法打开系统剪贴板".into(),
+        };
+    }
+    // This caller is the existing blocking copy worker, retaining Work and the
+    // stable file until the original UI callback actually finishes.
+    receive
+        .recv()
+        .unwrap_or_else(|_| FileDropPublication::Uncertain {
+            error: "视频复制回执中断".into(),
+        })
 }
 
 const MAX_SIDE: u32 = 16_384;

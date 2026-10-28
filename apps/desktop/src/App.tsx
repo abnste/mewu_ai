@@ -215,9 +215,10 @@ export default function App() {
     const providerKey=quickOcrKey();const key=`${value.generation}:${current.background.id}:${providerKey}`;if(quickRecognition===key)return;
     quickRecognition=key;quickInitialRun=current.run?.id;
     void quickBridge.quickImageRegions(value.generation).then(images=>{if(!disposed&&quickActive()&&quick().generation===value.generation&&scene()?.background?.id===current.background!.id)setQuickImages({generation:value.generation,backgroundId:current.background!.id,images});},()=>{/* Optional accessibility image metadata never blocks manual selection. */});
-    if(providerKey)void quickBridge.recognizeQuickInteraction(value.generation).then(document=>{
-      if(!disposed&&quickActive()&&quick().generation===value.generation&&scene()?.background?.id===current.background!.id&&quickOcrKey()===providerKey)setQuickText({generation:value.generation,backgroundId:current.background!.id,providerKey,document});
-    },error=>{if(!disposed&&quickActive()&&(quick().held||quick().interacted)&&quick().generation===value.generation&&quickOcrKey()===providerKey)setQuickError(error instanceof Error?error.message:String(error));});
+    const recognitionCurrent=()=>!disposed&&quickActive()&&!scene()?.closed&&quick().generation===value.generation&&scene()?.background?.id===current.background!.id&&quickOcrKey()===providerKey;
+    if(providerKey)void quickBridge.recognizeQuickInteraction(value.generation,recognitionCurrent).then(document=>{
+      if(recognitionCurrent())setQuickText({generation:value.generation,backgroundId:current.background!.id,providerKey,document});
+    },error=>{if(recognitionCurrent()&&(quick().held||quick().interacted))setQuickError(error instanceof Error?error.message:String(error));});
   });
   async function finishQuickAction(action:()=>Promise<boolean>):Promise<boolean>{
     const generation=quick().generation,id=scene()?.id;const success=await action();

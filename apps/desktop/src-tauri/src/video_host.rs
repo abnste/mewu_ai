@@ -392,7 +392,7 @@ pub(crate) fn atomic_gate(host: &Host, handle: usize, edit: bool) -> Result<(), 
     }
     #[cfg(target_os = "linux")]
     {
-        if !crate::window_actions_linux::current_for(handle,"space") {
+        if !crate::window_actions_linux::current_for(handle, "space") {
             return Err("空间已收起".into());
         }
     }
@@ -915,6 +915,7 @@ fn publish_stable_copy(
     stable: clipboard_video_storage::StableVideo,
     publish: impl FnOnce(&Path) -> table_clipboard::FileDropPublication,
 ) -> Result<bool, String> {
+    stable.verify()?;
     match publish(stable.path()) {
         table_clipboard::FileDropPublication::Published { warning: _ } => {
             // The primary format is committed. Optional/close warnings and a
@@ -933,6 +934,7 @@ fn publish_stable_copy(
                 Err(error)
             }
         }
+        table_clipboard::FileDropPublication::Uncertain { error } => Err(error),
     }
 }
 #[tauri::command]
@@ -991,9 +993,13 @@ pub async fn export_video(
                 .map_err(|e| e.to_string())?;
                 #[cfg(target_os = "linux")]
                 let destination = video_save_dialog::pick_video_destination_linux(
-                    picker_window, handle, allow_gif, picker_cancel,
+                    picker_window,
+                    handle,
+                    allow_gif,
+                    picker_cancel,
                     move || recheck(&picker_app, handle, &picker_origin, &allowed_cancel),
-                ).map_err(|e|e.to_string())?;
+                )
+                .map_err(|e| e.to_string())?;
                 #[cfg(target_os = "macos")]
                 let destination = video_save_dialog::pick_video_destination_macos(
                     picker_window,
@@ -1057,10 +1063,16 @@ pub async fn export_video(
                     );
                     #[cfg(target_os = "linux")]
                     let outcome = export_variant_dialog::pick_variant_linux(
-                        choice_window, handle, Media::Video,
-                        choice_origin.source.annotations.as_ref().is_some_and(|document|!document.objects.is_empty()),
+                        choice_window,
+                        handle,
+                        Media::Video,
+                        choice_origin
+                            .source
+                            .annotations
+                            .as_ref()
+                            .is_some_and(|document| !document.objects.is_empty()),
                         choice_cancel,
-                        move || recheck(&choice_app,handle,&choice_origin,&allowed_cancel),
+                        move || recheck(&choice_app, handle, &choice_origin, &allowed_cancel),
                     );
                     #[cfg(target_os = "macos")]
                     let outcome = export_variant_dialog::pick_variant_macos(
@@ -1365,8 +1377,8 @@ pub async fn copy_video(
                 // error can drop Staging and attempt to remove that candidate.
                 drop(input);
                 let stable = copied?;
-                publish_stable_copy(stable, |path| {
-                    table_clipboard::publish_file_drop(path, || {
+                publish_stable_copy(stable, move |path| {
+                    table_clipboard::publish_file_drop(window, path, move || {
                         // Called while WRITER and the OS clipboard are held. No
                         // file I/O, window getter, gate/recheck, or await here.
                         let host = app.state::<Host>();
@@ -1400,6 +1412,35 @@ pub async fn copy_video(
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    #[test]
+    fn uncertain_native_file_publication_retains_the_independent_copy() {
+        let _serial = clipboard_video_storage::test_serial_guard();
+        let root = tempfile::tempdir().unwrap();
+        let root = root.path().canonicalize().unwrap();
+        let source = root.join("source.mp4");
+        let bytes = b"\x00\x00\x00\x18ftypisom\0\0\0\0isomiso2";
+        std::fs::write(&source, bytes).unwrap();
+        let mut input = File::open(&source).unwrap();
+        let storage = clipboard_video_storage::ClipboardVideoStorage::open(&root).unwrap();
+        let stable = storage
+            .reserve(bytes.len() as u64)
+            .unwrap()
+            .copy_from(&mut input, &AtomicBool::new(false))
+            .unwrap();
+        let path = stable.path().to_owned();
+        assert_eq!(
+            publish_stable_copy(stable, |_| {
+                table_clipboard::FileDropPublication::Uncertain {
+                    error: "lost OS acknowledgement".into(),
+                }
+            })
+            .unwrap_err(),
+            "lost OS acknowledgement"
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        assert_eq!(std::fs::read(&source).unwrap(), bytes);
+        assert!(!same_file::is_same_file(&path, &source).unwrap());
+    }
 
     /// Admission/revocation proof used by each same-build real media gate.
     /// The caller supplies only its fresh synthetic media output directory.

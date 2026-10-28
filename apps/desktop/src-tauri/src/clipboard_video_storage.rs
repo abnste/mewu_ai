@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
-//! Persistent, independent video copies for CF_HDROP. Stable files never expire
+//! Persistent, independent video copies for native file clipboards. Stable files never expire
 //! or disappear on Drop. Only a definitive Unpublished receipt permits explicit
 //! deletion; publication/close failures with an unknown outcome must retain them.
 //! This is storage, not media validation: Host retains its verified SourceLease
@@ -68,10 +68,34 @@ impl Drop for Permit {
 
 struct Directory {
     path: PathBuf,
-    #[cfg(windows)]
+    #[cfg(any(windows, unix))]
     _directory_pin: File,
-    #[cfg(windows)]
+    #[cfg(any(windows, unix))]
     _root_pin: File,
+}
+
+fn check_directory(directory: &Directory) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let root = directory.path.parent().ok_or("视频复制目录位置无效")?;
+        for (path, pin) in [
+            (root, &directory._root_pin),
+            (directory.path.as_path(), &directory._directory_pin),
+        ] {
+            ordinary_directory(path)?;
+            let live = fs::symlink_metadata(path).map_err(|_| "视频复制目录已改变")?;
+            let held = pin.metadata().map_err(|_| "无法检查视频复制目录")?;
+            if (live.dev(), live.ino()) != (held.dev(), held.ino())
+                || (path == directory.path
+                    && (live.uid() != unsafe { libc::geteuid() } || live.mode() & 0o077 != 0))
+            {
+                return Err("视频复制目录已改变或不是私有目录".into());
+            }
+        }
+    }
+    let _ = directory;
+    Ok(())
 }
 
 pub(crate) struct ClipboardVideoStorage {
@@ -82,12 +106,12 @@ pub(crate) struct ClipboardVideoStorage {
 /// Single-instance startup only, before accepting copy tasks. A missing cache
 /// remains absent. Never deletes stable MP4s, unknown files or nested entries.
 pub(crate) fn prepare(root: &Path) -> Result<(), String> {
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, unix)))]
     {
         let _ = root;
         return Ok(());
     }
-    #[cfg(windows)]
+    #[cfg(any(windows, unix))]
     {
         let _permit = Permit::acquire()?;
         if let Some(directory) = open_directory(root, false)? {
@@ -109,6 +133,7 @@ impl ClipboardVideoStorage {
     /// Only call during single-instance startup, never during normal copying.
     pub(crate) fn cleanup_partials_at_startup(&self) -> Result<(), String> {
         let _permit = Permit::acquire()?;
+        check_directory(&self.directory)?;
         cleanup_partials(&self.directory)
     }
 
@@ -116,6 +141,7 @@ impl ClipboardVideoStorage {
     /// and pass worker validation before this call; it is not rendered here.
     pub(crate) fn reserve(&self, length: u64) -> Result<Reservation, String> {
         let permit = Permit::acquire()?;
+        check_directory(&self.directory)?;
         validate_length(length, self.limits)?;
         check_budget(&self.directory.path, length, self.limits)?;
         Ok(Reservation {
@@ -144,6 +170,7 @@ impl Reservation {
         cancel: &AtomicBool,
     ) -> Result<StableVideo, String> {
         check_cancel(cancel)?;
+        check_directory(&self.directory)?;
         let before = input.metadata().map_err(|_| "无法检查视频来源")?;
         if !ordinary_file(&before) || before.len() != self.length {
             return Err("视频来源已更改".into());
@@ -188,6 +215,7 @@ impl Reservation {
         if identity != handle(output)? {
             return Err("视频副本已更改".into());
         }
+        check_directory(&self.directory)?;
         direct_file(&partial.path, &self.directory.path)?;
         rename_new(&partial.path, &stable_path).map_err(|_| "无法保留视频副本")?;
         // From this point any unexpected failure is conservative retention.
@@ -227,6 +255,14 @@ pub(crate) struct StableVideo {
 }
 
 impl StableVideo {
+    pub(crate) fn verify(&self) -> Result<(), String> {
+        check_directory(&self.directory)?;
+        direct_file(&self.path, &self.directory.path)?;
+        if self.identity != identity_handle(&self.path)? {
+            return Err("视频副本已更改".into());
+        }
+        Ok(())
+    }
     pub(crate) fn path(&self) -> &Path {
         &self.path
     }
@@ -328,10 +364,49 @@ fn check_budget(directory: &Path, requested: u64, limits: Limits) -> Result<(), 
 }
 
 fn open_directory(root: &Path, create: bool) -> Result<Option<Directory>, String> {
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, unix)))]
     {
         let _ = (root, create);
         return Err("视频文件复制暂仅支持 Windows".into());
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+        if !root.is_absolute() {
+            return Err("应用数据目录必须是绝对路径".into());
+        }
+        ordinary_directory(root)?;
+        let root = fs::canonicalize(root).map_err(|_| "无法确定应用数据目录")?;
+        let open = |path: &Path| {
+            OpenOptions::new()
+                .read(true)
+                .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+                .open(path)
+                .map_err(|_| "无法打开视频复制目录")
+        };
+        let root_pin = open(&root)?;
+        let path = root.join(DIRECTORY);
+        match fs::symlink_metadata(&path) {
+            Ok(_) => {}
+            Err(e) if e.kind() == io::ErrorKind::NotFound && !create => return Ok(None),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                match fs::DirBuilder::new().mode(0o700).create(&path) {
+                    Ok(()) => {}
+                    Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
+                    Err(_) => return Err("无法创建视频复制目录".into()),
+                }
+            }
+            Err(_) => return Err("无法检查视频复制目录".into()),
+        }
+        ordinary_directory(&path)?;
+        let directory_pin = open(&path)?;
+        let directory = Directory {
+            path,
+            _directory_pin: directory_pin,
+            _root_pin: root_pin,
+        };
+        check_directory(&directory)?;
+        Ok(Some(directory))
     }
     #[cfg(windows)]
     {
@@ -406,6 +481,11 @@ fn handle(file: &File) -> Result<same_file::Handle, String> {
 fn identity_handle(path: &Path) -> Result<same_file::Handle, String> {
     let mut options = OpenOptions::new();
     options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    }
     #[cfg(windows)]
     {
         use std::os::windows::fs::OpenOptionsExt;
@@ -424,6 +504,13 @@ fn identity_handle(path: &Path) -> Result<same_file::Handle, String> {
 fn create_partial(path: &Path) -> io::Result<File> {
     let mut options = OpenOptions::new();
     options.read(true).write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    }
     #[cfg(windows)]
     {
         use std::os::windows::fs::OpenOptionsExt;
@@ -438,6 +525,11 @@ fn create_partial(path: &Path) -> io::Result<File> {
 fn open_stable(path: &Path) -> io::Result<File> {
     let mut options = OpenOptions::new();
     options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    }
     #[cfg(windows)]
     {
         use std::os::windows::fs::OpenOptionsExt;
@@ -470,7 +562,16 @@ fn delete_exact(
         mark_delete(&file).map_err(|_| "无法清理未发布的视频副本")?;
         Ok(())
     }
-    #[cfg(not(windows))]
+    #[cfg(unix)]
+    {
+        let file = open_stable(path).map_err(|_| "无法读取未发布的视频副本")?;
+        if expected.is_some_and(|identity| handle(&file).as_ref() != Ok(identity)) {
+            return Err("视频副本已更改，未删除文件".into());
+        }
+        direct_file(path, directory)?;
+        fs::remove_file(path).map_err(|_| "无法清理未发布的视频副本".into())
+    }
+    #[cfg(not(any(windows, unix)))]
     {
         let _ = expected;
         Err("视频文件复制暂仅支持 Windows".into())
@@ -498,6 +599,14 @@ impl Drop for Partial {
                     .is_some_and(|(current, owned)| current == owned)
             {
                 let _ = mark_delete(file);
+            }
+        }
+        #[cfg(unix)]
+        if let Some(file) = &self.file {
+            if check_directory(&self.directory).is_ok() {
+                if let Ok(identity) = handle(file) {
+                    let _ = delete_exact(&self.path, &self.directory.path, Some(&identity));
+                }
             }
         }
     }
@@ -534,7 +643,35 @@ fn rename_new(from: &Path, to: &Path) -> io::Result<()> {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(unix)]
+fn rename_new(from: &Path, to: &Path) -> io::Result<()> {
+    use std::{ffi::CString, os::unix::ffi::OsStrExt};
+    let from = CString::new(from.as_os_str().as_bytes())
+        .map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
+    let to = CString::new(to.as_os_str().as_bytes())
+        .map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
+    #[cfg(target_os = "linux")]
+    let result = unsafe {
+        libc::renameat2(
+            libc::AT_FDCWD,
+            from.as_ptr(),
+            libc::AT_FDCWD,
+            to.as_ptr(),
+            libc::RENAME_NOREPLACE,
+        )
+    };
+    #[cfg(target_os = "macos")]
+    let result = unsafe { libc::renamex_np(from.as_ptr(), to.as_ptr(), libc::RENAME_EXCL) };
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    let result = -1;
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+#[cfg(not(any(windows, unix)))]
 fn rename_new(_from: &Path, _to: &Path) -> io::Result<()> {
     Err(io::Error::new(io::ErrorKind::Unsupported, "Windows only"))
 }
@@ -574,9 +711,38 @@ mod tests {
         assert!(validate_length(MAX_FILE, LIMITS).is_ok());
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, unix))]
     mod files {
         use super::*;
+        #[cfg(unix)]
+        #[test]
+        fn unix_copy_is_private_and_directory_or_link_replacement_is_rejected() {
+            use std::os::unix::fs::{symlink, MetadataExt};
+            let _test = test_serial_guard();
+            let f = Fixture::new();
+            let storage = ClipboardVideoStorage::open(&f.root).unwrap();
+            let mut input = f.input(80);
+            let stable = storage
+                .reserve(80)
+                .unwrap()
+                .copy_from(&mut input, &AtomicBool::new(false))
+                .unwrap();
+            assert_eq!(
+                fs::metadata(&storage.directory.path).unwrap().mode() & 0o777,
+                0o700
+            );
+            assert_eq!(fs::metadata(stable.path()).unwrap().mode() & 0o777, 0o600);
+            let moved = f.root.join("original-cache");
+            fs::rename(&storage.directory.path, &moved).unwrap();
+            fs::create_dir(&storage.directory.path).unwrap();
+            assert!(stable.verify().is_err());
+            assert!(storage.reserve(24).is_err());
+            fs::remove_dir(&storage.directory.path).unwrap();
+            symlink(&moved, &storage.directory.path).unwrap();
+            assert!(ClipboardVideoStorage::open(&f.root).is_err());
+            assert!(stable.verify().is_err());
+            assert!(moved.join(stable.path().file_name().unwrap()).is_file());
+        }
         struct Fixture {
             root: PathBuf,
             parent: PathBuf,

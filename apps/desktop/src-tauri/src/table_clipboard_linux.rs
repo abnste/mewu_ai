@@ -8,6 +8,19 @@ use std::sync::Arc;
 
 pub(crate) struct Data(Vec<(&'static str, Arc<[u8]>)>);
 impl Data {
+    pub(crate) fn file(path: &std::path::Path) -> Result<Self, String> {
+        if !path.is_absolute() || path.to_str().is_none() {
+            return Err("视频文件路径无效".into());
+        }
+        let uri = url::Url::from_file_path(path).map_err(|_| "视频文件路径无效")?;
+        Self::checked(vec![
+            ("text/uri-list", format!("{uri}\r\n").into_bytes().into()),
+            (
+                "x-special/gnome-copied-files",
+                format!("copy\n{uri}").into_bytes().into(),
+            ),
+        ])
+    }
     pub(crate) fn text(text: String) -> Result<Self, String> {
         text_size(&text)?;
         let bytes: Arc<[u8]> = text.into_bytes().into();
@@ -144,6 +157,19 @@ fn read_png(_: &std::path::Path, _: (u32, u32)) -> Result<Vec<u8>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn copied_file_payloads_escape_paths_and_request_copy_not_cut() {
+        assert!(Data::file(std::path::Path::new("relative.mp4")).is_err());
+        let root = std::env::temp_dir().canonicalize().unwrap();
+        let path = root.join("视频 #\nfile.mp4");
+        let data = Data::file(&path).unwrap();
+        let uri = url::Url::from_file_path(&path).unwrap().to_string();
+        assert_eq!(data.0[0].0, "text/uri-list");
+        assert_eq!(data.0[0].1.as_ref(), format!("{uri}\r\n").as_bytes());
+        assert_eq!(data.0[1].0, "x-special/gnome-copied-files");
+        assert_eq!(data.0[1].1.as_ref(), format!("copy\n{uri}").as_bytes());
+        assert!(uri.contains("%23%0A"));
+    }
     #[test]
     fn utf8_payloads_are_raw_bounded_and_share_owned_storage() {
         let data = Data::text("表格甲\t乙\n1\t2".into()).unwrap();
