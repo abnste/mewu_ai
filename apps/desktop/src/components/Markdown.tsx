@@ -5,6 +5,7 @@ import { formulaAttributes, formulaCopyText, formulaTags, renderReplyFormula, re
 import { createReplyBlockPatcher, replyContent, replyRasterData, replyWebLink } from '../reply-content';
 import { nativeReplyLinks, openReplyLink } from '../reply-content-bridge';
 import { t } from '../i18n';
+import { writeClipboardText } from '../clipboard-text';
 import 'katex/dist/katex.min.css';
 import './reply-math.css';
 import './reply-content.css';
@@ -99,7 +100,7 @@ export default function Markdown(props: { text: string; onRestoreCode?:(code:str
     if (!button || !element.contains(button)) return;
     event.preventDefault(); event.stopPropagation();
     const code = button.closest('pre')?.querySelector('code'); if (!code) return;
-    void (navigator.clipboard ? navigator.clipboard.writeText(code.textContent ?? '') : Promise.reject(new Error('Clipboard unavailable'))).then(() => {
+    void writeClipboardText(code.textContent ?? '').then(() => {
       if (!button.isConnected) return; button.textContent = t('已复制');
       const timer = setTimeout(() => { timers.delete(timer); if (button.isConnected) button.textContent = t('复制'); }, 1200); timers.add(timer);
     }, () => { if (button.isConnected) button.title = t('复制失败'); });

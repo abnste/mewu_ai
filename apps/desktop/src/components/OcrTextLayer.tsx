@@ -5,11 +5,13 @@ import { Copy, RotateCw, X } from 'lucide-solid';
 import type { OcrDocument } from '../contracts';
 import { nearestOcrGlyph, ocrLayout, unrotateOcrPoint, type OcrGlyph } from '../ocr-selection';
 import './ocr.css';
+import { writeClipboardText } from '../clipboard-text';
 
 interface Props { document: OcrDocument; active: boolean; label?: string; repeatLabel?: string; onClose: () => void; onRepeat?: () => void; onError: (message: string) => void; onSelecting?: (value: boolean) => void;hitOnly?:boolean;onCopied?:()=>void }
 
 export default function OcrTextLayer(props: Props) {
   let disposed = false;
+  let copying = false;
   let surface!: HTMLDivElement, textHost!: HTMLSpanElement;
   let pointer: number | undefined, anchor = -1;
   const key = createMemo(() => JSON.stringify(props.document));
@@ -67,19 +69,22 @@ export default function OcrTextLayer(props: Props) {
   function selectedText() { return ownsSelection() ? window.getSelection()?.toString() ?? '' : ''; }
   async function copy(all: boolean) {
     const text = all ? layout().text : selectedText(); setMenu(undefined);
-    if (!text) return;
+    if (!text || copying) return;
+    copying = true;
     const authority = key();
-    try { await navigator.clipboard.writeText(text); if (!disposed && props.active && key() === authority) props.onCopied?.(); }
+    try { await writeClipboardText(text); if (!disposed && props.active && key() === authority) props.onCopied?.(); }
     catch { props.onError('无法复制文字'); }
+    finally { copying = false; }
   }
   function clipboard(event: ClipboardEvent) {
     const text = selectedText();
     event.stopPropagation();
-    if (text && event.clipboardData) { const authority = key(); event.preventDefault(); event.clipboardData.setData('text/plain', text);setTimeout(()=>{if(!disposed&&props.active&&key()===authority)props.onCopied?.();},0); }
+    if (text) { event.preventDefault(); void copy(false); }
   }
   function keydown(event: KeyboardEvent) {
     event.stopPropagation();
     if (event.key === 'Escape') { event.preventDefault(); if (menu()) setMenu(undefined); else if (range()) clearSelection(); else props.onClose(); }
+    else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'c' && selectedText()) { event.preventDefault(); void copy(false); }
     else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a') { event.preventDefault(); select(0, layout().text.length); }
     else if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
       event.preventDefault(); const selected = range(), glyphs = layout().glyphs;

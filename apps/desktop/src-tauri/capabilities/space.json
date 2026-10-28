@@ -33,6 +33,7 @@
     "allow-send-message",
     "allow-cancel-run",
     "allow-hide-space",
+    "allow-write-clipboard-text",
     "allow-export-region",
     "allow-export-image-item",
     "allow-export-control-image",

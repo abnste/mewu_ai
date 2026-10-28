@@ -2,6 +2,7 @@
 import { createEffect, createMemo, createSignal, on, onCleanup, Show } from 'solid-js';
 import type { Asset } from '../contracts';
 import { getPointerSample } from '../pointer-bridge';
+import { writeClipboardText } from '../clipboard-text';
 import { PointerInspector as SampleGate, PointerSampleCanceledError, pointerImagePoint, pointerInspectorSize, pointerPopupPosition, pointerSourceKey, pointerCoordinatesLabel, type PointerImageBox, type PointerSample, type PointerSampleRequest } from '../pointer-inspector';
 import './pointer-inspector.css';
 
@@ -51,7 +52,7 @@ export default function PointerInspector(props: Props) {
     if (copying) return true;
     const token = version; copying = true;
     const current = () => !disposed && version === token && request?.sceneId === target.sceneId && request?.backgroundId === target.backgroundId && request?.x === target.x && request?.y === target.y && pointerSourceKey(source()) === pointerSourceKey(target.source) && props.sceneId === target.sceneId && props.background.id === target.backgroundId && allowed(point);
-    void gate.sampleExact(target).then(async value => { if (current()) await navigator.clipboard.writeText(value.hex); }).catch(error => {
+    void gate.sampleExact(target).then(async value => { if (current()) await writeClipboardText(value.hex); }).catch(error => {
       if (current() && !(error instanceof PointerSampleCanceledError)) props.onError(error instanceof Error ? error.message : String(error));
     }).finally(() => { copying = false; });
     return true;

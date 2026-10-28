@@ -8,13 +8,13 @@ import { parse } from '@babel/parser';
 const source = await readFile(new URL('./components/OcrTextLayer.tsx', import.meta.url), 'utf8');
 const ast = parse(source, { sourceType: 'module', plugins: ['typescript', 'jsx'] });
 const component = ast.program.body.find(n => n.type === 'ExportDefaultDeclaration').declaration;
-const methods = component.body.body.filter(n => n.type === 'FunctionDeclaration' && ['copy', 'clipboard'].includes(n.id.name));
+const methods = component.body.body.filter(n => n.type === 'FunctionDeclaration' && ['copy', 'clipboard', 'keydown'].includes(n.id.name));
 const code = methods.map(n => stripTypeScriptTypes(source.slice(n.start, n.end), { mode: 'transform' })).join('\n');
 test('actual OCR copy closes only its current document after clipboard success', async () => {
   for (const state of ['current', 'disposed', 'changed', 'inactive', 'failed']) {
     let settle, copied = 0, errors = 0;
     const done = new Promise((resolve, reject) => { settle = state === 'failed' ? () => reject(Error('clipboard denied')) : resolve; });
-    const values = [], context = createContext({ disposed: false, key: () => 'document-one', selectedText: () => 'MEWU OCR', layout: () => ({ text: 'MEWU OCR' }), setMenu() {}, navigator: { clipboard: { writeText: async text => { values.push(text); await done; } } }, props: { active: true, onCopied: () => copied++, onError: () => errors++ } });
+    const values = [], context = createContext({ disposed: false, copying: false, key: () => 'document-one', selectedText: () => 'MEWU OCR', layout: () => ({ text: 'MEWU OCR' }), setMenu() {}, writeClipboardText: async text => { values.push(text); await done; }, props: { active: true, onCopied: () => copied++, onError: () => errors++ } });
     runInContext(code, context);
     const copying = context.copy(false);
     if (state === 'disposed') context.disposed = true;
@@ -26,14 +26,20 @@ test('actual OCR copy closes only its current document after clipboard success',
     assert.equal(errors, state === 'failed' ? 1 : 0);
   }
 });
-test('native browser copy event never closes a successor from its delayed callback', () => {
-  let callback, copied = 0;
-  const context = createContext({ disposed: false, key: () => 'one', selectedText: () => 'TEXT', setTimeout: fn => { callback = fn; }, props: { active: true, onCopied: () => copied++ } });
-  runInContext(code, context);
-  const values = []; const event = { stopPropagation() {}, preventDefault() {}, clipboardData: { setData: (...args) => values.push(args) } };
-  context.clipboard(event); context.key = () => 'two'; callback();
-  assert.deepEqual(values, [['text/plain', 'TEXT']]); assert.equal(copied, 0);
-  context.clipboard(event); callback(); assert.equal(copied, 1);
+test('native copy event and Ctrl/Cmd+C await one OS publication and fence successor documents', async () => {
+  for (const entry of ['event', 'control', 'meta']) {
+    let settle, copied = 0, prevented = 0;
+    const done = new Promise(resolve => { settle = resolve; });
+    const values = [], context = createContext({ disposed: false, copying: false, key: () => 'one', selectedText: () => 'TEXT', setMenu() {}, writeClipboardText: async text => { values.push(text); await done; }, props: { active: true, onCopied: () => copied++ } });
+    runInContext(code, context);
+    const event = { key: 'c', ctrlKey: entry === 'control', metaKey: entry === 'meta', stopPropagation() {}, preventDefault() { prevented++; } };
+    if (entry === 'event') context.clipboard(event); else context.keydown(event);
+    // The native menu and webview key event may arrive together. Publish once.
+    context.clipboard(event);
+    assert.deepEqual(values, ['TEXT']); assert.equal(copied, 0); assert.equal(prevented, 2);
+    context.key = () => 'two'; settle(); await done; await Promise.resolve(); await Promise.resolve();
+    assert.equal(copied, 0); assert.equal(context.copying, false);
+  }
 });
 test('actual quick OCR Show remains mounted when a region has been selected', async () => {
   const canvas = await readFile(new URL('./components/SpaceCanvas.tsx', import.meta.url), 'utf8');

@@ -87,6 +87,7 @@ fn main() {
             "edit_video_annotation_text",
             "apply_video_annotation_document",
             "copy_drawing_table",
+            "write_clipboard_text",
             "apply_drawing_document",
             "apply_raster_edit",
             "get_mosaic_preview",

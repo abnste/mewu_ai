@@ -39,6 +39,7 @@ mod capture_wayland_host;
 #[cfg(target_os = "linux")]
 mod capture_wayland_portal;
 mod clipboard_video_storage;
+mod clipboard_text;
 mod code_decode;
 mod code_host;
 mod code_open;
@@ -3591,6 +3592,7 @@ fn main() {
                 video_annotation_host::edit_video_annotation_text,
                 video_annotation_host::apply_video_annotation_document,
                 rich_annotation_host::copy_drawing_table,
+                clipboard_text::write_clipboard_text,
                 rich_annotation_host::apply_drawing_document,
                 raster_edit_host::apply_raster_edit,
                 close_scene_window,

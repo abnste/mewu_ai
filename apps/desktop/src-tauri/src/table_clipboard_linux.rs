@@ -57,7 +57,10 @@ impl Data {
         })
     }
     #[cfg(target_os = "linux")]
-    fn publish_on(self, display: &gtk::gdk::Display) -> Result<(), String> {
+    pub(crate) fn publish_on(self, display: &gtk::gdk::Display) -> Result<(), String> {
+        if !gtk::is_initialized_main_thread() {
+            return Err("只能在界面线程发布剪贴板".into());
+        }
         let targets: Vec<_> = self
             .0
             .iter()
