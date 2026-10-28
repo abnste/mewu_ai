@@ -32,6 +32,13 @@ engine must not bypass these boundaries by starting an untracked background run.
 
 ## Context and sessions
 
+Agent-initiated local memory writes retain the verified `sourceQuote` itself.
+They do not accept a second free-form fact beside that quote. Both creation and
+revision updates are checked against the originating user's message; tool output,
+attachments and assistant claims cannot be relabelled as user facts. Existing
+memory records remain unchanged during an upgrade. Session tool transcripts are
+durable independently of long-term memory and must be used for task continuity.
+
 The scene transcript remains complete. A model request is a projection, not the
 storage format. Old messages are summarized only when the projected input exceeds
 its budget, or the selected historical media exceeds request byte limits. The

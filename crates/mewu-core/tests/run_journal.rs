@@ -636,11 +636,14 @@ fn local_effect_receipt_and_step_are_one_sqlite_commit() {
     db.execute_batch("CREATE TRIGGER fail_receipt BEFORE UPDATE ON agent_run_events BEGIN SELECT RAISE(ABORT,'fixture');END;").unwrap();
     let effect = LocalMemoryEffect::Save {
         id: None,
-        text: "用户喜欢中文".into(),
         expected_revision: None,
         source_quote: "喜欢中文".into(),
         source_message_id: None,
     };
+    assert!(serde_json::from_value::<LocalMemoryEffect>(json!({
+        "type":"save", "id":null, "expectedRevision":null,
+        "sourceQuote":"喜欢中文", "text":"unrelated tool-generated claim"
+    })).is_err(), "a valid citation cannot authorize a separate invented fact");
     assert!(s
         .apply_local_memory_with_receipt(&t.tools[0].lease, effect.clone())
         .is_err());
@@ -673,10 +676,11 @@ fn memory_follow_up_binds_the_exact_prior_user_source_and_survives_reopen() {
     let follow_up = start(&mut store, "记着啊");
     let proposal = turn(&mut store, &follow_up, "", vec![call("memory_save")]);
     store.apply_local_memory_with_receipt(&proposal.tools[0].lease, LocalMemoryEffect::Save {
-        id: None, text: "用户姓名是stephen".into(), expected_revision: None,
+        id: None, expected_revision: None,
         source_quote: "我是stephen".into(), source_message_id: Some(source.clone()),
     }).unwrap();
     let saved = store.memory_page(&agent.id, "", None, 25).unwrap().entries.remove(0);
+    assert_eq!(saved.text, "我是stephen");
     assert_eq!(saved.source, Some(MemorySource { scene_id: first.scene_id.clone(), message_id: source }));
     assert_ne!(saved.source.as_ref().unwrap().message_id, follow_up.messages.last().unwrap().id);
     assert_eq!(page(&store, &follow_up).entries[1].phase, ReceiptPhase::Responded);
@@ -705,7 +709,7 @@ fn memory_source_rejects_assistant_cross_scene_reset_and_unlabelled_old_messages
     let follow_up = start(&mut store, "记着啊");
     let proposal = turn(&mut store, &follow_up, "", vec![call("memory_save")]);
     let effect = |source_message_id| LocalMemoryEffect::Save {
-        id: None, text: "用户姓名是stephen".into(), expected_revision: None,
+        id: None, expected_revision: None,
         source_quote: "我是stephen".into(), source_message_id,
     };
     for invalid in [None, Some(assistant), Some(cross_scene), Some(uuid::Uuid::new_v4().to_string())] {

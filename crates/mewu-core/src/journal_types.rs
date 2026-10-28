@@ -496,7 +496,6 @@ pub fn local_memory_sources(messages: &[crate::Message]) -> impl Iterator<Item =
 pub enum LocalMemoryEffect {
     Save {
         id: Option<String>,
-        text: String,
         expected_revision: Option<u64>,
         source_quote: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]

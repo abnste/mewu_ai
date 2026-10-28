@@ -843,7 +843,6 @@ impl Store {
             let (name, mutation, quote, source_message_id) = match effect {
                 LocalMemoryEffect::Save {
                     id,
-                    text,
                     expected_revision,
                     source_quote,
                     source_message_id,
@@ -851,7 +850,7 @@ impl Store {
                     "memory_save",
                     MemoryMutation::Save {
                         id,
-                        text,
+                        text: source_quote.clone(),
                         expected_revision,
                     },
                     Some(source_quote),
