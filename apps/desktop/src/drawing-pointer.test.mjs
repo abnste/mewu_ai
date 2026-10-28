@@ -29,7 +29,7 @@ export function fixture(props,svg,window) {
  let disposed=false,serial=0,flight,cancelGesture,refreshConstraint,toolValue='pen',selectedId='',draftValue,pendingValue=false,strokeQueue,editCacheKey,editValue,finishingValue=false;
  let historyLane,historyPreparation,historyIntents=[],preparingHistory,historyView,historyBusy=false;const historyPreview=()=>historyView,setHistoryPreview=value=>{historyView=value;props.onHistoryPreview?.(value);},historyPending=()=>historyBusy,setHistoryPending=value=>historyBusy=value;
  let queued=[],recovered=[];const queuedDrawings=()=>queued,setQueuedDrawings=value=>queued=value,setRecoveredDrawings=value=>recovered=value,[strokeVersion,setStrokeVersion]=props.reactive?createSignal(0):[()=>0,()=>{}]; let eraseSource;
- const propertyMenu=()=>false,setPropertyMenu=()=>{}; let marqueeValue,groupDraftValue;const setMarquee=value=>marqueeValue=value,setGroupDraft=value=>groupDraftValue=value;let selectedMany=[];const selectedIds=()=>selectedMany,setSelectedIds=value=>selectedMany=value;
+ const propertyMenu=()=>Boolean(props.propertyMenu),setPropertyMenu=value=>props.propertyMenu=value,setCopyModifier=()=>{}; let marqueeValue,groupDraftValue;const setMarquee=value=>marqueeValue=value,setGroupDraft=value=>groupDraftValue=value;let selectedMany=[];const selectedIds=()=>selectedMany,setSelectedIds=value=>selectedMany=value;
  const publications=[],tool=()=>toolValue,setTool=value=>toolValue=value,selected=()=>selectedId,setSelected=value=>selectedId=value;
  const draft=()=>draftValue,setDraft=value=>{draftValue=value;if(value)publications.push(JSON.parse(JSON.stringify(value)));},pending=()=>pendingValue,setPending=value=>pendingValue=value;
  const edit=()=>editValue,setEdit=value=>editValue=value,textEditor=()=>undefined,finishing=()=>finishingValue,setFinishing=value=>finishingValue=value,historyDisabled=()=>pending()||finishing()||props.busy||props.inputLocked,disabled=()=>historyDisabled()||historyPending();
@@ -686,7 +686,7 @@ const itemJsx=await jsx(`import {linkedRepairPreview} from 'selection';import {c
 export function fixture(props,state){props={...props,port:{...props.port,drawings:state.drawings,stored:state.stored}};const draft=()=>state.draft(),edit=()=>undefined,tool=()=>state.tool(),selected=()=>state.selected(),storedDraft=()=>state.storedDraft(),drawings=state.drawings;
 const visibleDrawings=()=>state.historyPreview?.()??drawings();${['drawingIndex','storedIndex','activeDraftId'].map(declaration).join('\n')}
 const previewDrawing=()=>draft(),groupDraft=()=>[],selectedIds=()=>[selected()],queuedDrawings=()=>state.queued?.()??[],recoveredDrawings=()=>state.recovered?.()??[];${declaration('previews')}
-const pixelIndex=()=>state.pixelIndex?.()??new Map();
+const copyModifier=()=>false;const pixelIndex=()=>state.pixelIndex?.()??new Map();
 ${declaration('DrawingItem')};return <DrawingItem id={props.id}/>;}`,{pointer,selection:{linkedRepairPreview:(drawing)=>drawing}});
 const descendants=(node,tag)=>[...(node.tag===tag?[node]:[]),...node.children.flatMap(child=>descendants(child,tag))];
 
@@ -1416,6 +1416,17 @@ function selectThreeFixture(history){
  const values=[10,40,70].map((y,i)=>({id:'s'+i,kind:'pen',color:'#123456',strokeWidth:4,points:[{x:10,y},{x:50,y:y+4}]})),f=ordinaryMoveFixture(values,history);return{...f,values};
 }
 function selectThree(f){f.begin(mouse('pointerdown',0,0));f.window.emit(mouse('pointermove',60,90));f.window.emit(mouse('pointermove',900,950,{buttons:0}));}
+test('Ctrl copy works while pen remains selected and does not enqueue an accidental new stroke',async()=>{
+ const clock=frames(),f=selectThreeFixture(),old=plain(f.values);try{
+  f.tool('pen');const target=new module.namespace.Element();target.id='s0';
+  f.begin(mouse('pointerdown',10,10,{target,ctrlKey:true}));f.window.emit(mouse('pointermove',30,40));f.window.emit(mouse('pointerup',30,40));await tick();
+  assert.equal(f.commands.length,1);assert.equal(f.commands[0].type,'duplicate_drawings');assert.deepEqual(f.commands[0].drawingIds,['s0']);assert.deepEqual(f.values,old);
+ }finally{f.dispose();clock.restore();}
+});
+test('Escape closes a blackboard property menu before finishing the board',()=>{
+ const f=selectThreeFixture(),prior=globalThis.document;f.props.blackboard=true;f.props.propertyMenu=true;globalThis.document={activeElement:null,querySelector:()=>null};
+ try{f.keyboard({type:'keydown',key:'Escape',target:null,preventDefault(){},stopImmediatePropagation(){}});assert.equal(f.props.propertyMenu,false);assert.equal(f.commands.length,0);}finally{globalThis.document=prior;f.dispose();}
+});
 test('Ctrl drag duplicates the exact selected group once without moving originals; cancellation writes nothing',async()=>{
  const clock=frames();try{
   for(const cancel of [false,true]){

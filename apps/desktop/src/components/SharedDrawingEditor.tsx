@@ -68,6 +68,7 @@ export default function SharedDrawingEditor(props: Props) {
   const [mosaicReady, setMosaicReady] = createSignal(false), [mosaicFailed, setMosaicFailed] = createSignal(false), [mosaicRetry, setMosaicRetry] = createSignal(0), [finishing, setFinishing] = createSignal(false);
   const [highlightReady, setHighlightReady] = createSignal(false), [highlightFailed, setHighlightFailed] = createSignal(false), [highlightRetry, setHighlightRetry] = createSignal(0);
   const [selected, setSelected] = createSignal(''), [draft, setDraft] = createSignal<Drawing>();
+  const [copyModifier,setCopyModifier]=createSignal(false);
   const [selectedIds,setSelectedIds]=createSignal<string[]>([]),[marquee,setMarquee]=createSignal<import('../drawing-editor-port').EditorBox>(),[groupDraft,setGroupDraft]=createSignal<Drawing[]>([]);
   createEffect(on(selected,id=>{if(!id)setSelectedIds([]);else if(!selectedIds().includes(id))setSelectedIds([id]);}));
   const [storedDraft,setStoredDraft]=createSignal<{id:string;bounds:{x:number;y:number;width:number;height:number}}>();
@@ -494,8 +495,8 @@ export default function SharedDrawingEditor(props: Props) {
     try{const value=await props.port.ensureEditable(id);if(!disposed&&token===selectionSerial&&origin===identity()&&selected()===id)return value;}catch(error){if(!disposed&&token===selectionSerial&&origin===identity())report(error);}finally{if(!disposed&&token===selectionSerial)setSelectionReading(false);}
   }
   function selectionGesture(event:PointerEvent,update:(point:DrawingPoint)=>void,finish:(save:boolean)=>void){
-    const origin=gestureIdentity(),pointerId=event.pointerId;let ended=false;
-    const valid=()=>!disposed&&origin===gestureIdentity()&&!disabled()&&tool()==='select'&&!edit();
+    const origin=gestureIdentity(),pointerId=event.pointerId,originalTool=tool();let ended=false;
+    const valid=()=>!disposed&&origin===gestureIdentity()&&!disabled()&&tool()===originalTool&&!edit();
     const cleanup=()=>{window.removeEventListener('pointermove',move);window.removeEventListener('pointerup',up);window.removeEventListener('pointercancel',cancel);svg.removeEventListener('lostpointercapture',cancel);cancelGesture=undefined;if(svg.hasPointerCapture(pointerId))svg.releasePointerCapture(pointerId);};
     const stop=(save:boolean)=>{if(ended)return;const current=valid();ended=true;cleanup();finish(save&&current);};
     const move=(e:PointerEvent)=>{if(e.pointerId!==pointerId)return;if(!valid()){stop(false);return;}if(!(e.buttons&1)){stop(event.pointerType==='mouse'&&event.buttons===1&&e.pointerType==='mouse'&&e.buttons===0);return;}e.preventDefault();update(point(e,false));};
@@ -578,7 +579,7 @@ export default function SharedDrawingEditor(props: Props) {
   function begin(event: PointerEvent, forcedImage?: Drawing) {
     event.stopPropagation();
     diagnoseInput(DrawingInputPhase.begin, event);
-    const queueable = event.button === 0 && !forcedImage && continuousStrokes() && strokeKinds.includes(tool() as DrawingKind);
+    const queueable = event.button === 0 && !event.ctrlKey && !event.metaKey && !forcedImage && continuousStrokes() && strokeKinds.includes(tool() as DrawingKind);
     if ((strokeQueue?.pending() || historyLane?.pending()) && !queueable) { diagnoseInput(DrawingInputPhase.rejected, event, 1); return; }
     if (queueable && (historyLane ?? strokeQueue) && !(historyLane ?? strokeQueue)!.capacity()) { diagnoseInput(DrawingInputPhase.rejected, event, 2); props.onError('请先保存未完成的笔迹'); return; }
     if (!forcedImage && event.button === 2) {
@@ -596,10 +597,11 @@ export default function SharedDrawingEditor(props: Props) {
     const initialBox = svg.getBoundingClientRect();
     if (initialBox.width <= 0 || initialBox.height <= 0) { diagnoseInput(DrawingInputPhase.rejected, event, 7); return; }
     const initialFrame = props.port.frame();
-    const start = point(event, true, initialBox, initialFrame), originalTool = tool(), kind = forcedImage ? 'select' : originalTool, revision = props.port.revision(), origin = gestureSource();
+    const start = point(event, true, initialBox, initialFrame), originalTool = tool(), revision = props.port.revision(), origin = gestureSource();
     const strokeRevision = historyLane?.revisionIdentity() ?? strokeQueue?.revisionIdentity() ?? revision;
     const hitId = event.target instanceof Element ? event.target.closest('[data-drawing-id]')?.getAttribute('data-drawing-id') : undefined;
     const hit = forcedImage ?? (hitId && editableIds().has(hitId) ? drawings().find(value => value.id === hitId) : undefined);
+    const kind=forcedImage||((event.ctrlKey||event.metaKey)&&(hit||props.port.stored?.().some(value=>value.id===hitId)))?'select':originalTool;
     if (kind === 'mosaic' && !mosaicReady()) return;
     if (['highlighter', 'mark'].includes(kind) && props.port.highlight && !highlightReady()) return;
     const stored=props.port.stored?.().find(value=>value.id===hitId);
@@ -624,7 +626,7 @@ export default function SharedDrawingEditor(props: Props) {
       }); return;
     }
     const original = kind === 'select' ? hit : undefined;
-    if(original&&(event.ctrlKey||event.metaKey)&&!forcedImage){
+    if(original&&(event.ctrlKey||event.metaKey)){
       const originals=selectedIds().includes(original.id)?drawings().filter(d=>selectedIds().includes(d.id)&&props.port.canSelect(d)):[original];
       beginDuplicate(event,originals);return;
     }
@@ -927,6 +929,7 @@ export default function SharedDrawingEditor(props: Props) {
     });
   }
   function keyboard(event: KeyboardEvent) {
+    if(event.type==='keyup'&&(event.key==='Control'||event.key==='Meta')){setCopyModifier(false);return;}
     if ((event.target instanceof Element ? event.target : document.activeElement)?.closest('.drawing-color-panel')) return;
     if ((event.target instanceof Element ? event.target : document.activeElement)?.closest(props.keyboardIgnore ?? '.video-trim-popover,.artifact-video,.blackboard-object,[data-run-journal]')) return;
     if (props.inputLocked) {
@@ -935,16 +938,17 @@ export default function SharedDrawingEditor(props: Props) {
     }
     if (document.querySelector('.drawing-drafts-dialog')) return;
     if (event.isComposing || event.keyCode === 229) return;
+    if(event.key==='Control'||event.key==='Meta'){setCopyModifier(event.type==='keydown'&&!(event.target instanceof Element&&event.target.closest('input,textarea,select,[contenteditable="true"]')));return;}
     if (event.key === 'Shift') { refreshConstraint?.(event.shiftKey); return; }
     if (event.type === 'keyup') return;
     if (nativeSelectOwnsEscape(event)) return;
+    if(props.blackboard&&propertyMenu()&&event.key==='Escape'){event.preventDefault();event.stopImmediatePropagation();setPropertyMenu(false);svg.focus({preventScroll:true});return;}
     if (event.key === 'Escape') {
       event.preventDefault(); event.stopImmediatePropagation();
       if (cancelGesture) cancelGesture(); else if (!disabled() && textEditor()) confirmText(); else if (!disabled() && edit()) cancelUserEdit(); else if (!historyDisabled()) { if (props.blackboard) void done(); else void closeEditor(); }
       return;
     }
     if (event.target instanceof Element && event.target.closest('input,textarea,select,[contenteditable="true"]')) return;
-    if(props.blackboard&&propertyMenu()&&event.key==='Escape'){event.preventDefault();event.stopImmediatePropagation();setPropertyMenu(false);svg.focus({preventScroll:true});return;}
     if ((event.ctrlKey || event.metaKey) && ['z', 'y'].includes(event.key.toLowerCase())) { event.preventDefault(); event.stopImmediatePropagation(); void history(event.shiftKey || event.key.toLowerCase() === 'y'); return; }
     if (event.repeat) return;
     if (event.key.toLowerCase() === 'p' && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && props.onPin) { event.preventDefault(); event.stopImmediatePropagation(); void pin(); return; }
@@ -953,7 +957,7 @@ export default function SharedDrawingEditor(props: Props) {
     if (event.key === 'Delete' || event.key === 'Backspace') { event.preventDefault(); event.stopImmediatePropagation(); remove(); }
   }
   const resize = () => { if (cancelGesture) diagnoseInput(DrawingInputPhase.canceled, undefined, 2); cancelGesture?.(); drawingInput.reset(); setViewport({ width: innerWidth, height: innerHeight }); };
-  const blur = (event?: FocusEvent) => { if (cancelGesture) diagnoseInput(DrawingInputPhase.canceled, event, 1); cancelGesture?.(); drawingInput.reset(); };
+  const blur = (event?: FocusEvent) => { setCopyModifier(false); if (cancelGesture) diagnoseInput(DrawingInputPhase.canceled, event, 1); cancelGesture?.(); drawingInput.reset(); };
   const identity = createMemo(cacheKey);
   const queueSource = createMemo(strokeSource);
   createEffect(on(queueSource, () => {
@@ -1021,10 +1025,10 @@ export default function SharedDrawingEditor(props: Props) {
     const drawing = liveDrawing(item.id, () => value()!);
     const isPreview = createMemo(() => isDraft() || isEdit() || queuedDrawings().some(value => value.id === item.id) || recoveredDrawings().some(value => value.id === item.id));
     const isSelected = createMemo(() => selectedIds().includes(item.id) && !(props.blackboard && value()?.rich?.kind === 'extracted'&&selectedIds().length===1));
-    const interactive = createMemo(() => (props.blackboard || ['select', 'eraser', 'text'].includes(tool())) && Boolean(value() && props.port.canSelect(drawing)));
+    const interactive = createMemo(() => (props.blackboard || copyModifier() || ['select', 'eraser', 'text'].includes(tool())) && Boolean(value() && props.port.canSelect(drawing)));
     const render = () => <>{props.port.render(drawing, interactive(), isSelected(), isPreview())}</>;
     const storedBounds = createMemo(() => storedPreviewId() === item.id ? storedDraft()?.bounds : undefined);
-    const stored = createMemo(() => storedIndex().has(item.id) ? props.port.renderStored?.(item.id, ['select', 'eraser', 'text'].includes(tool()), isSelected(), storedBounds()) : undefined);
+    const stored = createMemo(() => storedIndex().has(item.id) ? props.port.renderStored?.(item.id, copyModifier() || ['select', 'eraser', 'text'].includes(tool()), isSelected(), storedBounds()) : undefined);
     return <Show when={storedIndex().has(item.id)} fallback={<Show when={value()}>{_ => render()}</Show>}>
       {_ => <Show when={isPreview()} fallback={stored()}>{_ => render()}</Show>}
     </Show>;
