@@ -30,6 +30,7 @@
 .capture-snap-preview{position:absolute;z-index:4;box-sizing:border-box;border:1.5px solid #559aef;pointer-events:none}
 .capture-region-number{position:absolute;right:7px;top:7px;min-width:20px;height:20px;display:grid;place-items:center;padding:0 4px;background:#348bf1;color:#fff;border:1px solid #ffffffa6;border-radius:5px;font-size:10px;line-height:1;pointer-events:none}
 .capture-region.capture-active .capture-region-number{top:auto;bottom:7px}
+.capture-region:hover>.capture-region-number{visibility:hidden}
 .capture-edge{position:absolute;display:block;z-index:2;touch-action:none}
 .capture-edge-n,.capture-edge-s{left:0;width:100%;height:10px;transform:translateY(-50%);cursor:ns-resize}
 .capture-edge-n{top:0}.capture-edge-s{top:100%}

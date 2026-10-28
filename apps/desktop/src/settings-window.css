@@ -3,7 +3,9 @@ html[data-surface="settings"],html[data-surface="settings"] body,html[data-surfa
 .settings-surface { width:100%;height:100%;padding:0;box-sizing:border-box;background:#f5f7fb;color:var(--text); }
 .settings-surface-overlay { position:fixed;inset:0;z-index:100; }
 .settings-surface .modal-backdrop { position:static;width:100%;height:100%;display:block;padding:0;background:transparent;backdrop-filter:none; }
-.settings-surface .settings-dialog,.settings-surface .settings-window-loading { width:100%;height:100%;max-width:none;max-height:none;background:#f5f7fb;border:1px solid var(--line);border-radius:14px;box-shadow:none;overflow:hidden;animation:none; }
+/* Native windows own the outer outline, shadow and corner clipping. Another
+   rounded CSS border inside the opaque client produces a second corner rim. */
+.settings-surface .settings-dialog,.settings-surface .settings-window-loading { width:100%;height:100%;max-width:none;max-height:none;background:#f5f7fb;border:0;border-radius:0;box-shadow:none;overflow:hidden;animation:none; }
 .settings-surface .settings-header { height:54px;padding:0 18px 0 22px;user-select:none; }
 .settings-surface .settings-header h1 { font-size:16px; }
 .settings-surface .settings-header>.icon-button:hover { background:#f5e6e9;color:#b74856; }

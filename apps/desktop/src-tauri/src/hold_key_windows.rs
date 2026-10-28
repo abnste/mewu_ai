@@ -39,8 +39,17 @@ pub fn warning() -> Option<&'static str> {
 }
 const RESET: u32 = WM_APP + 0x504;
 pub fn set_editing(value: bool) {
-    EDITING.store(value, Ordering::Release);
-    post(RESET);
+    change_editing(&EDITING, value, || {
+        post(RESET);
+    });
+}
+fn change_editing(editing: &AtomicBool, value: bool, reset: impl FnOnce()) {
+    // Capture invalidates shortcut editors even when no editor is open. Repeating
+    // that inactive state must not manufacture a release of the hold that is
+    // currently opening the capture, nor reseed away its suppressed Win key.
+    if editing.swap(value, Ordering::AcqRel) != value {
+        reset();
+    }
 }
 fn seed() {
     KEYS.with(|cell| {
@@ -362,6 +371,29 @@ pub fn disable() {
 #[cfg(test)]
 mod modifier_tests {
     use super::*;
+    #[test]
+    fn capture_editor_invalidation_keeps_the_held_gesture_until_physical_release() {
+        let editing = AtomicBool::new(false);
+        let mut keys = crate::hold_sequence::Sequence::default();
+        assert!(keys.key(0x5b, true, 0, 400).pressed);
+        let mut resets = 0;
+        // capture_screen_inner -> invalidate_all -> sync_system_editor(false).
+        // A repeated inactive notification used to reset KEYS and post RELEASE.
+        for _ in 0..3 {
+            change_editing(&editing, false, || {
+                resets += 1;
+                keys = Default::default();
+            });
+        }
+        assert_eq!(resets, 0);
+        assert_eq!(keys.held, Some((0x5b, 0)));
+        let released = keys.key(0x5b, false, 900, 400);
+        assert!(released.consume && released.released && released.replay.is_empty());
+        for value in [true, true, false, false] {
+            change_editing(&editing, value, || resets += 1);
+        }
+        assert_eq!(resets, 2, "only actual editor transitions reset the transport");
+    }
     #[test]
     fn modifier_releases_use_the_same_physical_identity_as_startup_state() {
         for (vk, scan, flags, expected) in [

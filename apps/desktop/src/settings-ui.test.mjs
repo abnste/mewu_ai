@@ -297,6 +297,7 @@ const normalize = value => JSON.parse(JSON.stringify(value));
   assert.equal(overlay.position, 'fixed'); assert.equal(overlay.inset, '0'); assert.equal(overlay['z-index'], '100');
   assert.equal(backdrop.padding, '0'); assert.equal(backdrop.background, 'transparent'); assert.equal(backdrop.height, '100%');
   assert.equal(dialog.width, '100%'); assert.equal(dialog.height, '100%'); assert.equal(dialog['max-height'], 'none'); assert.equal(dialog['box-shadow'], 'none');
+  assert.equal(dialog.border, '0'); assert.equal(dialog['border-radius'], '0');
   checks.push('Shared parsed CSS overrides the old 24px dark modal frame with full opaque viewport, full dialog height and no outer shadow (not a browser pixel test)');
 }
 console.log(JSON.stringify({ passed: checks.length, checks, boundaries: 'Synthetic tests only; no Cargo, browser, native IPC, user data, device or service used.' }, null, 2));
