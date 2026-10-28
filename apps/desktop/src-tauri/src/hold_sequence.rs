@@ -12,7 +12,9 @@ pub struct Decision {
 pub struct Sequence {
     pub held: Option<(u32, u64)>,
     pub forwarded: bool,
+    captured: bool,
     other: std::collections::HashSet<u32>,
+    suppressed_wins: std::collections::HashSet<u32>,
 }
 impl Sequence {
     /// Only physical keyboard keys have matching keyboard-hook releases.
@@ -31,13 +33,16 @@ impl Sequence {
             self.other.insert(key);
         }
     }
-    /// A release may come from another input producer. It can retire prior
-    /// OS-visible state, but cannot release a Win gesture we are suppressing.
+    /// Our own state-only releases are filtered by the transport's exact tag.
+    /// A different input producer's actual key-up must finish this gesture too;
+    /// otherwise its later Esc/letter could replay a Win-down after release.
     pub fn observed_release(&mut self, key: u32) -> bool {
         self.other.remove(&key);
-        if self.forwarded && self.held.is_some_and(|(held, _)| held == key) {
+        self.suppressed_wins.remove(&key);
+        if self.held.is_some_and(|(held, _)| held == key) {
             self.held = None;
             self.forwarded = false;
+            self.captured = false;
             return true;
         }
         false
@@ -46,25 +51,44 @@ impl Sequence {
     /// Reconcile missed releases without consulting the deliberately suppressed
     /// OS state of our own held Win, or manufacturing a new key activation.
     pub fn reconcile_releases(&mut self, is_down: impl Fn(u32) -> bool) -> bool {
-        self.other.retain(|key| is_down(*key));
+        self.other
+            .retain(|key| self.suppressed_wins.contains(key) || is_down(*key));
         if self.forwarded && self.held.is_some_and(|(key, _)| !is_down(key)) {
             self.held = None;
             self.forwarded = false;
+            self.captured = false;
             return true;
         }
         false
     }
     pub fn key(&mut self, key: u32, down: bool, now: u64, threshold: u32) -> Decision {
         let mut decision = Decision::default();
+        if !self.forwarded
+            && self
+                .held
+                .is_some_and(|(_, began)| now.saturating_sub(began) >= u64::from(threshold))
+        {
+            self.captured = true;
+        }
         let win = matches!(key, 0x5b | 0x5c);
         if win {
             if down {
+                if self.suppressed_wins.contains(&key) {
+                    decision.consume = true;
+                    return decision;
+                }
                 if let Some((held, _)) = self.held {
                     if held == key {
                         decision.consume = !self.forwarded;
                         return decision;
                     }
                     self.other.insert(key);
+                    if self.captured && !self.forwarded {
+                        self.suppressed_wins.insert(key);
+                        decision.consume = true;
+                        decision.clear_os_modifier = Some(key);
+                        return decision;
+                    }
                     if !self.forwarded {
                         decision.replay.push((held, false));
                         decision.released = true;
@@ -72,7 +96,11 @@ impl Sequence {
                     }
                     return decision;
                 }
-                self.forwarded = !self.other.is_empty();
+                self.forwarded = self
+                    .other
+                    .iter()
+                    .any(|key| !self.suppressed_wins.contains(key));
+                self.captured = false;
                 self.held = Some((key, now));
                 decision.consume = !self.forwarded;
                 decision.pressed = !self.forwarded;
@@ -84,14 +112,23 @@ impl Sequence {
                     self.held = None;
                     decision.released = true;
                     decision.consume = !self.forwarded;
-                    if !self.forwarded && now.saturating_sub(began) < u64::from(threshold) {
+                    decision.clear_os_modifier = decision.consume.then_some(key);
+                    if !self.forwarded
+                        && !self.captured
+                        && now.saturating_sub(began) < u64::from(threshold)
+                    {
                         decision.replay = vec![(key, false), (key, true)];
                     }
                     self.forwarded = false;
+                    self.captured = false;
                     return decision;
                 }
             }
             self.other.remove(&key);
+            if self.suppressed_wins.remove(&key) {
+                decision.consume = true;
+                decision.clear_os_modifier = Some(key);
+            }
             return decision;
         }
         if down {
@@ -99,7 +136,7 @@ impl Sequence {
         } else {
             self.other.remove(&key);
         }
-        if down && !self.forwarded {
+        if down && !self.forwarded && !self.captured {
             if let Some((held, _)) = self.held {
                 self.forwarded = true;
                 decision.released = true;
@@ -112,6 +149,60 @@ impl Sequence {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn keys_in_an_owned_long_hold_never_replay_win_down_to_the_system() {
+        for win in [0x5b, 0x5c] {
+            for ordinary in [0x1b, 0x0d, 0x08, 0xa0, 0xa2, 0x43, 0x5a, 0x25, 0x70] {
+                let mut sequence = Sequence::default();
+                assert!(sequence.key(win, true, 100, 400).consume);
+                let ordinary_down = sequence.key(ordinary, true, 650, 400);
+                assert!(
+                    ordinary_down.replay.is_empty(),
+                    "Win {win:x} plus key {ordinary:x} manufactured a system modifier"
+                );
+                assert!(!ordinary_down.consume && !ordinary_down.released);
+                assert!(sequence.key(ordinary, false, 700, 400).replay.is_empty());
+                let up = sequence.key(win, false, 850, 400);
+                assert!(up.consume && up.released && up.replay.is_empty());
+                assert!(sequence.held.is_none());
+                assert!(sequence.key(win, true, 1000, 400).pressed);
+            }
+        }
+    }
+    #[test]
+    fn external_key_up_can_finish_the_owned_gesture_without_replaying_a_tap() {
+        let mut sequence = Sequence::default();
+        sequence.key(0x5b, true, 0, 400);
+        assert!(sequence.observed_release(0x5b));
+        assert!(sequence.held.is_none());
+        assert!(sequence.key(0x1b, true, 700, 400).replay.is_empty());
+        sequence.key(0x1b, false, 710, 400);
+        assert!(sequence.key(0x5b, true, 800, 400).pressed);
+    }
+    #[test]
+    fn both_win_keys_remain_balanced_when_the_second_arrives_after_the_hold() {
+        for (first, second) in [(0x5b, 0x5c), (0x5c, 0x5b)] {
+            let mut sequence = Sequence::default();
+            sequence.key(first, true, 0, 400);
+            let other = sequence.key(second, true, 600, 400);
+            assert!(other.consume && other.replay.is_empty());
+            assert_eq!(other.clear_os_modifier, Some(second));
+            assert!(sequence.key(first, false, 800, 400).consume);
+            assert!(sequence.key(second, true, 850, 400).consume);
+            let second_up = sequence.key(second, false, 900, 400);
+            assert!(second_up.consume && second_up.replay.is_empty());
+            assert_eq!(second_up.clear_os_modifier, Some(second));
+            assert!(sequence.key(first, true, 1000, 400).pressed);
+        }
+    }
+    #[test]
+    fn a_claimed_hold_cannot_become_a_short_tap_if_configuration_changes() {
+        let mut sequence = Sequence::default();
+        sequence.key(0x5b, true, 0, 400);
+        assert!(sequence.key(0x1b, true, 500, 400).replay.is_empty());
+        sequence.key(0x1b, false, 550, 400);
+        assert!(sequence.key(0x5b, false, 700, 1000).replay.is_empty());
+    }
     #[test]
     fn startup_mouse_buttons_and_generic_modifier_aliases_cannot_disable_holds_forever() {
         for key in [0x01, 0x02, 0x04, 0x05, 0x06, 0x10, 0x11, 0x12] {
@@ -130,7 +221,6 @@ mod tests {
         s.seed_down(0xa2, 0);
         s.reconcile_releases(|_| false);
         assert!(s.key(0x5b, true, 100, 400).pressed);
-        assert!(!s.observed_release(0x5b));
         assert!(!s.reconcile_releases(|_| false));
         assert!(!s.key(0x5b, true, 450, 400).pressed);
         assert!(s.key(0x5b, false, 500, 400).replay.is_empty());
@@ -173,7 +263,7 @@ mod tests {
         }
     }
     #[test]
-    fn only_the_first_owned_win_down_clears_the_os_modifier_state() {
+    fn owned_win_state_is_cleared_on_initial_down_and_final_up_without_repeated_down() {
         let mut keys = Sequence::default();
         assert_eq!(keys.key(0x5b, true, 0, 400).clear_os_modifier, Some(0x5b));
         assert_eq!(keys.key(0x5b, true, 100, 400).clear_os_modifier, None);
@@ -183,7 +273,16 @@ mod tests {
         assert_eq!(keys.key(0x5b, false, 500, 400).clear_os_modifier, None);
         let mut already_down = Sequence::default();
         already_down.seed_down(0x5b, 0);
-        assert_eq!(already_down.key(0x5b, true, 100, 400).clear_os_modifier, None);
+        assert_eq!(
+            already_down.key(0x5b, true, 100, 400).clear_os_modifier,
+            None
+        );
+        let mut captured = Sequence::default();
+        captured.key(0x5b, true, 0, 400);
+        assert_eq!(
+            captured.key(0x5b, false, 600, 400).clear_os_modifier,
+            Some(0x5b)
+        );
     }
     #[test]
     fn existing_and_new_windows_chords_preserve_modifier_order_and_cancel_hold() {
