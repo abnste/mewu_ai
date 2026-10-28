@@ -791,7 +791,7 @@ async fn prepare_windows(
             let shadow = !shared;
             #[cfg(not(windows))]
             let shadow = true;
-            let toolbar = tauri::WebviewWindowBuilder::new(
+            let builder = tauri::WebviewWindowBuilder::new(
                 &target,
                 LABEL,
                 tauri::WebviewUrl::App("index.html?surface=recording".into()),
@@ -820,8 +820,10 @@ async fn prepare_windows(
                         && url.scheme() == "http"
                         && url.host_str() == Some("127.0.0.1")
                         && url.port() == Some(1420))
-            })
-            .build()
+            });
+            #[cfg(target_os = "macos")]
+            let builder = builder.accept_first_mouse(true);
+            let toolbar = builder.build()
             .map_err(|_| "无法打开录屏控制条")?;
             #[cfg(windows)]
             {

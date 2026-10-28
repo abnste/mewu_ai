@@ -10,6 +10,26 @@ const ast = parse(source, { sourceType: 'module', plugins: ['typescript', 'jsx']
 const component = ast.program.body.find(n => n.type === 'ExportDefaultDeclaration').declaration;
 const methods = component.body.body.filter(n => n.type === 'FunctionDeclaration' && ['copy', 'clipboard', 'keydown'].includes(n.id.name));
 const code = methods.map(n => stripTypeScriptTypes(source.slice(n.start, n.end), { mode: 'transform' })).join('\n');
+const selectionMethod = component.body.body.find(n => n.type === 'FunctionDeclaration' && n.id.name === 'selectedText');
+const selectionCode = stripTypeScriptTypes(source.slice(selectionMethod.start, selectionMethod.end), { mode: 'transform' });
+
+test('actual OCR selection copies its highlighted Unicode range even when WebKit stringifies clipped text as empty', async () => {
+  let selected = [6, 15], copied = 0;
+  const values = [], context = createContext({
+    range: () => selected, layout: () => ({ text: 'MEWU 文字\nTEXT COPY' }),
+    window: { getSelection: () => ({ toString: () => '' }) },
+    disposed: false, copying: false, key: () => 'current', setMenu() {},
+    writeClipboardText: async text => values.push(text),
+    props: { active: true, onCopied: () => copied++, onError: assert.fail },
+  });
+  runInContext(selectionCode + '\n' + code, context);
+  assert.equal(context.selectedText(), '字\nTEXT CO');
+  await context.copy(false);
+  assert.deepEqual(values, ['字\nTEXT CO']); assert.equal(copied, 1);
+  selected = undefined;
+  await context.copy(false);
+  assert.equal(values.length, 1); assert.equal(copied, 1);
+});
 test('actual OCR copy closes only its current document after clipboard success', async () => {
   for (const state of ['current', 'disposed', 'changed', 'inactive', 'failed']) {
     let settle, copied = 0, errors = 0;

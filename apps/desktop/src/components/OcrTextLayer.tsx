@@ -66,7 +66,12 @@ export default function OcrTextLayer(props: Props) {
     pointer = event.pointerId; props.onSelecting?.(true);
     try { surface.setPointerCapture(pointer); move(event); } catch { finish(); }
   }
-  function selectedText() { return ownsSelection() ? window.getSelection()?.toString() ?? '' : ''; }
+  function selectedText() {
+    // The logical OCR range also paints the highlight. WebKit can stringify an
+    // owned DOM selection as empty when its transparent text is clipped.
+    const selected = range();
+    return selected ? layout().text.slice(selected[0], selected[1]) : '';
+  }
   async function copy(all: boolean) {
     const text = all ? layout().text : selectedText(); setMenu(undefined);
     if (!text || copying) return;
