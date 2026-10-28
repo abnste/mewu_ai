@@ -10,10 +10,10 @@ const { VoiceInput, appendDictation, voiceLanguages } = mod.namespace;
 const checks = [], tick = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 const scope = () => ({ sceneId: 'scene', agentId: 'agent', backgroundId: 'background', runId: null, pluginId: 'mewu.voice', revision: 1, contributionId: 'dictation' });
-function fixture() {
+function fixture(recognized) {
   const runs = [], stops = [], changes = [], errors = [], writes = [];
   let active = scope(), text = 'A', composing = false, nonce = 0, pending;
-  const input = new VoiceInput({ current: () => active, run: request => { const wait = deferred(); runs.push({ ...wait, request }); return wait.promise; }, cancel: id => { const wait = deferred(); stops.push({ ...wait, id }); return wait.promise; }, composing: () => composing, draft: () => text, setDraft: value => { text = value; writes.push(value); }, changed: value => { changes.push(value); pending = value; }, error: error => errors.push(String(error)), id: () => `request-${++nonce}` });
+  const input = new VoiceInput({ current: () => active, run: request => { const wait = deferred(); runs.push({ ...wait, request }); return wait.promise; }, cancel: id => { const wait = deferred(); stops.push({ ...wait, id }); return wait.promise; }, composing: () => composing, draft: () => text, setDraft: value => { text = value; writes.push(value); }, changed: value => { changes.push(value); pending = value; }, error: error => errors.push(String(error)), recognized, id: () => `request-${++nonce}` });
   const result = (i, speech = '语音', extra = {}) => ({ requestId: runs[i].request.requestId, sceneId: runs[i].request.sceneId, text: speech, language: 'zh-CN', confidence: 'recognized', ...extra });
   return { input, runs, stops, changes, errors, writes, result, draft: () => text, setDraft: value => text = value, pending: () => pending, scope: value => active = value, composing: value => composing = value };
 }
@@ -24,6 +24,14 @@ for (const text of ['', '  ', 'x\0y', '😀'.repeat(8001), ' '.repeat(8001) + 'x
 assert.equal(appendDictation('', '😀'.repeat(8000)).length, 16000);
 assert.deepEqual(voiceLanguages({ supported: true, languages: [{ tag: 'zh-CN', name: '中文' }] }).map(x => x.value), ['system', 'zh-CN']);
 assert.deepEqual(voiceLanguages({ supported: false, languages: [] }), []);
+{
+  const recognized=[];const f=fixture((text,scope)=>recognized.push({text,scene:scope.sceneId,draft:f.draft(),pending:f.pending()}));
+  f.input.start('system');f.runs[0].resolve(f.result(0,'即时询问'));await tick();
+  assert.deepEqual(recognized,[{text:'A 即时询问',scene:'scene',draft:'A 即时询问',pending:undefined}]);
+  f.input.start('system');f.scope({...scope(),sceneId:'other'});f.runs[1].resolve(f.result(1));await tick();
+  assert.equal(recognized.length,1,'late speech cannot send into a different scene');
+  checks.push('Quick voice callback fires once after draft commit and request release, never for a retired scene');
+}
 checks.push('Bounded Unicode/literal append preserves current text; installed Chinese does not imply English support');
 
 {

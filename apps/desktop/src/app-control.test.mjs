@@ -30,7 +30,7 @@ test('the finite catalog dispatches every supported method through the real acti
   const drawing = { type: 'undo_drawing', sceneId: 'scene', regionId: 'region', backgroundId: 'background', expectedRevision: 3 };
   const selection = { pluginId: 'plugin', revision: 1, contributionId: 'selection', target: { sceneId: 'scene', regionId: 'region', backgroundId: 'background', drawingRevision: 3, x: 1, y: 2, width: 3, height: 4 } };
   const examples = {
-    'capture.open': {},
+    'capture.open': {}, 'capture.quick': {},
     'region.add': { backgroundId: 'background', region: { id: 'new-region', x: 1, y: 2, width: 3, height: 4 } },
     'chat.setDraft': { text: 'hello', expectedDraft: 'draft' },
     'chat.send': { text: 'hello', refs: [{ kind: 'region', id: 'region' }], expectedDraft: 'draft', expectedRefs: [{ kind: 'region', id: 'region' }], regionId: 'region' },

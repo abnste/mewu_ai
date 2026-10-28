@@ -1,58 +1,43 @@
 // SPDX-License-Identifier: MPL-2.0
 #![cfg_attr(not(test), windows_subsystem = "windows")]
-mod agent_loop;
 mod agent_context;
+mod agent_development;
+mod agent_execution;
+mod agent_loop;
 mod agent_session;
+mod agent_tools;
 mod agent_turn_context;
+mod ai;
 mod app_control_host;
 mod app_control_integration;
-mod control_run_stream;
-#[path = "../../../../tools/mewu-cli/cli.rs"]
-mod control_cli;
-mod agent_tools;
-mod agent_development;
-mod agent_system;
-mod toolbar_catalog;
-mod ai;
-mod inline_reasoning;
-mod interaction_performance;
-mod drawing_diagnostics;
-mod run_cancellation;
+mod app_update;
 mod asset_host;
 mod asset_locations;
 mod assets;
+mod blackboard;
 mod capture;
+mod capture_cursor;
+mod capture_delay_work;
 #[cfg(target_os = "macos")]
 mod capture_macos;
 #[cfg(target_os = "macos")]
 mod capture_permission_macos;
-mod blackboard;
-mod extension_objects_host;
-mod extension_surfaces;
-mod extension_surface_window;
-#[cfg(test)]
-mod extension_surface_tests;
-mod optional_capabilities;
-mod optional_authorizations;
-mod capture_cursor;
-mod capture_delay_work;
+mod capture_preferences;
 #[cfg(windows)]
 mod capture_presentation;
-mod capture_preferences;
-mod capture_visibility;
-#[cfg(windows)]
-mod shared_capture_windows;
 mod capture_shortcut;
-mod hooks;
-mod capture_shortcut_host;
 #[cfg(target_os = "linux")]
 mod capture_shortcut_desktop_linux;
+mod capture_shortcut_host;
 #[cfg(target_os = "linux")]
 mod capture_shortcut_portal_linux;
 #[cfg(target_os = "linux")]
 mod capture_shortcut_wayland_host;
+mod capture_visibility;
 #[cfg(target_os = "linux")]
-mod desktop_session_linux;
+mod capture_wayland_host;
+#[cfg(target_os = "linux")]
+mod capture_wayland_portal;
 mod clipboard_video_storage;
 mod code_decode;
 mod code_host;
@@ -60,160 +45,189 @@ mod code_open;
 #[cfg(target_os = "macos")]
 mod code_open_macos;
 mod code_worker;
-#[cfg(target_os = "macos")]
-mod window_witness_macos;
-#[cfg(any(target_os = "linux", test))]
-mod window_witness_linux;
-#[cfg(target_os = "linux")]
-mod capture_wayland_host;
-#[cfg(target_os = "linux")]
-mod capture_wayland_portal;
-#[cfg(target_os = "linux")]
-mod recording_portal_linux;
-#[cfg(target_os = "linux")]
-mod recording_pipewire_linux;
-#[cfg(target_os = "linux")]
-mod recording_tray_linux;
-#[cfg(any(target_os = "linux", test))]
-mod window_actions_linux;
-#[cfg(target_os = "linux")]
-mod gtk_dialog_linux;
-mod screen_entities;
 mod connection_host;
 mod content_server;
+#[path = "../../../../tools/mewu-cli/cli.rs"]
+mod control_cli;
+mod control_run_stream;
 mod credentials;
+#[cfg(target_os = "linux")]
+mod desktop_session_linux;
+mod drawing_diagnostics;
 mod drawing_render;
+mod export_variant_dialog;
+mod extension_agent;
+mod extension_agent_authority;
+mod extension_chat_region;
+#[cfg(windows)]
+mod extension_escape;
+#[cfg(windows)]
+mod extension_focus;
+mod extension_host;
+mod extension_input;
+mod extension_market;
+mod extension_model_lease;
+mod extension_objects_host;
+mod extension_overlay_policy;
+mod extension_process;
+mod extension_project;
+mod extension_project_host;
+mod extension_region;
+#[cfg(target_os = "linux")]
+mod extension_region_a11y_linux;
+#[cfg(any(target_os = "linux", test))]
+mod extension_region_desktop;
+#[cfg(target_os = "linux")]
+mod extension_region_gnome;
+mod extension_store;
+#[cfg(test)]
+mod extension_surface_tests;
+mod extension_surface_window;
+mod extension_surfaces;
+mod extension_tools;
+mod extension_ui;
+mod external_process_env;
 #[cfg(target_os = "macos")]
 mod font_macos;
-mod raster_edit_algorithm;
-mod raster_edit_host;
-mod export_variant_dialog;
 mod formula_layout;
 mod frozen;
+#[cfg(target_os = "linux")]
+mod gtk_dialog_linux;
+mod highlight_foreground;
+mod highlight_preview;
+mod hooks;
 mod host_preferences;
 mod image_export;
 mod image_host;
 mod image_save_dialog;
 mod import_pin_host;
+mod inline_reasoning;
+mod interaction_performance;
 mod journal_commands;
 mod journal_runtime;
 mod journal_tool_host;
 mod legacy_connections;
 mod lifecycle;
-#[cfg(windows)]
-mod windows_identity;
 mod mcp_host;
 mod mcp_runtime;
-mod external_process_env;
 mod memory_export;
 mod memory_host;
 mod memory_runtime;
 mod memory_tools;
 mod mosaic_preview;
-mod highlight_foreground;
-mod highlight_preview;
 mod network_policy;
-mod app_update;
 mod ocr;
 mod ocr_host;
+mod optional_authorizations;
+mod optional_capabilities;
 mod owned_process;
 mod pin_host;
 mod pin_window;
 mod pixel_sampler;
 mod plugin_host;
-mod extension_host;
-mod extension_model_lease;
-mod extension_chat_region;
-mod extension_tools;
-mod extension_market;
-mod extension_project;
-mod extension_project_host;
-mod extension_region;
-#[cfg(any(target_os = "linux", test))]
-mod extension_region_desktop;
-#[cfg(target_os = "linux")]
-mod extension_region_gnome;
-#[cfg(target_os="linux")]
-mod extension_region_a11y_linux;
-mod extension_store;
-mod extension_ui;
-mod extension_overlay_policy;
-#[cfg(windows)]
-mod extension_escape;
-#[cfg(windows)]
-mod extension_focus;
-mod extension_input;
-mod extension_agent;
-mod extension_process;
-mod extension_agent_authority;
 mod plugins;
 mod provider_transport;
-mod sse_budget;
 mod raster_compositor;
+mod raster_edit_algorithm;
+mod raster_edit_host;
 mod recording;
+#[cfg(target_os = "linux")]
+mod recording_aac_linux;
 mod recording_audio;
 mod recording_audio_host;
 mod recording_audio_timeline;
 mod recording_backend;
-mod recording_preferences;
-mod recording_storage;
-mod recording_worker;
-#[cfg(target_os = "linux")]
-mod recording_wayland_worker;
-#[cfg(target_os = "linux")]
-mod recording_wayland_host;
 #[cfg(target_os = "linux")]
 mod recording_codec_linux;
 #[cfg(target_os = "linux")]
-mod recording_system_audio_linux;
-#[cfg(target_os="linux")]
-mod recording_aac_linux;
-#[cfg(target_os="linux")]
 mod recording_mp4_audio_linux;
+#[cfg(target_os = "linux")]
+mod recording_pipewire_linux;
+#[cfg(target_os = "linux")]
+mod recording_portal_linux;
+mod recording_preferences;
+mod recording_storage;
+#[cfg(target_os = "linux")]
+mod recording_system_audio_linux;
+#[cfg(target_os = "linux")]
+mod recording_tray_linux;
+#[cfg(target_os = "linux")]
+mod recording_wayland_host;
+#[cfg(target_os = "linux")]
+mod recording_wayland_worker;
+mod recording_worker;
+mod run_cancellation;
+mod screen_entities;
+#[cfg(windows)]
+mod shared_capture_windows;
+mod sse_budget;
+mod toolbar_catalog;
+#[cfg(any(target_os = "linux", test))]
+mod window_actions_linux;
+#[cfg(any(target_os = "linux", test))]
+mod window_witness_linux;
+#[cfg(target_os = "macos")]
+mod window_witness_macos;
+#[cfg(windows)]
+mod windows_identity;
 
 #[tauri::command]
-async fn recording_wayland_host_prepare(app: AppHandle, window: tauri::WebviewWindow, scene_id: String) -> Result<Option<HostSnapshot>,String> {
-    #[cfg(target_os="linux")]
-    { crate::recording_wayland_host::prepare_wayland_recording(app,window,scene_id).await }
-    #[cfg(not(target_os="linux"))]
-    { let _=(app,window,scene_id); Ok(None) }
+async fn recording_wayland_host_prepare(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    scene_id: String,
+) -> Result<Option<HostSnapshot>, String> {
+    #[cfg(target_os = "linux")]
+    {
+        crate::recording_wayland_host::prepare_wayland_recording(app, window, scene_id).await
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (app, window, scene_id);
+        Ok(None)
+    }
 }
-mod rich_annotation_host;
-mod runtime_platform;
-#[cfg(target_os = "macos")]
-mod video_clip_output_macos;
-mod save_dialog;
-mod scroll_capture;
-mod scroll_host;
-mod snapshot_pin;
 mod application_snapshot;
-mod application_snapshot_worker;
 #[cfg(all(windows, test))]
 mod application_snapshot_probe;
 #[cfg(windows)]
 mod application_snapshot_windows;
+mod application_snapshot_worker;
+mod blackboard_text_host;
+mod data_host;
+mod data_storage;
+#[cfg(windows)]
+mod hold_key_windows;
+mod hold_sequence;
+mod mp3_file;
+mod quick_capture;
+#[cfg(windows)]
+mod quick_images_windows;
+mod rich_annotation_host;
+mod runtime_platform;
+mod save_dialog;
+mod scroll_capture;
+mod scroll_host;
 mod scroll_stitch;
-mod settings_host;
 mod session_title;
+mod settings_host;
 mod settings_info;
 mod settings_window;
+mod snapshot_pin;
 mod speech_backend;
 mod speech_host;
 mod speech_worker;
-mod startup_windows;
 #[cfg(any(target_os = "linux", test))]
 mod startup_webviews;
-mod system_preferences;
-mod system_capture_shortcut;
+mod startup_windows;
 mod storage_cli;
 mod storage_dependencies;
 mod storage_host;
-mod data_host;
-mod data_storage;
-mod blackboard_text_host;
 #[cfg(test)]
 mod storage_integration_tests;
 mod storage_root;
+mod system_capture_shortcut;
+mod system_preferences;
 mod table_clipboard;
 mod table_document;
 mod table_host;
@@ -227,8 +241,9 @@ mod video_annotation_raster;
 mod video_annotation_render;
 mod video_annotation_tool;
 mod video_clip_backend;
-mod mp3_file;
 mod video_clip_contract;
+#[cfg(target_os = "macos")]
+mod video_clip_output_macos;
 mod video_clip_worker;
 mod video_drawing_host;
 mod video_gif_backend;
@@ -281,7 +296,10 @@ fn run_is_authorized(
 ) -> bool {
     engine.runs.contains_key(run_id)
         && engine.store.run_is_active(scene_id, run_id)
-        && engine.agent_runs.get(run_id).is_some_and(|(scene, grant)| scene == scene_id && grant.is_current(engine,scene_id))
+        && engine
+            .agent_runs
+            .get(run_id)
+            .is_some_and(|(scene, grant)| scene == scene_id && grant.is_current(engine, scene_id))
         && plugin_origin.is_none_or(|origin| engine.plugin_runs.get(run_id) == Some(origin))
 }
 pub(crate) struct Host {
@@ -403,11 +421,12 @@ fn publish(app: &AppHandle, snapshot: &Snapshot) -> HostSnapshot {
 fn publish_owned(app: &AppHandle, owned: Snapshot) -> HostSnapshot {
     let mut timing = interaction_performance::Trace::start(interaction_performance::Kind::Publish);
     let snapshot = &owned;
-    hooks::observe_scene(app,&snapshot.active_scene_id);
-    #[cfg(target_os="linux")]
+    hooks::observe_scene(app, &snapshot.active_scene_id);
+    #[cfg(target_os = "linux")]
     recording_wayland_host::reconcile(snapshot);
     app.state::<Host>().session_titles.reconcile(snapshot);
     speech_host::reconcile(app, snapshot);
+    quick_capture::reconcile(app, snapshot);
     code_host::reconcile(app, snapshot);
     video_host::reconcile(app, snapshot);
     image_host::reconcile(app, snapshot);
@@ -574,7 +593,14 @@ async fn apply_scene_command(
         _ => None,
     };
     let snapshot = engine.store.apply(command).map_err(|e| e.to_string())?;
-    if let Some(event)=hook_event { hooks::lifecycle(&app,event,Some(&snapshot.active_scene_id),serde_json::Value::Null); }
+    if let Some(event) = hook_event {
+        hooks::lifecycle(
+            &app,
+            event,
+            Some(&snapshot.active_scene_id),
+            serde_json::Value::Null,
+        );
+    }
     if let Some(agent_id) = disabled_memory {
         host.memory.cancel_where(|task| {
             engine
@@ -609,17 +635,27 @@ async fn add_capture_region(
     if window.label() != "space" {
         return Err("此窗口不能添加截图选区".into());
     }
-    let mut timing = interaction_performance::Trace::start(interaction_performance::Kind::AddRegion);
+    let mut timing =
+        interaction_performance::Trace::start(interaction_performance::Kind::AddRegion);
     let host = app.state::<Host>();
-    let command = SceneCommand::AddRegion { scene_id: scene_id.clone(), region: region.clone() };
+    let command = SceneCommand::AddRegion {
+        scene_id: scene_id.clone(),
+        region: region.clone(),
+    };
     ensure_scene_command_admission(&app, &host, window.label(), &command, None)?;
     let _plugins = host.plugins.lock().map_err(|_| "插件状态不可用")?;
     let mut engine = host.lock()?;
     ensure_scene_command_admission(&app, &host, window.label(), &command, Some(&engine.store))?;
     optional_capabilities::authoring_command(&engine, &command)?;
-    engine.store.active_background_for_preview(&scene_id, &background_id).map_err(|error| error.to_string())?;
+    engine
+        .store
+        .active_background_for_preview(&scene_id, &background_id)
+        .map_err(|error| error.to_string())?;
     timing.mark(interaction_performance::Stage::Validated);
-    let snapshot = engine.store.add_region_with_refs(&scene_id, region, refs).map_err(|error| error.to_string())?;
+    let snapshot = engine
+        .store
+        .add_region_with_refs(&scene_id, region, refs)
+        .map_err(|error| error.to_string())?;
     timing.mark(interaction_performance::Stage::Applied);
     cancel_ended_runs(&mut engine, &snapshot);
     let published = publish_owned(&app, snapshot);
@@ -672,7 +708,8 @@ fn ensure_scene_command_admission(
 ) -> Result<(), String> {
     ensure_scene_command_source(owner, command)?;
     if let Some(store) = store {
-        host.exit.ensure_scene_command_with_store(owner, command, store)?;
+        host.exit
+            .ensure_scene_command_with_store(owner, command, store)?;
     } else {
         host.exit.ensure_scene_command(command)?;
     }
@@ -872,7 +909,7 @@ pub(crate) async fn hide_space_checked(
     app: AppHandle,
     current: impl FnOnce(&Snapshot) -> bool,
 ) -> Result<(), String> {
-    #[cfg(target_os="linux")]
+    #[cfg(target_os = "linux")]
     recording_wayland_host::cancel_pending();
     let host = app.state::<Host>();
     host.exit.ensure_new_operation()?;
@@ -937,7 +974,7 @@ fn hide_frozen_widget(app: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 async fn close_scene_window(app: AppHandle, scene_id: String) -> Result<HostSnapshot, String> {
-    let closed_scene_id=scene_id.clone();
+    let closed_scene_id = scene_id.clone();
     let host = app.state::<Host>();
     let _transition = begin_explicit_space_transition(&app, &host).await?;
     recording::ensure_idle(&app)?;
@@ -961,6 +998,7 @@ async fn close_scene_window(app: AppHandle, scene_id: String) -> Result<HostSnap
         let published = publish_owned(&app, snapshot);
         (was_active, has_frozen, published)
     };
+    quick_capture::scene_closed(&app, &closed_scene_id);
     if was_active {
         if has_frozen && !host.frozen_dismissed.load(Ordering::Acquire) {
             frozen::layout(&app, false, true).await?;
@@ -972,7 +1010,12 @@ async fn close_scene_window(app: AppHandle, scene_id: String) -> Result<HostSnap
         frozen::hide(&app)?;
     }
     // Closing is persisted even if a subsequent native window operation fails.
-    hooks::lifecycle(&app,"scene.closed",Some(&closed_scene_id),serde_json::Value::Null);
+    hooks::lifecycle(
+        &app,
+        "scene.closed",
+        Some(&closed_scene_id),
+        serde_json::Value::Null,
+    );
     Ok(published)
 }
 
@@ -1020,7 +1063,8 @@ impl SpaceTransition {
             if now >= deadline {
                 return Err("请先完成当前采集或空间切换".into());
             }
-            tokio::time::sleep_until((now + std::time::Duration::from_millis(16)).min(deadline)).await;
+            tokio::time::sleep_until((now + std::time::Duration::from_millis(16)).min(deadline))
+                .await;
         }
     }
 }
@@ -1076,8 +1120,11 @@ mod transition_tests {
             let active = Arc::new(AtomicBool::new(false));
             let exit = lifecycle::ExitState::default();
             let restore = SpaceTransition::try_begin(&active).unwrap();
-            let acquire =
-                SpaceTransition::acquire_explicit(&active, &exit, std::time::Duration::from_secs(2));
+            let acquire = SpaceTransition::acquire_explicit(
+                &active,
+                &exit,
+                std::time::Duration::from_secs(2),
+            );
             tokio::pin!(acquire);
             assert!(
                 tokio::time::timeout(std::time::Duration::from_millis(25), &mut acquire,)
@@ -1352,33 +1399,36 @@ async fn hide_for_capture(
 
 #[cfg(target_os = "linux")]
 async fn linux_capture_witnesses(
-    window: &tauri::WebviewWindow, work: &Arc<capture_delay_work::Work>,
+    window: &tauri::WebviewWindow,
+    work: &Arc<capture_delay_work::Work>,
 ) -> Result<Vec<window_witness_linux::CaptureWitness>, String> {
     let (send, receive) = oneshot::channel();
     let target = window.clone();
     let work = work.clone();
-    window.run_on_main_thread(move || {
-        let result = (|| {
-            work.check()?;
-            let app = target.app_handle();
-            app.state::<Host>().exit.ensure_new_operation()?;
-            let mut witnesses = vec![window_witness_linux::capture_witness(&target)?];
-            if let Some(widget) = app.get_webview_window(frozen::LABEL) {
-                witnesses.push(window_witness_linux::capture_witness(&widget)?);
-            }
-            work.check()?;
-            for witness in &witnesses { window_witness_linux::current(witness)?; }
-            Ok(witnesses)
-        })();
-        let _ = send.send(result);
-    }).map_err(|_| "无法检查截图窗口")?;
+    window
+        .run_on_main_thread(move || {
+            let result = (|| {
+                work.check()?;
+                let app = target.app_handle();
+                app.state::<Host>().exit.ensure_new_operation()?;
+                let mut witnesses = vec![window_witness_linux::capture_witness(&target)?];
+                if let Some(widget) = app.get_webview_window(frozen::LABEL) {
+                    witnesses.push(window_witness_linux::capture_witness(&widget)?);
+                }
+                work.check()?;
+                for witness in &witnesses {
+                    window_witness_linux::current(witness)?;
+                }
+                Ok(witnesses)
+            })();
+            let _ = send.send(result);
+        })
+        .map_err(|_| "无法检查截图窗口")?;
     receive.await.map_err(|_| "截图窗口检查中断")?
 }
 
 #[cfg(target_os = "macos")]
-fn mac_capture_hidden(
-    witnesses: &[window_witness_macos::CaptureWitness],
-) -> Result<bool, String> {
+fn mac_capture_hidden(witnesses: &[window_witness_macos::CaptureWitness]) -> Result<bool, String> {
     for witness in witnesses {
         if !window_witness_macos::hidden(witness)? {
             return Ok(false);
@@ -1461,26 +1511,28 @@ async fn expand_capture_space(
                         // needs no resize or shell/fullscreen transition. Repeating
                         // them invalidates the WebView composition surface.
                         #[cfg(windows)]
-                        let already_placed = target
-                            .is_fullscreen()
-                            .map_err(|_| "无法确认全屏状态")?
-                            && !target.is_minimized().map_err(|_| "无法确认空间状态")?
-                            && target.inner_size().map_err(|_| "无法确认空间尺寸")?
-                                == tauri::PhysicalSize::new(
-                                    captured.display_width,
-                                    captured.display_height,
-                                )
-                            && target.outer_position().map_err(|_| "无法确认空间位置")?
-                                == tauri::PhysicalPosition::new(captured.origin_x, captured.origin_y)
-                            && target
-                                .current_monitor()
-                                .map_err(|_| "无法定位显示器")?
-                                .is_some_and(|monitor| {
-                                    monitor.position().x == captured.origin_x
-                                        && monitor.position().y == captured.origin_y
-                                        && monitor.size().width == captured.display_width
-                                        && monitor.size().height == captured.display_height
-                                });
+                        let already_placed =
+                            target.is_fullscreen().map_err(|_| "无法确认全屏状态")?
+                                && !target.is_minimized().map_err(|_| "无法确认空间状态")?
+                                && target.inner_size().map_err(|_| "无法确认空间尺寸")?
+                                    == tauri::PhysicalSize::new(
+                                        captured.display_width,
+                                        captured.display_height,
+                                    )
+                                && target.outer_position().map_err(|_| "无法确认空间位置")?
+                                    == tauri::PhysicalPosition::new(
+                                        captured.origin_x,
+                                        captured.origin_y,
+                                    )
+                                && target
+                                    .current_monitor()
+                                    .map_err(|_| "无法定位显示器")?
+                                    .is_some_and(|monitor| {
+                                        monitor.position().x == captured.origin_x
+                                            && monitor.position().y == captured.origin_y
+                                            && monitor.size().width == captured.display_width
+                                            && monitor.size().height == captured.display_height
+                                    });
                         #[cfg(not(windows))]
                         let already_placed = false;
                         if !already_placed {
@@ -1538,9 +1590,15 @@ async fn expand_capture_space(
                 capture_visibility::apply(&target)?;
                 target.set_always_on_top(true).map_err(|_| "无法置顶空间")?;
                 #[cfg(windows)]
-                shared_capture_windows::author_space_region(&target, shared_capture_windows::Rect::new(
-                    captured.origin_x, captured.origin_y, captured.display_width, captured.display_height,
-                )?)?;
+                shared_capture_windows::author_space_region(
+                    &target,
+                    shared_capture_windows::Rect::new(
+                        captured.origin_x,
+                        captured.origin_y,
+                        captured.display_width,
+                        captured.display_height,
+                    )?,
+                )?;
                 #[cfg(target_os = "linux")]
                 allowed()?;
                 Ok(())
@@ -1566,7 +1624,17 @@ async fn capture_background_ready(
 ) -> Result<bool, String> {
     let timing = interaction_performance::Trace::start(interaction_performance::Kind::CaptureAck);
     tauri::async_runtime::spawn_blocking(move || {
-        capture_background_ready_blocking(app, window, scene_id, background_id, width, height, success, diagnostics, timing)
+        capture_background_ready_blocking(
+            app,
+            window,
+            scene_id,
+            background_id,
+            width,
+            height,
+            success,
+            diagnostics,
+            timing,
+        )
     })
     .await
     .map_err(|_| "截图呈现确认中断".to_string())?
@@ -1585,59 +1653,75 @@ fn capture_background_ready_blocking(
 ) -> Result<bool, String> {
     timing.mark(interaction_performance::Stage::AckWorkerStarted);
     let result = (|| -> Result<bool, String> {
-    if window.label() != "space" {
-        return Err("此窗口不能确认截图呈现".into());
-    }
-    let host = app.state::<Host>();
-    host.exit.ensure_new_operation()?;
-    #[cfg(windows)]
-    {
-        if window.is_visible().map_err(|_| "无法检查截图窗口")? {
-            return Ok(false);
+        if window.label() != "space" {
+            return Err("此窗口不能确认截图呈现".into());
         }
-        timing.mark(interaction_performance::Stage::AckVisibilityChecked);
-        let engine = host.lock()?;
-        timing.mark(interaction_performance::Stage::AckLocked);
-        let asset = engine
-            .store
-            .active_background_for_preview(&scene_id, &background_id)
-            .map_err(|error| error.to_string())?;
-        if asset.width != Some(width) || asset.height != Some(height) {
-            return Ok(false);
+        let host = app.state::<Host>();
+        host.exit.ensure_new_operation()?;
+        #[cfg(windows)]
+        {
+            if window.is_visible().map_err(|_| "无法检查截图窗口")? {
+                return Ok(false);
+            }
+            timing.mark(interaction_performance::Stage::AckVisibilityChecked);
+            let engine = host.lock()?;
+            timing.mark(interaction_performance::Stage::AckLocked);
+            let asset = engine
+                .store
+                .active_background_for_preview(&scene_id, &background_id)
+                .map_err(|error| error.to_string())?;
+            if asset.width != Some(width) || asset.height != Some(height) {
+                return Ok(false);
+            }
+            timing.mark(interaction_performance::Stage::AckIdentityChecked);
+            host.capture_presentation.acknowledge(
+                &capture_presentation::Identity {
+                    scene: scene_id,
+                    background: background_id,
+                    width,
+                    height,
+                },
+                success,
+            )
         }
-        timing.mark(interaction_performance::Stage::AckIdentityChecked);
-        host.capture_presentation.acknowledge(
-            &capture_presentation::Identity {
-                scene: scene_id,
-                background: background_id,
-                width,
-                height,
-            },
-            success,
-        )
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = (scene_id, background_id, width, height, success);
-        Ok(false)
-    }
-
+        #[cfg(not(windows))]
+        {
+            let _ = (scene_id, background_id, width, height, success);
+            Ok(false)
+        }
     })();
     if matches!(result, Ok(true)) {
         timing.mark(interaction_performance::Stage::AckAccepted);
-        if success { interaction_performance::record_frontend(diagnostics); }
+        if success {
+            interaction_performance::record_frontend(diagnostics);
+        }
         timing.finish(success);
-    } else { timing.finish(false); }
+    } else {
+        timing.finish(false);
+    }
     result
 }
 
 #[tauri::command]
 async fn capture_screen(app: AppHandle) -> Result<HostSnapshot, String> {
+    quick_capture::detach(&app);
+    capture_screen_inner(app, None).await
+}
+async fn capture_screen_inner(
+    app: AppHandle,
+    quick_generation: Option<u64>,
+) -> Result<HostSnapshot, String> {
+    let quick_was_visible = app
+        .get_webview_window("space")
+        .is_some_and(|w| w.is_visible().unwrap_or(false));
     let mut timing = interaction_performance::Trace::start(interaction_performance::Kind::Capture);
     recording::ensure_idle(&app)?;
     let host = app.state::<Host>();
     host.exit.ensure_new_operation()?;
     let Some(transition) = SpaceTransition::try_begin(&host.capturing) else {
+        if quick_generation.is_some() {
+            return Err("截图正在切换".into());
+        }
         // Match the original BeginCaptureAsync: ignore another request while
         // capture or a window transition owns the surface. This is not an error
         // or a progress notification, and must not release the current owner.
@@ -1653,6 +1737,9 @@ async fn capture_screen(app: AppHandle) -> Result<HostSnapshot, String> {
         .snapshot_for_capture()
         .map_err(|e| e.to_string())?;
     let Some(work) = host.capture_jobs.begin()? else {
+        if quick_generation.is_some() {
+            return Err("截图正在切换".into());
+        }
         return get_snapshot_blocking(app.clone(), &host);
     };
     let _invoke = work.cancel_on_drop();
@@ -1667,6 +1754,9 @@ async fn capture_screen(app: AppHandle) -> Result<HostSnapshot, String> {
             .map_err(|_| "无法检查屏幕录制权限")??;
         work.check()?;
         host.exit.ensure_new_operation()?;
+        if quick_generation.is_some_and(|generation| !quick_capture::current(generation)) {
+            return Err(capture_delay_work::CANCELED.into());
+        }
     }
     speech_host::cancel_owner(&app, "space");
     capture_shortcut_host::invalidate_all(&app);
@@ -1680,7 +1770,15 @@ async fn capture_screen(app: AppHandle) -> Result<HostSnapshot, String> {
     let window = app.get_webview_window("space").ok_or("窗口不存在")?;
     #[cfg(target_os = "linux")]
     if capture_wayland_host::is_wayland(&window, work.clone(), transition.clone()).await? {
-        return capture_wayland_host::capture(app.clone(), window, work, transition, preferences, timing).await;
+        return capture_wayland_host::capture(
+            app.clone(),
+            window,
+            work,
+            transition,
+            preferences,
+            timing,
+        )
+        .await;
     }
     #[cfg(target_os = "linux")]
     let capture_witnesses = linux_capture_witnesses(&window, &work).await?;
@@ -1693,7 +1791,9 @@ async fn capture_screen(app: AppHandle) -> Result<HostSnapshot, String> {
             capture_work.check()?;
             check_app.state::<Host>().exit.ensure_new_operation()?;
             recording::ensure_idle(&check_app)?;
-            for witness in &witnesses { window_witness_linux::current(witness)?; }
+            for witness in &witnesses {
+                window_witness_linux::current(witness)?;
+            }
             Ok(())
         })
     };
@@ -1710,20 +1810,26 @@ async fn capture_screen(app: AppHandle) -> Result<HostSnapshot, String> {
     {
         let engine = host.lock()?;
         engine.ocr_jobs.cancel_owner("space");
-        let scene_id = &engine.store.active_scene().map_err(|error| error.to_string())?.id;
-        engine
-            .translation_jobs
-            .cancel_scene("space", scene_id);
+        let scene_id = &engine
+            .store
+            .active_scene()
+            .map_err(|error| error.to_string())?
+            .id;
+        engine.translation_jobs.cancel_scene("space", scene_id);
     }
     if let Err(error) = hide_for_capture(
         &window,
         #[cfg(target_os = "linux")]
         capture_check.clone(),
-    ).await {
+    )
+    .await
+    {
         #[cfg(not(target_os = "linux"))]
         show(&app);
         #[cfg(target_os = "linux")]
-        if capture_check().is_ok() { show(&app); }
+        if capture_check().is_ok() {
+            show(&app);
+        }
         return Err(error);
     }
     timing.mark(interaction_performance::Stage::Hidden);
@@ -1739,7 +1845,9 @@ async fn capture_screen(app: AppHandle) -> Result<HostSnapshot, String> {
             let restore = capture_check().is_ok();
             #[cfg(not(target_os = "linux"))]
             let restore = true;
-            if restore { show(&app); }
+            if restore {
+                show(&app);
+            }
         }
         return Err(error);
     }
@@ -1793,8 +1901,12 @@ async fn capture_screen(app: AppHandle) -> Result<HostSnapshot, String> {
             }
             #[cfg(target_os = "linux")]
             return capture::capture_desktop_with_witnesses(
-                &root, capture::CaptureOptions { include_cursor: preferences.include_cursor },
-                &capture_witnesses, native_capture_check,
+                &root,
+                capture::CaptureOptions {
+                    include_cursor: preferences.include_cursor,
+                },
+                &capture_witnesses,
+                native_capture_check,
             );
             #[cfg(not(any(target_os = "macos", target_os = "linux")))]
             capture::capture_desktop_with_options(
@@ -1820,13 +1932,18 @@ async fn capture_screen(app: AppHandle) -> Result<HostSnapshot, String> {
         let mut captured = captured?;
         work.check()?;
         host.exit.ensure_new_operation()?;
+        if quick_generation.is_some_and(|generation| !quick_capture::current(generation)) {
+            return Err(capture_delay_work::CANCELED.into());
+        }
         #[cfg(any(target_os = "macos", target_os = "linux"))]
         capture_check()?;
         expand_capture_space(
-            &window, &captured,
+            &window,
+            &captured,
             #[cfg(target_os = "linux")]
             capture_check.clone(),
-        ).await?;
+        )
+        .await?;
         timing.mark(interaction_performance::Stage::Expanded);
         #[cfg(target_os = "linux")]
         {
@@ -1838,7 +1955,9 @@ async fn capture_screen(app: AppHandle) -> Result<HostSnapshot, String> {
             tauri::async_runtime::spawn_blocking(move || {
                 let _transition = native_transition;
                 native_check()
-            }).await.map_err(|_| "截图状态检查中断")??;
+            })
+            .await
+            .map_err(|_| "截图状态检查中断")??;
         }
         let window_map = captured.window_map.take();
         let asset = Asset {
@@ -1887,12 +2006,14 @@ async fn capture_screen(app: AppHandle) -> Result<HostSnapshot, String> {
             presentation_required = true;
         }
         #[cfg(windows)]
-        let presentation = host.capture_presentation.begin(capture_presentation::Identity {
-            scene: id.clone(),
-            background: asset.id.clone(),
-            width: captured.width,
-            height: captured.height,
-        })?;
+        let presentation = host
+            .capture_presentation
+            .begin(capture_presentation::Identity {
+                scene: id.clone(),
+                background: asset.id.clone(),
+                width: captured.width,
+                height: captured.height,
+            })?;
         let published = publish_owned(&app, snapshot);
         timing.mark(interaction_performance::Stage::Published);
         #[cfg(windows)]
@@ -1920,13 +2041,19 @@ async fn capture_screen(app: AppHandle) -> Result<HostSnapshot, String> {
         let restore = true;
         #[cfg(windows)]
         let restore = !presentation_required || result.is_ok();
-        if restore {
+        if restore
+            && (quick_generation.is_none()
+                || quick_generation.is_some_and(quick_capture::current)
+                || quick_was_visible)
+        {
             show(&app);
             timing.mark(interaction_performance::Stage::Shown);
         }
     }
     timing.finish(result.is_ok());
-    if let Ok(published)=&result { hooks::capture_opened(&app,&published.snapshot); }
+    if let Ok(published) = &result {
+        hooks::capture_opened(&app, &published.snapshot);
+    }
     result
 }
 
@@ -1934,7 +2061,12 @@ async fn capture_screen(app: AppHandle) -> Result<HostSnapshot, String> {
 async fn read_artifact(app: AppHandle, asset_id: String) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let host = app.state::<Host>();
-        let asset = host.lock()?.store.asset(&asset_id).cloned().ok_or("素材不存在")?;
+        let asset = host
+            .lock()?
+            .store
+            .asset(&asset_id)
+            .cloned()
+            .ok_or("素材不存在")?;
         if !matches!(
             asset.kind,
             AssetKind::Html | AssetKind::Svg | AssetKind::Text
@@ -2036,16 +2168,42 @@ async fn send_message(
     let prepared_region = {
         let engine = host.lock()?;
         let scene = engine.store.scene(&scene_id).map_err(|e| e.to_string())?;
-        extension_chat_region::PreparedChatRegion::capture(scene, &engine.store.snapshot().active_scene_id, region_id.as_deref())?
+        extension_chat_region::PreparedChatRegion::capture(
+            scene,
+            &engine.store.snapshot().active_scene_id,
+            region_id.as_deref(),
+        )?
     };
-    let hook_draft={let engine=host.lock()?;let scene=engine.store.scene(&scene_id).map_err(|e|e.to_string())?;ai::validate_scene_history_for_send(scene)?;scene.draft.clone()};
-    let hook_parent=hooks::take_prompt_origin(&app,automation_origin.as_deref(),&scene_id,&hook_draft)?;
-    let hook_context=hooks::before_prompt(&app,&scene_id,&hook_draft,hook_parent).await?;
-    if host.lock()?.store.scene(&scene_id).map_err(|e|e.to_string())?.draft!=hook_draft{return Err("会话内容已变化，请重新发送".into())}
-    if let Some(provider)=extension_host::external_agent_for_scene(&app,&scene_id)?{
-        return extension_agent::start_external_run(app.clone(),scene_id,provider,prepared_region,hook_context).await;
+    let hook_draft = {
+        let engine = host.lock()?;
+        let scene = engine.store.scene(&scene_id).map_err(|e| e.to_string())?;
+        ai::validate_scene_history_for_send(scene)?;
+        scene.draft.clone()
+    };
+    let hook_parent =
+        hooks::take_prompt_origin(&app, automation_origin.as_deref(), &scene_id, &hook_draft)?;
+    let hook_context = hooks::before_prompt(&app, &scene_id, &hook_draft, hook_parent).await?;
+    if host
+        .lock()?
+        .store
+        .scene(&scene_id)
+        .map_err(|e| e.to_string())?
+        .draft
+        != hook_draft
+    {
+        return Err("会话内容已变化，请重新发送".into());
     }
-    let extension_catalog = extension_host::tool_catalog(&app,&scene_id)?;
+    if let Some(provider) = extension_host::external_agent_for_scene(&app, &scene_id)? {
+        return extension_agent::start_external_run(
+            app.clone(),
+            scene_id,
+            provider,
+            prepared_region,
+            hook_context,
+        )
+        .await;
+    }
+    let extension_catalog = extension_host::tool_catalog(&app, &scene_id)?;
     if let Some(grant) = &visual_annotations {
         host.plugins
             .lock()
@@ -2099,7 +2257,8 @@ async fn send_message(
                 scene.clone(),
                 host.assets.clone(),
                 visual_annotations.is_some(),
-                app.state::<pin_host::PinRegistry>().hidden_image_assets(&scene)?,
+                app.state::<pin_host::PinRegistry>()
+                    .hidden_image_assets(&scene)?,
             )
             .await?,
         )
@@ -2144,14 +2303,23 @@ async fn send_message(
             .map(Arc::new)
         })
         .transpose()?;
-    let visual = visual_annotations.as_ref().filter(|_| !video_requested)
-        .zip(attachments.as_ref().and_then(|prepared| prepared.visual_input()))
+    let visual = visual_annotations
+        .as_ref()
+        .filter(|_| !video_requested)
+        .zip(
+            attachments
+                .as_ref()
+                .and_then(|prepared| prepared.visual_input()),
+        )
         .map(|(grant, input)| {
             // Engine -> Registry. A pin published during preparation cannot
             // leave an invisible writable target in this new run.
             let registry = app.state::<pin_host::PinRegistry>();
             let pins = registry.state.lock().map_err(|_| "贴图状态不可用")?;
-            pins.ensure_visual_targets_visible(engine.store.scene(&scene_id).map_err(|e| e.to_string())?, input)?;
+            pins.ensure_visual_targets_visible(
+                engine.store.scene(&scene_id).map_err(|e| e.to_string())?,
+                input,
+            )?;
             let input = input.clone();
             visual_annotation_host::RunScope::new(scene_id.clone(), grant.clone(), input)
                 .map(|scope| Arc::new(scope.for_connection(&preflight.connection)))
@@ -2191,12 +2359,26 @@ async fn send_message(
             .begin_run_with_memory(&scene_id, memory_grant)
             .map_err(|e| e.to_string())?
     };
-    if !hook_context.instructions.is_empty(){context.agent.instructions.push_str("\n\n");context.agent.instructions.push_str(&hook_context.instructions.join("\n\n"));}
-    hooks::begin_run(&app,&scene_id,&context.run_id,&hook_context);
-    let chat_region = prepared_region.map(|prepared| prepared.bind(context.run_id.clone(), Arc::new(AtomicBool::new(false))));
+    if !hook_context.instructions.is_empty() {
+        context.agent.instructions.push_str("\n\n");
+        context
+            .agent
+            .instructions
+            .push_str(&hook_context.instructions.join("\n\n"));
+    }
+    hooks::begin_run(&app, &scene_id, &context.run_id, &hook_context);
+    let chat_region = prepared_region
+        .map(|prepared| prepared.bind(context.run_id.clone(), Arc::new(AtomicBool::new(false))));
     start_run_with_extensions(
-        &app, &mut engine, context, preflight, attachments, visual, video,
-        extension_catalog, chat_region,
+        &app,
+        &mut engine,
+        context,
+        preflight,
+        attachments,
+        visual,
+        video,
+        extension_catalog,
+        chat_region,
     )
 }
 
@@ -2216,27 +2398,49 @@ pub(crate) struct RunPreparation {
     connection: ConnectionProfile,
 }
 
-pub(crate) async fn resolve_run_credentials(root: PathBuf, prepared: RunPreparation) -> Result<RunPreflight, String> {
+pub(crate) async fn resolve_run_credentials(
+    root: PathBuf,
+    prepared: RunPreparation,
+) -> Result<RunPreflight, String> {
     tauri::async_runtime::spawn_blocking(move || resolve_run_credentials_blocking(&root, prepared))
-        .await.map_err(|_| "读取连接凭据中断".to_string())?
+        .await
+        .map_err(|_| "读取连接凭据中断".to_string())?
 }
 
-pub(crate) fn resolve_run_credentials_blocking(root: &std::path::Path, prepared: RunPreparation) -> Result<RunPreflight, String> {
-    resolve_run_credentials_with(prepared, |connection| credentials::read_profile(root, connection))
+pub(crate) fn resolve_run_credentials_blocking(
+    root: &std::path::Path,
+    prepared: RunPreparation,
+) -> Result<RunPreflight, String> {
+    resolve_run_credentials_with(prepared, |connection| {
+        credentials::read_profile(root, connection)
+    })
 }
 
-fn resolve_run_credentials_with(prepared: RunPreparation, read: impl FnOnce(&ConnectionProfile) -> Result<Zeroizing<String>, String>) -> Result<RunPreflight, String> {
-    let RunPreparation { agent_grant, transport, connection } = prepared;
+fn resolve_run_credentials_with(
+    prepared: RunPreparation,
+    read: impl FnOnce(&ConnectionProfile) -> Result<Zeroizing<String>, String>,
+) -> Result<RunPreflight, String> {
+    let RunPreparation {
+        agent_grant,
+        transport,
+        connection,
+    } = prepared;
     let key = if connection.advanced.auth_mode == mewu_core::ConnectionAuthMode::None {
         Zeroizing::new(String::new())
     } else {
         read(&connection)?
     };
-    if connection.advanced.auth_mode != mewu_core::ConnectionAuthMode::None && key.trim().is_empty() {
+    if connection.advanced.auth_mode != mewu_core::ConnectionAuthMode::None && key.trim().is_empty()
+    {
         return Err("请先填写连接密钥".into());
     }
     credentials::validate_key(&key)?;
-    Ok(RunPreflight { agent_grant, transport, key, connection })
+    Ok(RunPreflight {
+        agent_grant,
+        transport,
+        key,
+        connection,
+    })
 }
 
 #[cfg(test)]
@@ -2244,26 +2448,44 @@ mod run_preflight_tests {
     use super::*;
     fn prepared(auth: mewu_core::ConnectionAuthMode) -> RunPreparation {
         let connection = ConnectionProfile {
-            id: uuid::Uuid::new_v4().to_string(), name: "synthetic".into(),
-            provider_id: "openai-compatible".into(), base_url: "https://example.invalid/v1".into(),
-            model: "synthetic".into(), has_key: true, credential_id: None, revision: 1,
-            advanced: mewu_core::ConnectionAdvanced { auth_mode: auth, ..Default::default() },
+            id: uuid::Uuid::new_v4().to_string(),
+            name: "synthetic".into(),
+            provider_id: "openai-compatible".into(),
+            base_url: "https://example.invalid/v1".into(),
+            model: "synthetic".into(),
+            has_key: true,
+            credential_id: None,
+            revision: 1,
+            advanced: mewu_core::ConnectionAdvanced {
+                auth_mode: auth,
+                ..Default::default()
+            },
         };
         RunPreparation {
-            transport: connection_host::transport_for(&connection).unwrap(), connection,
-            agent_grant: optional_capabilities::Authorizations::test_defaults().require_agent().unwrap(),
+            transport: connection_host::transport_for(&connection).unwrap(),
+            connection,
+            agent_grant: optional_capabilities::Authorizations::test_defaults()
+                .require_agent()
+                .unwrap(),
         }
     }
     #[test]
     fn native_preflight_no_auth_never_opens_keyring() {
-        let result = resolve_run_credentials_with(prepared(mewu_core::ConnectionAuthMode::None), |_| panic!("keyring read"));
+        let result =
+            resolve_run_credentials_with(prepared(mewu_core::ConnectionAuthMode::None), |_| {
+                panic!("keyring read")
+            });
         assert!(result.unwrap().key.is_empty());
     }
     #[test]
     fn native_preflight_credentials_remain_required_and_invalid_values_are_not_disclosed() {
         use mewu_core::ConnectionAuthMode::Bearer;
         for value in ["", " ", "private-secret\nheader"] {
-            let error = resolve_run_credentials_with(prepared(Bearer), |_| Ok(Zeroizing::new(value.into()))).err().unwrap();
+            let error = resolve_run_credentials_with(prepared(Bearer), |_| {
+                Ok(Zeroizing::new(value.into()))
+            })
+            .err()
+            .unwrap();
             assert!(!error.contains("private-secret"));
         }
         let candidate = prepared(Bearer);
@@ -2271,7 +2493,8 @@ mod run_preflight_tests {
         let result = resolve_run_credentials_with(candidate, |observed| {
             assert_eq!(observed, &profile);
             Ok(Zeroizing::new("synthetic-key".into()))
-        }).unwrap();
+        })
+        .unwrap();
         assert_eq!(result.connection, profile);
         assert_eq!(result.key.as_str(), "synthetic-key");
     }
@@ -2281,7 +2504,8 @@ pub(crate) async fn prepare_scene_attachments(
     scene: mewu_core::Scene,
     root: PathBuf,
 ) -> Result<ai::PreparedAttachments, String> {
-    prepare_scene_attachments_with_visual(scene, root, false, std::collections::HashSet::new()).await
+    prepare_scene_attachments_with_visual(scene, root, false, std::collections::HashSet::new())
+        .await
 }
 
 async fn prepare_scene_attachments_with_visual(
@@ -2374,7 +2598,17 @@ fn start_run_with_annotations(
     visual: Option<Arc<visual_annotation_host::RunScope>>,
     video: Option<Arc<video_annotation_tool::RunScope>>,
 ) -> Result<HostSnapshot, String> {
-    start_run_with_extensions(app, engine, context, preflight, attachments, visual, video, vec![], None)
+    start_run_with_extensions(
+        app,
+        engine,
+        context,
+        preflight,
+        attachments,
+        visual,
+        video,
+        vec![],
+        None,
+    )
 }
 fn start_run_with_extensions(
     app: &AppHandle,
@@ -2410,21 +2644,29 @@ fn start_run_with_extensions(
         connection,
     } = preflight;
     let key = Arc::new(key);
-    engine.agent_runs.insert(context.run_id.clone(), (scene_id.clone(), agent_grant.into()));
+    engine.agent_runs.insert(
+        context.run_id.clone(),
+        (scene_id.clone(), agent_grant.into()),
+    );
     let title_transport = transport.clone();
-    let run_tools =
-        match mcp_host::RunTools::with_extensions(&context, visual.clone(), video.clone(), extension_catalog, chat_region.clone()) {
-            Ok(tools) => Arc::new(tools.with_model_key(&context, key.clone())),
-            Err(error) => {
-                engine.plugin_runs.remove(&context.run_id);
-                engine.agent_runs.remove(&context.run_id);
-                let snapshot = engine
-                    .store
-                    .fail_run(&scene_id, &context.run_id, error)
-                    .map_err(|e| e.to_string())?;
-                return Ok(publish(app, &snapshot));
-            }
-        };
+    let run_tools = match mcp_host::RunTools::with_extensions(
+        &context,
+        visual.clone(),
+        video.clone(),
+        extension_catalog,
+        chat_region.clone(),
+    ) {
+        Ok(tools) => Arc::new(tools.with_model_key(&context, key.clone())),
+        Err(error) => {
+            engine.plugin_runs.remove(&context.run_id);
+            engine.agent_runs.remove(&context.run_id);
+            let snapshot = engine
+                .store
+                .fail_run(&scene_id, &context.run_id, error)
+                .map_err(|e| e.to_string())?;
+            return Ok(publish(app, &snapshot));
+        }
+    };
     let snapshot = engine.store.snapshot();
     let plugin_origin = engine.plugin_runs.get(&context.run_id).cloned();
     let bindings = run_tools
@@ -2483,7 +2725,8 @@ fn start_run_with_extensions(
             let work = async {
                 let extension_agent_id = context.agent.id.clone();
                 let extension_memory_enabled = context.agent.memory_enabled;
-                let extension_custom_memory = extension_memory_enabled && extension_host::has_binding(&app2, &extension_agent_id, "memory")?;
+                let extension_custom_memory = extension_memory_enabled
+                    && extension_host::has_binding(&app2, &extension_agent_id, "memory")?;
                 let app3 = app2.clone();
                 let origin3 = plugin_origin.clone();
                 let visual3 = visual.clone();
@@ -2495,110 +2738,123 @@ fn start_run_with_extensions(
                     .find(|message| message.role == mewu_core::MessageRole::User)
                     .map(|message| message.text.clone())
                     .unwrap_or_default();
-                let context =
-                    tauri::async_runtime::spawn_blocking(move || -> Result<_, String> {
-                        let host = app3.state::<Host>();
-                        let mut context = context;
-                        if extension_custom_memory {
-                            context.memories.clear();
-                            context.memory_authority = None;
-                            context.agent.memory_enabled = false;
-                        }
-                        let snapshot = if let Some(scope) = &video3 {
-                            let plugins = host.plugins.lock().map_err(|_| "插件状态不可用")?;
-                            plugins.store.visual_annotations(&scope.origin.grant)?;
-                            let engine = host.lock()?;
-                            host.exit.ensure_background()?;
-                            scope.check_engine(&engine, &context.scene_id, &context.run_id)?;
-                            engine.store.snapshot()
-                        } else {
-                            let attachments = ai::persist_attachments(
-                                attachments.ok_or("本次运行缺少输入")?,
-                                &host.assets,
-                            )?;
-                            let attachment_paths: Vec<_> =
-                                attachments.iter().map(|a| a.path.clone()).collect();
-                            let attached = (|| -> Result<Snapshot, String> {
-                                let _plugins = visual3
-                                    .as_ref()
-                                    .map(|scope| {
-                                        let plugins =
-                                            host.plugins.lock().map_err(|_| "插件状态不可用")?;
-                                        plugins.store.visual_annotations(&scope.origin.grant)?;
-                                        Ok::<_, String>(plugins)
-                                    })
-                                    .transpose()?;
-                                let mut engine = host.lock()?;
-                                if !run_is_authorized(
-                                    &engine,
-                                    &context.scene_id,
-                                    &context.run_id,
-                                    origin3.as_ref(),
-                                ) {
-                                    return Err("运行已取消、结束或插件已停用".into());
-                                }
-                                if let Some(scope) = &visual3 {
-                                    if !scope.live(&engine, &context.scene_id, &context.run_id) {
-                                        return Err("原位作答已取消或插件已停用".into());
-                                    }
-                                    engine
-                                        .store
-                                        .attach_run_visual_assets(
-                                            &context.scene_id,
-                                            &context.run_id,
-                                            attachments,
-                                            scope.origin.grant.clone(),
-                                            scope.input.clone(),
-                                        )
-                                        .map_err(|e| e.to_string())
-                                } else {
-                                    engine
-                                        .store
-                                        .attach_run_assets(
-                                            &context.scene_id,
-                                            &context.run_id,
-                                            attachments,
-                                        )
-                                        .map_err(|e| e.to_string())
-                                }
-                            })();
-                            match attached {
-                                Ok(snapshot) => snapshot,
-                                Err(error) => {
-                                    // These exact UUID paths were created by this request and never attached.
-                                    for path in attachment_paths {
-                                        let path = std::path::Path::new(&path);
-                                        if path.parent() == Some(host.assets.as_path()) {
-                                            let _ = std::fs::remove_file(path);
-                                        }
-                                    }
-                                    return Err(error);
-                                }
+                let context = tauri::async_runtime::spawn_blocking(move || -> Result<_, String> {
+                    let host = app3.state::<Host>();
+                    let mut context = context;
+                    if extension_custom_memory {
+                        context.memories.clear();
+                        context.memory_authority = None;
+                        context.agent.memory_enabled = false;
+                    }
+                    let snapshot = if let Some(scope) = &video3 {
+                        let plugins = host.plugins.lock().map_err(|_| "插件状态不可用")?;
+                        plugins.store.visual_annotations(&scope.origin.grant)?;
+                        let engine = host.lock()?;
+                        host.exit.ensure_background()?;
+                        scope.check_engine(&engine, &context.scene_id, &context.run_id)?;
+                        engine.store.snapshot()
+                    } else {
+                        let attachments = ai::persist_attachments(
+                            attachments.ok_or("本次运行缺少输入")?,
+                            &host.assets,
+                        )?;
+                        let attachment_paths: Vec<_> =
+                            attachments.iter().map(|a| a.path.clone()).collect();
+                        let attached = (|| -> Result<Snapshot, String> {
+                            let _plugins = visual3
+                                .as_ref()
+                                .map(|scope| {
+                                    let plugins =
+                                        host.plugins.lock().map_err(|_| "插件状态不可用")?;
+                                    plugins.store.visual_annotations(&scope.origin.grant)?;
+                                    Ok::<_, String>(plugins)
+                                })
+                                .transpose()?;
+                            let mut engine = host.lock()?;
+                            if !run_is_authorized(
+                                &engine,
+                                &context.scene_id,
+                                &context.run_id,
+                                origin3.as_ref(),
+                            ) {
+                                return Err("运行已取消、结束或插件已停用".into());
                             }
-                        };
-                        let current_scene = snapshot
-                            .scenes
-                            .iter()
-                            .find(|s| s.id == context.scene_id)
-                            .ok_or("场景不存在")?;
-                        context.messages = current_scene
-                            .messages
-                            .iter()
-                            .skip(current_scene.conversation_start.unwrap_or(0))
-                            .cloned()
-                            .collect();
-                        Ok(context)
-                    })
-                    .await
-                    .map_err(|_| "准备消息失败")??;
-                let prepared_context = agent_context::prepare(&app2, &context, &transport, &key, &run_tools.definitions(), &journal).await?;
+                            if let Some(scope) = &visual3 {
+                                if !scope.live(&engine, &context.scene_id, &context.run_id) {
+                                    return Err("原位作答已取消或插件已停用".into());
+                                }
+                                engine
+                                    .store
+                                    .attach_run_visual_assets(
+                                        &context.scene_id,
+                                        &context.run_id,
+                                        attachments,
+                                        scope.origin.grant.clone(),
+                                        scope.input.clone(),
+                                    )
+                                    .map_err(|e| e.to_string())
+                            } else {
+                                engine
+                                    .store
+                                    .attach_run_assets(
+                                        &context.scene_id,
+                                        &context.run_id,
+                                        attachments,
+                                    )
+                                    .map_err(|e| e.to_string())
+                            }
+                        })();
+                        match attached {
+                            Ok(snapshot) => snapshot,
+                            Err(error) => {
+                                // These exact UUID paths were created by this request and never attached.
+                                for path in attachment_paths {
+                                    let path = std::path::Path::new(&path);
+                                    if path.parent() == Some(host.assets.as_path()) {
+                                        let _ = std::fs::remove_file(path);
+                                    }
+                                }
+                                return Err(error);
+                            }
+                        }
+                    };
+                    let current_scene = snapshot
+                        .scenes
+                        .iter()
+                        .find(|s| s.id == context.scene_id)
+                        .ok_or("场景不存在")?;
+                    context.messages = current_scene
+                        .messages
+                        .iter()
+                        .skip(current_scene.conversation_start.unwrap_or(0))
+                        .cloned()
+                        .collect();
+                    Ok(context)
+                })
+                .await
+                .map_err(|_| "准备消息失败")??;
+                let prepared_context = agent_context::prepare(
+                    &app2,
+                    &context,
+                    &transport,
+                    &key,
+                    &run_tools.definitions(),
+                    &journal,
+                )
+                .await?;
                 let app3 = app2.clone();
                 let tools3 = run_tools.clone();
                 let visual3 = visual.clone();
                 let video3 = video.clone();
-                let mut body = tauri::async_runtime::spawn_blocking(move || -> Result<_, String> {
+                let mut body =
+                    tauri::async_runtime::spawn_blocking(move || -> Result<_, String> {
                         let host = app3.state::<Host>();
-                        let mut body = ai::request_body_with_context(&context, &host.assets, prepared_context.first_kept, prepared_context.summary.as_deref())?;
+                        let mut body = ai::request_body_with_context(
+                            &context,
+                            &host.assets,
+                            prepared_context.first_kept,
+                            prepared_context.summary.as_deref(),
+                        )?;
                         if let Some(scope) = &visual3 {
                             ai::bind_visual_request_targets(&mut body, &scope.input)?;
                         }
@@ -2608,17 +2864,37 @@ fn start_run_with_extensions(
                         connection_host::apply_parameters(&mut body, &context.connection_profile)?;
                         agent_tools::augment_request(&mut body, &context)?;
                         agent_development::augment_request(&mut body, &host)?;
+                        prepared_context.augment(&mut body)?;
                         tools3.augment_request(&mut body)?;
                         Ok(body)
                     })
                     .await
                     .map_err(|_| "准备消息失败")??;
-                let extension_filtered_tools: Vec<_> = run_tools.definitions().into_iter().filter(|tool| {
-                    !extension_custom_memory || tool.pointer("/function/name").and_then(serde_json::Value::as_str).is_none_or(|name| agent_tools::label(name).is_none())
-                }).collect();
-                if extension_custom_memory { body["tools"] = serde_json::Value::Array(extension_filtered_tools.clone()); }
+                let extension_filtered_tools: Vec<_> = run_tools
+                    .definitions()
+                    .into_iter()
+                    .filter(|tool| {
+                        !extension_custom_memory
+                            || tool
+                                .pointer("/function/name")
+                                .and_then(serde_json::Value::as_str)
+                                .is_none_or(|name| agent_tools::label(name).is_none())
+                    })
+                    .collect();
+                if extension_custom_memory {
+                    body["tools"] = serde_json::Value::Array(extension_filtered_tools.clone());
+                }
                 if extension_memory_enabled {
-                    if extension_agent::recall(&app2, &extension_agent_id, &scene_id, &memory_query, &mut body).await.is_err() {
+                    if extension_agent::recall(
+                        &app2,
+                        &extension_agent_id,
+                        &scene_id,
+                        &memory_query,
+                        &mut body,
+                    )
+                    .await
+                    .is_err()
+                    {
                         journal.active()?;
                         extension_agent::append_memory_unavailable(&mut body)?;
                     }
@@ -2670,7 +2946,15 @@ fn start_run_with_extensions(
                     },
                 ).await?;
                 if extension_memory_enabled {
-                    if let Err(error) = extension_agent::retain(&app2, &extension_agent_id, &scene_id, &memory_query, &answer).await {
+                    if let Err(error) = extension_agent::retain(
+                        &app2,
+                        &extension_agent_id,
+                        &scene_id,
+                        &memory_query,
+                        &answer,
+                    )
+                    .await
+                    {
                         eprintln!("[extension-memory] retain failed: {error}");
                     }
                 }
@@ -2679,7 +2963,7 @@ fn start_run_with_extensions(
             tokio::select! {biased; _=receiver=>None, _=extension_chat_region::canceled(&app2, chat_region.as_ref())=>None, result=work=>Some(result)}
         };
         let Some(result) = result else {
-            hooks::forget_run(&app2,&run_id);
+            hooks::forget_run(&app2, &run_id);
             run_tools.abort().await;
             let host = app2.state::<Host>();
             if let Ok(mut engine) = host.lock() {
@@ -2688,7 +2972,9 @@ fn start_run_with_extensions(
                 engine.agent_runs.remove(&run_id);
                 engine.visual_runs.remove(&run_id);
                 if engine.store.run_is_active(&scene_id, &run_id) {
-                    if let Ok(snapshot) = engine.store.cancel_run(&scene_id) { publish(&app2, &snapshot); }
+                    if let Ok(snapshot) = engine.store.cancel_run(&scene_id) {
+                        publish(&app2, &snapshot);
+                    }
                 }
             }
             return;
@@ -2722,13 +3008,18 @@ fn start_run_with_extensions(
                 Err(error) => engine.store.fail_run(&scene_id, &run_id, error),
             };
             if let Ok(snapshot) = updated {
-                hooks::run_finished(&app2,&scene_id,&run_id,&snapshot);
+                hooks::run_finished(&app2, &scene_id, &run_id, &snapshot);
                 publish(&app2, &snapshot);
                 host.memory.wake.notify_one();
                 if plugin_origin.is_none() {
                     session_title::schedule(
-                        &app2, &mut engine, &scene_id, &run_id,
-                        connection, title_transport, key,
+                        &app2,
+                        &mut engine,
+                        &scene_id,
+                        &run_id,
+                        connection,
+                        title_transport,
+                        key,
                     );
                 }
             }
@@ -2765,7 +3056,10 @@ mod run_authorization_tests {
         let (sender, _receiver) = oneshot::channel();
         engine.runs.insert(run.run_id.clone(), sender);
         let agent_grant = engine.optional.require_agent().unwrap();
-        engine.agent_runs.insert(run.run_id.clone(), (scene_id.clone(), agent_grant.clone().into()));
+        engine.agent_runs.insert(
+            run.run_id.clone(),
+            (scene_id.clone(), agent_grant.clone().into()),
+        );
         let origin = (scene_id.clone(), "example.table".to_owned(), 3);
         engine
             .plugin_runs
@@ -2790,8 +3084,16 @@ mod run_authorization_tests {
         ));
         // Restore Agent admission so the next assertion isolates the workflow
         // origin revision rather than failing only on the missing Agent grant.
-        engine.agent_runs.insert(run.run_id.clone(), (scene_id.clone(), agent_grant.clone().into()));
-        assert!(!run_is_authorized(&engine, &scene_id, &run.run_id, Some(&origin)));
+        engine.agent_runs.insert(
+            run.run_id.clone(),
+            (scene_id.clone(), agent_grant.clone().into()),
+        );
+        assert!(!run_is_authorized(
+            &engine,
+            &scene_id,
+            &run.run_id,
+            Some(&origin)
+        ));
         engine
             .plugin_runs
             .insert(run.run_id.clone(), (scene_id.clone(), origin.1.clone(), 4));
@@ -2806,23 +3108,35 @@ mod run_authorization_tests {
         assert!(run_is_authorized(&engine, &scene_id, &run.run_id, None));
         engine.agent_runs.remove(&run.run_id);
         assert!(!run_is_authorized(&engine, &scene_id, &run.run_id, None));
-        engine.agent_runs.insert(run.run_id.clone(), (scene_id.clone(), agent_grant.clone().into()));
+        engine.agent_runs.insert(
+            run.run_id.clone(),
+            (scene_id.clone(), agent_grant.clone().into()),
+        );
         engine.optional.agent = None;
         assert!(!run_is_authorized(&engine, &scene_id, &run.run_id, None));
-        let revised_agent = optional_capabilities::Grant { revision: agent_grant.revision + 1, ..agent_grant.clone() };
+        let revised_agent = optional_capabilities::Grant {
+            revision: agent_grant.revision + 1,
+            ..agent_grant.clone()
+        };
         engine.optional.agent = Some(revised_agent);
         assert!(!run_is_authorized(&engine, &scene_id, &run.run_id, None));
         // Disable then re-enable under a newer revision cannot revive the old
         // admitted run even though the plugin and contribution IDs are equal.
         engine.optional.agent = None;
         assert!(!run_is_authorized(&engine, &scene_id, &run.run_id, None));
-        let reenabling_agent = optional_capabilities::Grant { revision: agent_grant.revision + 2, ..agent_grant };
+        let reenabling_agent = optional_capabilities::Grant {
+            revision: agent_grant.revision + 2,
+            ..agent_grant
+        };
         engine.optional.agent = Some(reenabling_agent.clone());
         assert!(!run_is_authorized(&engine, &scene_id, &run.run_id, None));
         assert!(engine.store.run_is_active(&scene_id, &run.run_id));
         // Give this synthetic run fresh matching admission to isolate the
         // remaining transport and durable-run cancellation fences below.
-        engine.agent_runs.insert(run.run_id.clone(), (scene_id.clone(), reenabling_agent.into()));
+        engine.agent_runs.insert(
+            run.run_id.clone(),
+            (scene_id.clone(), reenabling_agent.into()),
+        );
         assert!(run_is_authorized(&engine, &scene_id, &run.run_id, None));
         // External memory has no workflow origin. Removing the transport
         // registration still fences late effects if durable cancellation fails.
@@ -2865,12 +3179,11 @@ fn cancel_run_blocking(
     expected_run_id: String,
 ) -> Result<HostSnapshot, String> {
     let mut engine = host.lock()?;
-    let snapshot = run_cancellation::cancel_current(
-        &mut engine.store,
-        &scene_id,
-        &expected_run_id,
-        || video_host::cancel_scene(&app, &scene_id),
-    ).map_err(|error| error.to_string())?;
+    let snapshot =
+        run_cancellation::cancel_current(&mut engine.store, &scene_id, &expected_run_id, || {
+            video_host::cancel_scene(&app, &scene_id)
+        })
+        .map_err(|error| error.to_string())?;
     engine.plugin_runs.remove(&expected_run_id);
     engine.agent_runs.remove(&expected_run_id);
     engine.visual_runs.remove(&expected_run_id);
@@ -2945,7 +3258,11 @@ fn main() {
     // A code extension has only piped protocol access; do not open user storage,
     // register the single-instance plugin, or create any WebView in this child.
     if std::env::args().nth(1).as_deref() == Some("--extension-worker") {
-        std::process::exit(if mewu_extension::run_stdio_worker().is_ok() { 0 } else { 1 });
+        std::process::exit(if mewu_extension::run_stdio_worker().is_ok() {
+            0
+        } else {
+            1
+        });
     }
     let measurement_enabled = std::env::args().nth(1).as_deref() == Some("--measure-interactions");
     interaction_performance::initialize(measurement_enabled);
@@ -3007,7 +3324,10 @@ fn main() {
     #[cfg(windows)]
     if let Err(error) = windows_identity::initialize() {
         // A Shell grouping failure must not prevent capture or normal startup.
-        eprintln!("[windows-identity] initialization failed: 0x{:08X}", error.code().0 as u32);
+        eprintln!(
+            "[windows-identity] initialization failed: 0x{:08X}",
+            error.code().0 as u32
+        );
     }
     #[cfg(target_os = "linux")]
     desktop_session_linux::initialize();
@@ -3075,7 +3395,8 @@ fn main() {
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, shortcut, event| {
-                    if hooks::route_shortcut(app, shortcut, event.state() == ShortcutState::Pressed) {
+                    if hooks::route_shortcut(app, shortcut, event.state() == ShortcutState::Pressed)
+                    {
                         return;
                     }
                 })
@@ -3083,7 +3404,9 @@ fn main() {
         )
         .on_permission_request(|_, _| tauri::webview::PermissionResponse::Deny)
         .on_page_load(|webview, payload| {
-            if webview.label() == "space" && matches!(payload.event(), tauri::webview::PageLoadEvent::Started) {
+            if webview.label() == "space"
+                && matches!(payload.event(), tauri::webview::PageLoadEvent::Started)
+            {
                 app_control_host::renderer_invalidated(webview.app_handle());
             }
             #[cfg(target_os = "linux")]
@@ -3253,6 +3576,11 @@ fn main() {
                 optional_capabilities::get_optional_capabilities,
                 cancel_run,
                 hide_space,
+                quick_capture::quick_interaction_state,
+                quick_capture::quick_interaction_open,
+                quick_capture::quick_interaction_recognize,
+                quick_capture::quick_interaction_images,
+                quick_capture::quick_interaction_touch,
                 open_settings,
                 rich_annotation_host::get_drawing_layout_preview,
                 video_annotation_host::get_video_annotation_plan,
@@ -3303,16 +3631,25 @@ fn main() {
             }
         })
         .on_window_event(|window, event| {
-            if let Some(id)=extension_surface_window::id(window.label()){
-                if let tauri::WindowEvent::CloseRequested{api,..}=event{
+            if let Some(id) = extension_surface_window::id(window.label()) {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
-                    extension_surface_window::request_close(window.app_handle(),id);
+                    extension_surface_window::request_close(window.app_handle(), id);
                 }
-                if matches!(event,tauri::WindowEvent::Destroyed){extension_surface_window::destroyed(window.app_handle(),id);}
+                if matches!(event, tauri::WindowEvent::Destroyed) {
+                    extension_surface_window::destroyed(window.app_handle(), id);
+                }
                 return;
             }
-            if matches!(window.label(),"space"|"settings") && matches!(event,tauri::WindowEvent::Destroyed){
-                if let Some(extensions)=window.app_handle().try_state::<extension_host::ExtensionHost>(){extensions.window_destroyed(window.label());}
+            if matches!(window.label(), "space" | "settings")
+                && matches!(event, tauri::WindowEvent::Destroyed)
+            {
+                if let Some(extensions) = window
+                    .app_handle()
+                    .try_state::<extension_host::ExtensionHost>()
+                {
+                    extensions.window_destroyed(window.label());
+                }
             }
             if window.label() == "space" && matches!(event, tauri::WindowEvent::Destroyed) {
                 app_control_host::renderer_invalidated(window.app_handle());
@@ -3347,11 +3684,20 @@ fn main() {
             }
             let wayland_shortcut = {
                 #[cfg(target_os = "linux")]
-                { window.app_handle().try_state::<capture_shortcut_portal_linux::Runtime>().is_some() }
+                {
+                    window
+                        .app_handle()
+                        .try_state::<capture_shortcut_portal_linux::Runtime>()
+                        .is_some()
+                }
                 #[cfg(not(target_os = "linux"))]
-                { false }
+                {
+                    false
+                }
             };
-            if window.label() == "settings" && capture_shortcut_host::owner_event_invalidates(&event, wayland_shortcut) {
+            if window.label() == "settings"
+                && capture_shortcut_host::owner_event_invalidates(&event, wayland_shortcut)
+            {
                 capture_shortcut_host::invalidate_owner(window.app_handle(), window.label());
             }
             if pin_host::is_pin_label(window.label()) {
@@ -3498,15 +3844,23 @@ fn main() {
                 }
                 Err(_) => true,
             };
-            let existing_blackboard = store.scenes().iter().any(optional_capabilities::is_blackboard);
-            let plugins = plugin_host::PluginRuntime::open_with_blackboard(&root, existing_blackboard)?;
-            let optional = optional_capabilities::Authorizations::from_snapshot(&plugins.store.snapshot()?);
+            let existing_blackboard = store
+                .scenes()
+                .iter()
+                .any(optional_capabilities::is_blackboard);
+            let plugins =
+                plugin_host::PluginRuntime::open_with_blackboard(&root, existing_blackboard)?;
+            let optional =
+                optional_capabilities::Authorizations::from_snapshot(&plugins.store.snapshot()?);
             let system_preferences = system_preferences::SystemPreferencesActor::open(&root);
             network_policy::initialize(system_preferences.view());
             if let Ok(value) = system_preferences.view() {
                 startup_windows::initialize(&value);
             }
-            app.manage(extension_host::ExtensionHost::open(&root, storage_lock.clone())?);
+            app.manage(extension_host::ExtensionHost::open(
+                &root,
+                storage_lock.clone(),
+            )?);
             app.manage(Host {
                 storage,
                 _storage_lock: storage_lock,
@@ -3580,7 +3934,12 @@ fn main() {
             recording_audio_host::initialize(app.handle(), &app.state::<Host>().root)?;
             {
                 let host = app.state::<Host>();
-                let snapshot = host.plugins.lock().map_err(|_| "插件状态不可用")?.store.snapshot()?;
+                let snapshot = host
+                    .plugins
+                    .lock()
+                    .map_err(|_| "插件状态不可用")?
+                    .store
+                    .snapshot()?;
                 hooks::Runtime::initialize(app.handle(), &host.root, &snapshot)?;
             }
             use tauri::{
@@ -3641,7 +4000,7 @@ fn main() {
                     #[cfg(target_os = "linux")]
                     "capture" => start_capture(app),
                     #[cfg(target_os = "linux")]
-                    id if recording_tray_linux::handle(app, id) => {},
+                    id if recording_tray_linux::handle(app, id) => {}
                     "settings" => {
                         let app = app.clone();
                         tauri::async_runtime::spawn(async move {
@@ -3669,7 +4028,13 @@ fn main() {
             }
             app.state::<Host>().storage.mark_ready();
             {
-                let snapshot = app.state::<Host>().plugins.lock().map_err(|_| "插件状态不可用")?.store.snapshot()?;
+                let snapshot = app
+                    .state::<Host>()
+                    .plugins
+                    .lock()
+                    .map_err(|_| "插件状态不可用")?
+                    .store
+                    .snapshot()?;
                 app_control_host::reconcile(app.handle(), &snapshot);
             }
             let content_app = app.handle().clone();
@@ -3709,11 +4074,16 @@ fn main() {
     }
     if let Ok(application) = application {
         application.run(move |app, event| {
-            if matches!(event,tauri::RunEvent::Ready){hooks::ready(app);}
+            if matches!(event, tauri::RunEvent::Ready) {
+                hooks::ready(app);
+            }
             #[cfg(target_os = "linux")]
             if matches!(event, tauri::RunEvent::Ready) {
-                if startup_capture.take_ready(&event) { start_capture(app); }
-                else if startup_capture.restore_at_ready() { capture_shortcut_portal_linux::restore_after_ready(app); }
+                if startup_capture.take_ready(&event) {
+                    start_capture(app);
+                } else if startup_capture.restore_at_ready() {
+                    capture_shortcut_portal_linux::restore_after_ready(app);
+                }
             }
             if let tauri::RunEvent::ExitRequested { api, .. } = event {
                 if app

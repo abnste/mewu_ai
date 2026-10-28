@@ -32,7 +32,7 @@ pub(super) fn live(state: &Snapshot, r: &j::Record) -> Result<()> {
     }
     Ok(())
 }
-fn owned(
+pub(super) fn owned(
     db: &SqlConnection,
     state: &Snapshot,
     scene_id: &str,
@@ -406,7 +406,7 @@ fn runs_page(
 }
 
 impl Store {
-    fn journal_read<T>(
+    pub(super) fn journal_read<T>(
         &self,
         read: impl FnOnce(&SqlConnection, &Snapshot) -> Result<T>,
     ) -> Result<T> {
@@ -523,7 +523,9 @@ impl Store {
         run: &str,
         input: ModelDispatchInput,
     ) -> Result<DispatchLease> {
-        if input.round >= crate::MAX_AGENT_MODEL_ROUNDS || !j::hash_valid(&input.projected_request_sha256) {
+        if input.round >= crate::MAX_AGENT_MODEL_ROUNDS
+            || !j::hash_valid(&input.projected_request_sha256)
+        {
             return Err(j::bad("模型请求记录无效"));
         }
         self.journal_transaction(|db, state| {
@@ -810,14 +812,20 @@ impl Store {
         let (r, e, _) = j::leased(&self.db, lease)?;
         live(&self.state, &r)?;
         if e.summary.phase != ReceiptPhase::Prepared
-            || !matches!(&e.binding, Some(ToolBinding::Local { name }) if name == "memory_save") {
+            || !matches!(&e.binding, Some(ToolBinding::Local { name }) if name == "memory_save")
+        {
             return Err(CoreError::JournalConflict);
         }
         local_memory_scope(&self.state, &r.scene, &r.id)?;
         let scene = scope(&self.state, &r)?;
-        let current = scene.messages.iter().position(|message| message.id == r.user)
+        let current = scene
+            .messages
+            .iter()
+            .position(|message| message.id == r.user)
             .ok_or(CoreError::JournalConflict)?;
-        let visible = scene.messages.get(scene.conversation_start.unwrap_or(0)..=current)
+        let visible = scene
+            .messages
+            .get(scene.conversation_start.unwrap_or(0)..=current)
             .ok_or(CoreError::JournalConflict)?;
         Ok(crate::local_memory_sources(visible)
             .find(|message| message.id == source_message_id)
@@ -871,14 +879,19 @@ impl Store {
             if let Some(quote) = quote {
                 let quote = quote.trim();
                 let scene = scope(state, &r)?;
-                let current = scene.messages.iter().position(|m| m.id == r.user)
+                let current = scene
+                    .messages
+                    .iter()
+                    .position(|m| m.id == r.user)
                     .ok_or(CoreError::JournalConflict)?;
                 let start = scene.conversation_start.unwrap_or(0);
-                let visible = scene.messages.get(start..=current)
+                let visible = scene
+                    .messages
+                    .get(start..=current)
                     .ok_or(CoreError::JournalConflict)?;
                 let source_id = source_message_id.as_deref().unwrap_or(&r.user);
-                let evidence = crate::local_memory_sources(visible)
-                    .find(|message| message.id == source_id);
+                let evidence =
+                    crate::local_memory_sources(visible).find(|message| message.id == source_id);
                 if quote.is_empty()
                     || quote.chars().count() > 500
                     || !evidence.is_some_and(|message| message.text.contains(quote))
@@ -1068,7 +1081,13 @@ fn tool_label(binding: &ToolBinding) -> String {
                 "skill_read" => "读取技能",
                 "plugin_project" => "制作插件",
                 "session_read" => "读取会话",
-                "system_info" => "读取系统信息",
+                "bash" | "powershell" => "执行命令",
+                "read" => "读取文件",
+                "write" => "写入文件",
+                "edit" => "编辑文件",
+                "ls" => "浏览目录",
+                "find" => "查找文件",
+                "grep" => "搜索文件内容",
                 _ => name,
             }
         }
@@ -1120,6 +1139,15 @@ fn respond(
         _ => return Err(j::bad("工具结果超出记录预算")),
     }
     j::validate_references(&result.references)?;
+    if let Some(body) = &result.model_visible_json {
+        if body.len() > 128 * 1024 {
+            return Err(j::bad("工具上下文超出预算"));
+        }
+        db.execute(
+            "UPDATE agent_tool_transcripts SET result_json=?1 WHERE event_id=?2",
+            params![body, e.summary.id],
+        )?;
+    }
     e.summary.phase = ReceiptPhase::Responded;
     e.summary.finished_at = Some(j::stamp().max(e.summary.started_at));
     e.summary.returned_error = result.returned_error;
@@ -1526,26 +1554,75 @@ mod runtime_budget_tests {
     use super::*;
     #[test]
     fn execution_and_loop_share_the_same_tool_budget() {
-        let mut store=Store::open_in_memory().unwrap();let scene=store.snapshot().active_scene_id;
-        store.apply(SceneCommand::SetDraft{scene_id:scene.clone(),draft:"bounded workflow".into()}).unwrap();
-        let run=store.begin_run(&scene).unwrap().run_id;
-        let mut executed=0;
+        let mut store = Store::open_in_memory().unwrap();
+        let scene = store.snapshot().active_scene_id;
+        store
+            .apply(SceneCommand::SetDraft {
+                scene_id: scene.clone(),
+                draft: "bounded workflow".into(),
+            })
+            .unwrap();
+        let run = store.begin_run(&scene).unwrap().run_id;
+        let mut executed = 0;
         for round in 0..5 {
-            let model=store.begin_model_request(&scene,&run,ModelDispatchInput{round,projected_request_sha256:"a".repeat(64)}).unwrap();
-            let count=if round==4{1}else{8};
-            let calls=(0..count).map(|n|ProposedTool{call_id:format!("r{round}-{n}"),binding:ToolBinding::Local{name:"session_read".into()},arguments_wire_sha256:"b".repeat(64)}).collect();
-            let turn=store.record_model_turn(&model,CompletePublicTurn{text:String::new(),calls}).unwrap();
+            let model = store
+                .begin_model_request(
+                    &scene,
+                    &run,
+                    ModelDispatchInput {
+                        round,
+                        projected_request_sha256: "a".repeat(64),
+                    },
+                )
+                .unwrap();
+            let count = if round == 4 { 1 } else { 8 };
+            let calls = (0..count)
+                .map(|n| ProposedTool {
+                    call_id: format!("r{round}-{n}"),
+                    binding: ToolBinding::Local {
+                        name: "session_read".into(),
+                    },
+                    arguments_wire_sha256: "b".repeat(64),
+                })
+                .collect();
+            let turn = store
+                .record_model_turn(
+                    &model,
+                    CompletePublicTurn {
+                        text: String::new(),
+                        calls,
+                    },
+                )
+                .unwrap();
             for tool in turn.tools {
-                if executed==MAX_AGENT_TOOL_CALLS {
+                if executed == MAX_AGENT_TOOL_CALLS {
                     assert!(store.mark_tool_dispatched(&tool.lease).is_err());
-                    store.record_tool_not_sent(&tool.lease,NotSentReason::BudgetExhausted).unwrap();
+                    store
+                        .record_tool_not_sent(&tool.lease, NotSentReason::BudgetExhausted)
+                        .unwrap();
                 } else {
                     store.mark_tool_dispatched(&tool.lease).unwrap();
-                    store.record_tool_response(&tool.lease,ObservedToolResult{response_kind:ToolResponseKind::LocalRead,returned_error:Some(false),observed_encoding:"json".into(),observed_bytes:2,observed_sha256:"c".repeat(64),retained_content:JournalContent::Json{value:serde_json::json!({})},references:vec![],model_visible_json:Some("{}".into())}).unwrap();
-                    executed+=1;
+                    store
+                        .record_tool_response(
+                            &tool.lease,
+                            ObservedToolResult {
+                                response_kind: ToolResponseKind::LocalRead,
+                                returned_error: Some(false),
+                                observed_encoding: "json".into(),
+                                observed_bytes: 2,
+                                observed_sha256: "c".repeat(64),
+                                retained_content: JournalContent::Json {
+                                    value: serde_json::json!({}),
+                                },
+                                references: vec![],
+                                model_visible_json: Some("{}".into()),
+                            },
+                        )
+                        .unwrap();
+                    executed += 1;
                 }
             }
         }
-        assert_eq!(executed,MAX_AGENT_TOOL_CALLS);
+        assert_eq!(executed, MAX_AGENT_TOOL_CALLS);
     }
 }

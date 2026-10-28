@@ -7,10 +7,10 @@ particularly its [compaction](https://github.com/earendil-works/pi/blob/v1.4.0/p
 and [agent loop](https://github.com/earendil-works/pi/blob/v1.4.0/packages/agent/src/agent-loop.ts).
 It is an independent implementation, not a bundled Pi engine.
 
-This is a partial context/runtime implementation, not Pi capability parity. The
-native Agent currently lacks general shell/file tools and complete cross-run
-tool-context reconstruction. See the [source-based capability audit](agent-capability-audit.md)
-for the verified gaps and the required behavioral acceptance gates.
+The native engine now exposes general local execution and file tools, with
+durable public tool records in conversation context. This remains an independent
+implementation, not Pi capability parity; the [baseline audit](agent-capability-audit.md)
+distinguishes the original gaps from subsequent implementation and acceptance.
 
 ## Ownership
 
@@ -68,7 +68,7 @@ the Agent profile, connection identity/revision, conversation start and exact
 message prefix hash. Changing the role, model/policy or source messages prevents
 reuse. Restart can reuse a matching checkpoint without another summary request.
 Deleting/resetting a conversation removes its checkpoint. The storage migration
-adds a table without rewriting the old scene payload. Storage generation 12 is
+adds a table without rewriting the old scene payload. Storage generation 13 is
 fenced against older writers; keep a cold backup when testing a downgrade.
 
 During tool execution, compaction happens only after the entire batch has settled.
@@ -86,13 +86,30 @@ use their existing bounded tools and permission checks.
 
 ## Memory and failures
 
-`system_info` reads the actual host OS version and architecture. Windows uses
-the native version registry (including the build revision), macOS uses Apple's
-SystemVersion plist, and Linux returns bounded os-release data without executing
-it. This is a read-only native tool; it does not create a plugin or infer the OS
-from browser identity. It is available independently of long-term memory.
-Plugin authoring is for explicitly requested plugin work, not a workaround for
-ordinary questions or unavailable host permissions.
+`read`, `write`, `edit`, `ls`, `find` and `grep` operate on actual local files.
+`bash` is discovered from the installed shell; Windows additionally discovers
+PowerShell, including the system fallback. The engine does not bundle Node or
+Git Bash. A scene has a default workspace under the selected data root; explicit
+paths and command `cwd` use the normal OS account. A working directory is **not**
+a filesystem sandbox. Skills return their base directory so their scripts can
+use these tools. Querying the OS uses an ordinary command, not `system_info` or a
+generated plugin. Plugin authoring is reserved for requested plugin work.
+
+Shell invocation owns its Job/process group, stdout and stderr. Nonzero exit,
+argument errors and timeouts become model-visible results. Revocation is checked
+while waiting to start and while running; cancellation stops the process tree.
+The model receives a bounded UTF-8 tail; the output file retains up to 32 MiB.
+Detached background services are not yet a managed Agent capability: a child
+holding pipes after its shell exits is stopped and reported, never called a
+success. A separate two-command pool prevents persistent MCP connections from
+starving shell execution. Both pools participate in shutdown and storage drains.
+
+Schema 13 binds original tool arguments to their receipt hash and stores public
+model-visible results, including failures. Subsequent context includes recent
+observations in its token accounting and compaction. `session_read` can page the
+complete record with `runId`, `toolEntryId` and `offset`. This is historical
+evidence, not a replayable provider continuation. Missing legacy records remain
+explicit; private reasoning is not retained in this table.
 
 Native, visual, extension and MCP tools share the same model catalog limits.
 Native definitions are included before preflight validates the catalog, rather
@@ -131,6 +148,7 @@ without migrating the live database, summarize a synthetic task and verify an
 exact task identifier in a resumed answer. It sends no real conversation,
 attachment or tool action and is excluded from normal offline test runs.
 
-This change does not install Pi's shell/file tools or make arbitrary third-party
-skills executable. Such capabilities still require an explicit host/tool contract
-and the normal permissions; a skill document alone grants none.
+General execution lives in the `mewu-agent-tools` crate and the native owned
+process adapter. It does not grant extensions additional permissions or turn a
+skill document into executable authority. Engine replacement remains a plugin
+contract; native tool implementation is independent of plugin-authoring logic.

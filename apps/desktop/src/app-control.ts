@@ -8,6 +8,7 @@ export type AppControlSceneCommand = Extract<SceneCommand, {
 }>;
 export interface AppControlParameters {
   'capture.open': Record<string, never>;
+  'capture.quick': Record<string, never>;
   'region.add': { region: Region; backgroundId: string };
   'chat.setDraft': { text: string; expectedDraft?: string };
   'chat.send': { text?: string; refs?: Reference[]; expectedDraft?: string; expectedRefs?: Reference[]; regionId?: string; automationOrigin?: string };
@@ -51,7 +52,7 @@ export interface AppControlActions {
   current(): AppControlCurrent | undefined;
   flush(): Promise<void>;
   claim?(request: Readonly<AppControlRequest>): Promise<void>;
-  execute<M extends AppControlMethod>(method: M, params: AppControlParameters[M]): Promise<unknown>;
+  execute<M extends AppControlMethod>(method: M, params: AppControlParameters[M],proof?:Readonly<Pick<AppControlRequest,'id'|'nonce'>>): Promise<unknown>;
   complete(payload: AppControlCompletion): Promise<void>;
 }
 export interface AppControlOptions {
@@ -67,7 +68,7 @@ export class AppControlError extends Error {
 const MAX_BYTES = 1024 * 1024, MAX_DEPTH = 32, MAX_NODES = 100_000;
 const requestFields = new Set(['id', 'nonce', 'sceneId', 'revision', 'method', 'params']);
 const fields: Record<AppControlMethod, readonly string[]> = {
-  'capture.open': [], 'region.add': ['region', 'backgroundId'],
+  'capture.open': [], 'capture.quick': [], 'region.add': ['region', 'backgroundId'],
   'chat.setDraft': ['text', 'expectedDraft'], 'chat.send': ['text', 'refs', 'expectedDraft', 'expectedRefs', 'regionId', 'automationOrigin'],
   'chat.cancel': ['expectedRunId'], 'blackboard.create': [], 'blackboard.finish': [], 'blackboard.open': ['itemId'],
   'drawing.apply': ['command'], 'recording.start': ['regionId', 'backgroundId'], 'recording.control': ['id', 'action'],
@@ -298,7 +299,7 @@ export function createAppControl(actions: AppControlActions, options: AppControl
       if (before.sceneId !== claimed.sceneId) conflict();
       if (request.revision !== undefined && beforeClaim.revision !== claimed.revision) conflict();
       started = true;
-      const result = await actions.execute(request.method, request.params);
+      const result = await actions.execute(request.method, request.params,{id:request.id,nonce:request.nonce});
       // A dispatched operation may have committed. Never label its timeout or
       // disappearing renderer as NotSent, and never automatically replay it.
       completion = { id: request.id, nonce: request.nonce, result: result ?? null };

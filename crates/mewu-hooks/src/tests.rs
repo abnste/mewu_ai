@@ -37,6 +37,49 @@ fn shortcut_rule() -> Rule {
     }];
     r
 }
+
+#[test]
+fn hold_is_a_normal_editable_rule_with_exact_event_and_exclusive_key_ownership() {
+    let mut value = shortcut_rule();
+    value.trigger = Trigger::Hold {
+        accelerator: "Super".into(),
+        milliseconds: 400,
+    };
+    value.actions = vec![Action::App {
+        method: "capture.quick".into(),
+        params: json!({}),
+    }];
+    value.validate().unwrap();
+    assert_eq!(value.trigger.category(), "shortcut");
+    let mut event = Event::new("shortcut.held");
+    event.payload = json!({"ruleId":value.id,"ruleRevision":value.revision});
+    assert!(value.matches(&event).unwrap());
+    event.name = "shortcut.pressed".into();
+    assert!(!value.matches(&event).unwrap());
+    event.name = "shortcut.held".into();
+    event.payload["ruleRevision"] = json!(value.revision + 1);
+    assert!(!value.matches(&event).unwrap());
+    let mut invalid = value.clone();
+    invalid.trigger = Trigger::Hold {
+        accelerator: "Super".into(),
+        milliseconds: 10,
+    };
+    assert!(invalid.validate().is_err());
+    let mut store = Store::memory().unwrap();
+    let snapshot = store.save(0, value).unwrap();
+    let saved = snapshot.rules[0].clone();
+    let mut collision = saved.clone();
+    collision.id = uuid::Uuid::new_v4().to_string();
+    collision.revision = 0;
+    collision.trigger = Trigger::Shortcut {
+        accelerator: "Super".into(),
+    };
+    assert!(store.save(snapshot.revision, collision).is_err());
+    store
+        .remove(snapshot.revision, &saved.id, saved.revision)
+        .unwrap();
+    assert!(store.rules().unwrap().is_empty());
+}
 #[test]
 fn imported_bindings_are_ordinary_editable_rules_and_never_return_after_deletion() {
     let p = std::env::temp_dir().join(format!("mewu-hooks-import-{}.db", uuid::Uuid::new_v4()));
@@ -96,6 +139,42 @@ fn import_rule_failure_rolls_back_the_whole_batch_and_its_marker() {
     assert!(!s.imported("source").unwrap());
     assert!(s.rules().unwrap().is_empty());
     assert_eq!(s.revision().unwrap(), 0);
+}
+
+#[test]
+fn imported_hold_and_press_bindings_never_displace_an_existing_owner() {
+    for existing_hold in [false, true] {
+        let mut store = Store::memory().unwrap();
+        let mut existing = shortcut_rule();
+        existing.trigger = if existing_hold {
+            Trigger::Hold {
+                accelerator: "F8".into(),
+                milliseconds: 400,
+            }
+        } else {
+            Trigger::Shortcut {
+                accelerator: "F8".into(),
+            }
+        };
+        let saved = store.save(0, existing).unwrap();
+        let mut imported = shortcut_rule();
+        imported.trigger = if existing_hold {
+            Trigger::Shortcut {
+                accelerator: "F8".into(),
+            }
+        } else {
+            Trigger::Hold {
+                accelerator: "F8".into(),
+                milliseconds: 400,
+            }
+        };
+        assert!(store
+            .import_once("hold.default.v1", vec![imported])
+            .unwrap());
+        assert_eq!(store.snapshot().unwrap().rules, saved.rules);
+        assert_eq!(store.revision().unwrap(), saved.revision);
+        assert!(store.imported("hold.default.v1").unwrap());
+    }
 }
 #[test]
 fn retirement_only_removes_unchanged_rows_and_never_repeats() {

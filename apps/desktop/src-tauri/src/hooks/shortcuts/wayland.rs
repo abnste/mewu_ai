@@ -82,7 +82,7 @@ pub(super) fn restart(r: Arc<Shared>) {
             if let Ok(mut statuses) = r.shortcuts.status.lock() {
                 for rule in rules
                     .into_iter()
-                    .filter(|r| r.enabled && matches!(r.trigger, Trigger::Shortcut { .. }))
+                    .filter(|r| r.enabled && r.trigger.accelerator().is_some())
                 {
                     statuses.insert(
                         rule.id,
@@ -108,7 +108,7 @@ pub(super) fn restart(r: Arc<Shared>) {
             .and_then(|store| store.rules())
             .unwrap_or_default()
             .into_iter()
-            .filter(|rule| rule.enabled && matches!(rule.trigger, Trigger::Shortcut { .. }))
+            .filter(|rule| rule.enabled && rule.trigger.accelerator().is_some())
             .collect::<Vec<_>>();
         if rules.is_empty() {
             return;
@@ -284,7 +284,7 @@ async fn serve(r: Arc<Shared>, epoch: u64, rules: &[Rule]) -> Result<()> {
         let response=portal.request("CreateSession",&handle,&(options,),until,&gate).await?;
         if response.get("session_handle").and_then(|v|<&str>::try_from(v).ok())!=Some(portal.path.as_str()){return Err("系统快捷键会话身份不匹配".into())}
         let handle=token();let mut options=Options::new();options.insert("handle_token",Variant::from(handle.as_str()));
-        let mut bindings=vec![];for rule in rules{let mut properties=Options::new();properties.insert("description",Variant::from(rule.name.as_str()));let Trigger::Shortcut{accelerator}=&rule.trigger else{unreachable!()};properties.insert("preferred_trigger",Variant::from(preferred(accelerator)?));bindings.push((rule.id.as_str(),properties));}
+        let mut bindings=vec![];for rule in rules{let mut properties=Options::new();properties.insert("description",Variant::from(rule.name.as_str()));let accelerator=rule.trigger.accelerator().ok_or("快捷键规则无效")?;properties.insert("preferred_trigger",Variant::from(preferred(accelerator)?));bindings.push((rule.id.as_str(),properties));}
         let path=portal.path.clone();let mut response=portal.request("BindShortcuts",&handle,&(path,bindings,parent.as_ref().map(|p|p.identifier()).unwrap_or(""),options),until,&configuring).await?;
         let actual:Bindings=response.remove("shortcuts").ok_or(ERROR)?.try_into().map_err(|_|ERROR)?;
         publish(&r,epoch,rules,&actual,None);let mut bound=actual_ids(&actual);let mut pressed=Presses::default();
@@ -300,11 +300,11 @@ async fn serve(r: Arc<Shared>, epoch: u64, rules: &[Rule]) -> Result<()> {
                     Some("Activated"|"Deactivated")=>{
                         if let Ok((path,id,timestamp,_))=message.body().deserialize::<(OwnedObjectPath,String,u64,Results)>() {
                             if path==portal.path&&bound.contains(&id) {
-                                if header.member().is_some_and(|name|name.as_str()=="Deactivated") {pressed.deactivate(&id,timestamp,Instant::now());}
+                                if header.member().is_some_and(|name|name.as_str()=="Deactivated") {pressed.deactivate(&id,timestamp,Instant::now());if let Some(rule)=rules.iter().find(|rule|rule.id==id&&matches!(rule.trigger,Trigger::Hold{..})){track_release(&r,rule,false)?;}}
                                 else if pressed.activate(&id,timestamp) {
                                     if let Some(rule)=rules.iter().find(|rule|rule.id==id) {
                                         track_release(&r,rule,true)?;
-                                        if gate()&&!r.input_active.load(Ordering::Acquire)&&!super::recording(&r,None){let mut event=Event::new("shortcut.pressed");event.payload=json!({"ruleId":rule.id,"ruleRevision":rule.revision});emit(&r.app,event);}
+                                        if rule.trigger.category()=="shortcut"&&!matches!(rule.trigger,Trigger::Hold{..})&&gate()&&!r.input_active.load(Ordering::Acquire)&&!super::recording(&r,None){let mut event=Event::new("shortcut.pressed");event.payload=json!({"ruleId":rule.id,"ruleRevision":rule.revision});emit(&r.app,event);}
                                     }
                                 }
                             }
@@ -343,13 +343,33 @@ async fn serve(r: Arc<Shared>, epoch: u64, rules: &[Rule]) -> Result<()> {
     result
 }
 fn track_release(r: &Shared, rule: &Rule, pressed: bool) -> Result<()> {
-    if let Trigger::Shortcut { accelerator } = &rule.trigger {
+    if let Some(accelerator) = rule.trigger.accelerator() {
         let id = parse(accelerator)?.id();
         let mut held = lock(&r.shortcuts.pressed)?;
         if pressed {
             held.insert(id);
         } else {
             held.remove(&id);
+        }
+        drop(held);
+        if let Some(milliseconds) = super::hold(rule) {
+            if pressed {
+                super::schedule_hold(
+                    r,
+                    super::Entry {
+                        rule_id: rule.id.clone(),
+                        revision: rule.revision,
+                        key: parse(accelerator)?,
+                        hold: Some(milliseconds),
+                    },
+                    id,
+                );
+            } else {
+                if let Ok(mut tokens) = r.shortcuts.hold_tokens.lock() {
+                    tokens.remove(&id);
+                }
+                crate::quick_capture::released(&r.app, &rule.id);
+            }
         }
     }
     Ok(())

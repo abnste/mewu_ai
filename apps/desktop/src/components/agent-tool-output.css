@@ -1,0 +1,5 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+.agent-tool-output{display:grid;gap:6px;margin-block:8px}
+.agent-tool-output details{min-width:0;padding:8px 10px;border-radius:8px;background:var(--surface-subtle);color:var(--text-secondary);font-size:12px}
+.agent-tool-output summary{cursor:pointer;user-select:none;font-family:ui-monospace,Consolas,monospace}
+.agent-tool-output pre{max-height:240px;overflow:auto;margin:8px 0 0;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--text);font:12px/1.5 ui-monospace,Consolas,monospace;user-select:text}

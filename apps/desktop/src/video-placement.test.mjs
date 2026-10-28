@@ -75,7 +75,7 @@ test('a late Composer mount, removal and replacement bind only live node observe
   globalThis.MutationObserver = class extends Observer { constructor(callback) { super(callback, mutations); } };
   globalThis.ResizeObserver = class extends Observer { constructor(callback) { super(callback, sizes); } };
   let composer = null, calls = 0, stop;
-  const root = { querySelector(selector) { assert.equal(selector, ':scope > .composer'); return composer; } };
+  const root = { querySelector(selector) { assert.equal(selector, ':scope > .composer, :scope > .quick-voice'); return composer; } };
   const transition = node => node.dispatchEvent(Object.assign(new Event('transitionend'), { propertyName: 'translate' }));
   try {
     stop = observeVideoComposer(root, () => calls++);

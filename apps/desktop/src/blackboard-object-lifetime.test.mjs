@@ -84,7 +84,7 @@ async function fixture({defer=false,fail=false}={}){
   if(name==='solid-js')return core;if(name==='test-renderer')return renderModule;
   if(name.endsWith('.css'))return synthetic({});
   if(name.endsWith('/i18n'))return synthetic({t:text=>text});
-  if(name==='lucide-solid')return synthetic(Object.fromEntries(['Code2','Copy','Download','File','Image','Link2','Maximize2','Pencil','Pin','RotateCcw','Video','X'].map(name=>[name,()=>null])));
+  if(name==='lucide-solid')return synthetic(Object.fromEntries(['Code2','Copy','Download','File','Image','Link2','Maximize2','Pencil','Pin','Plus','Trash2','RotateCcw','Video','X'].map(name=>[name,()=>null])));
   if(name.endsWith('/bridge')){
    const functions=['assetUrl','documentUrl'].map(name=>{const node=bridgeNodes.find(node=>node.type==='FunctionDeclaration'&&node.id.name===name);return bridge.slice(node.start,node.end);}).join('\n');
    const module=new SourceTextModule(pure(`const native=true,runtime={contentOrigin:'http://synthetic.invalid/content'};${functions}\nconst readArtifact=async()=>'',isolatedDocument=text=>text;export {native,assetUrl,documentUrl,readArtifact,isolatedDocument};`),{context});moduleCache.set(name,module);await module.link(load);await module.evaluate();return module;

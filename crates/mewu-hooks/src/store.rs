@@ -201,7 +201,15 @@ impl Store {
             if existing.iter().any(|r| r.id == rule.id) {
                 return Err("导入规则标识重复".into());
             }
-            if rule.enabled&&existing.iter().any(|r|r.enabled&&matches!((&r.trigger,&rule.trigger),(crate::Trigger::Shortcut{accelerator:a},crate::Trigger::Shortcut{accelerator:b})if a==b)){continue;}
+            if rule.enabled
+                && rule.trigger.accelerator().is_some_and(|key| {
+                    existing
+                        .iter()
+                        .any(|r| r.enabled && r.trigger.accelerator() == Some(key))
+                })
+            {
+                continue;
+            }
             if existing.len() >= MAX_RULES {
                 return Err("事件触发器规则超出限制".into());
             }
@@ -324,7 +332,7 @@ impl Store {
         }
         // A hotkey has one owner. Native registration checks the same semantic
         // accelerator against core/OS bindings before calling this transaction.
-        if let crate::Trigger::Shortcut { accelerator } = &rule.trigger {
+        if let Some(accelerator) = rule.trigger.accelerator() {
             let rows: Vec<String> = {
                 let mut q = tx
                     .prepare("SELECT body FROM hook_rules WHERE id<>?1")
@@ -338,10 +346,7 @@ impl Store {
             };
             for s in rows {
                 let r: Rule = serde_json::from_str(&s).map_err(|_| "规则数据无效")?;
-                if rule.enabled
-                    && r.enabled
-                    && matches!(r.trigger,crate::Trigger::Shortcut{accelerator:ref a}if a==accelerator)
-                {
+                if rule.enabled && r.enabled && r.trigger.accelerator() == Some(accelerator) {
                     return Err("此快捷键已用于另一条规则".into());
                 }
             }

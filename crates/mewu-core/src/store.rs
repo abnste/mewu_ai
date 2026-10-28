@@ -44,24 +44,26 @@ fn pad_snapshot_payload(payload: &mut String) {
 
 #[path = "agent_cleanup_store.rs"]
 mod agent_cleanup_store;
-#[path = "journal_store.rs"]
-mod journal_store;
-#[path = "context_store.rs"]
-mod context_store;
-#[path = "memory_ledger_store.rs"]
-mod memory_ledger_store;
-#[path = "video_annotations_store.rs"]
-mod video_annotations_store;
-#[path = "visual_annotations_store.rs"]
-mod visual_annotations_store;
-#[path = "raster_edit_store.rs"]
-mod raster_edit_store;
 #[path = "blackboard_store.rs"]
 mod blackboard_store;
+#[path = "context_store.rs"]
+mod context_store;
+#[path = "execution_store.rs"]
+mod execution_store;
 #[path = "extension_objects.rs"]
 pub(crate) mod extension_objects;
 #[path = "history_storage.rs"]
 pub(crate) mod history_storage;
+#[path = "journal_store.rs"]
+mod journal_store;
+#[path = "memory_ledger_store.rs"]
+mod memory_ledger_store;
+#[path = "raster_edit_store.rs"]
+mod raster_edit_store;
+#[path = "video_annotations_store.rs"]
+mod video_annotations_store;
+#[path = "visual_annotations_store.rs"]
+mod visual_annotations_store;
 
 #[path = "session_title_store.rs"]
 pub(crate) mod session_title_store;
@@ -170,38 +172,96 @@ impl Drop for Store {
 mod capture_adoption_tests {
     use super::*;
     fn image() -> Asset {
-        Asset { id:Uuid::new_v4().to_string(),name:"截图.png".into(),kind:AssetKind::Image,
-            path:"capture.png".into(),width:Some(320),height:Some(200),
-            origin_x:None,origin_y:None,scale_factor:None,capture_coordinates:None }
+        Asset {
+            id: Uuid::new_v4().to_string(),
+            name: "截图.png".into(),
+            kind: AssetKind::Image,
+            path: "capture.png".into(),
+            width: Some(320),
+            height: Some(200),
+            origin_x: None,
+            origin_y: None,
+            scale_factor: None,
+            capture_coordinates: None,
+        }
     }
     #[test]
     fn screenshot_adoption_failure_preserves_prior_scene_and_durable_payload() {
-        let mut store=Store::open_in_memory().unwrap();
+        let mut store = Store::open_in_memory().unwrap();
         store.adopt_capture_background(image()).unwrap();
-        let before=serde_json::to_string(&store.state).unwrap();
-        let revision=store.revision;
-        let payload:String=store.db.query_row("SELECT payload FROM app_state WHERE id=1",[],|row|row.get(0)).unwrap();
+        let before = serde_json::to_string(&store.state).unwrap();
+        let revision = store.revision;
+        let payload: String = store
+            .db
+            .query_row("SELECT payload FROM app_state WHERE id=1", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
         store.db.execute_batch("CREATE TRIGGER reject_capture BEFORE UPDATE ON app_state BEGIN SELECT RAISE(ABORT,'forced capture failure'); END;").unwrap();
         assert!(store.adopt_capture_background(image()).is_err());
-        assert_eq!(serde_json::to_string(&store.state).unwrap(),before);
-        assert_eq!(store.revision,revision);
-        assert_eq!(store.db.query_row::<String,_,_>("SELECT payload FROM app_state WHERE id=1",[],|row|row.get(0)).unwrap(),payload);
-        store.db.execute_batch("DROP TRIGGER reject_capture;").unwrap();
-        let next=store.adopt_capture_background(image()).unwrap();
-        assert_eq!(next.scenes.len(),2);
-        assert_eq!(store.revision,revision+1);
-        assert!(next.scenes.iter().all(|scene|scene.background.is_some()));
-        assert!(next.scenes.iter().all(|scene|scene.background.as_ref().unwrap().capture_coordinates.is_none()));
+        assert_eq!(serde_json::to_string(&store.state).unwrap(), before);
+        assert_eq!(store.revision, revision);
+        assert_eq!(
+            store
+                .db
+                .query_row::<String, _, _>("SELECT payload FROM app_state WHERE id=1", [], |row| {
+                    row.get(0)
+                })
+                .unwrap(),
+            payload
+        );
+        store
+            .db
+            .execute_batch("DROP TRIGGER reject_capture;")
+            .unwrap();
+        let next = store.adopt_capture_background(image()).unwrap();
+        assert_eq!(next.scenes.len(), 2);
+        assert_eq!(store.revision, revision + 1);
+        assert!(next.scenes.iter().all(|scene| scene.background.is_some()));
+        assert!(next.scenes.iter().all(|scene| scene
+            .background
+            .as_ref()
+            .unwrap()
+            .capture_coordinates
+            .is_none()));
     }
     #[test]
     fn screenshot_adoption_preserves_background_run_and_its_original_input() {
         let mut store = Store::open_in_memory().unwrap();
         let original = image();
-        let scene_id = store.adopt_capture_background(original.clone()).unwrap().active_scene_id;
-        let region = Region { id: Uuid::new_v4().to_string(), x: 10., y: 12., width: 80., height: 60., ..Region::default() };
-        store.apply(SceneCommand::AddRegion { scene_id: scene_id.clone(), region: region.clone() }).unwrap();
-        store.apply(SceneCommand::SetRefs { scene_id: scene_id.clone(), refs: vec![Reference { kind: ReferenceKind::Region, id: region.id.clone() }] }).unwrap();
-        store.apply(SceneCommand::SetDraft { scene_id: scene_id.clone(), draft: "继续分析原截图".into() }).unwrap();
+        let scene_id = store
+            .adopt_capture_background(original.clone())
+            .unwrap()
+            .active_scene_id;
+        let region = Region {
+            id: Uuid::new_v4().to_string(),
+            x: 10.,
+            y: 12.,
+            width: 80.,
+            height: 60.,
+            ..Region::default()
+        };
+        store
+            .apply(SceneCommand::AddRegion {
+                scene_id: scene_id.clone(),
+                region: region.clone(),
+            })
+            .unwrap();
+        store
+            .apply(SceneCommand::SetRefs {
+                scene_id: scene_id.clone(),
+                refs: vec![Reference {
+                    kind: ReferenceKind::Region,
+                    id: region.id.clone(),
+                }],
+            })
+            .unwrap();
+        store
+            .apply(SceneCommand::SetDraft {
+                scene_id: scene_id.clone(),
+                draft: "继续分析原截图".into(),
+            })
+            .unwrap();
         let context = store.begin_run(&scene_id).unwrap();
         let mut prior = store.scene(&scene_id).unwrap().clone();
         prior.frozen = true;
@@ -212,20 +272,28 @@ mod capture_adoption_tests {
         assert_eq!(adopted.scenes.len(), 2);
         assert_ne!(adopted.active_scene_id, scene_id);
         assert_eq!(store.scene(&scene_id).unwrap(), &prior);
-        assert_eq!(store.active_scene().unwrap().background.as_ref(), Some(&incoming));
+        assert_eq!(
+            store.active_scene().unwrap().background.as_ref(),
+            Some(&incoming)
+        );
         assert!(store.run_is_active(&scene_id, &context.run_id));
         assert_eq!(context.background.as_ref(), Some(&original));
         assert_eq!(context.regions, vec![region]);
         assert_eq!(context.refs, prior.refs);
         assert_eq!(context.messages, prior.messages);
         let active = adopted.active_scene_id;
-        store.finish_run(&scene_id, &context.run_id, "原截图分析完成").unwrap();
+        store
+            .finish_run(&scene_id, &context.run_id, "原截图分析完成")
+            .unwrap();
         assert_eq!(store.active_scene().unwrap().id, active);
         let finished = store.scene(&scene_id).unwrap();
         assert!(finished.frozen);
         assert_eq!(finished.run.as_ref().unwrap().status, RunStatus::Completed);
         assert_eq!(finished.messages.last().unwrap().text, "原截图分析完成");
-        assert_eq!(store.active_scene().unwrap().background.as_ref(), Some(&incoming));
+        assert_eq!(
+            store.active_scene().unwrap().background.as_ref(),
+            Some(&incoming)
+        );
     }
 }
 
@@ -350,7 +418,7 @@ impl Store {
                 transaction.pragma_update(None, "application_id", APPLICATION_ID)?;
                 (state, 0)
             }
-            1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | DB_SCHEMA_VERSION => {
+            1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | DB_SCHEMA_VERSION => {
                 if app_id != APPLICATION_ID {
                     return Err(invalid("数据库应用标识不匹配"));
                 }
@@ -396,6 +464,10 @@ impl Store {
             context_store::migrate(&transaction)?;
         }
         context_store::validate(&transaction)?;
+        if version < 13 {
+            execution_store::migrate(&transaction)?;
+        }
+        execution_store::validate(&transaction)?;
         // Old payload fields are an import source only. Modern snapshots must
         // never broadcast or rewrite the entire durable memory collection.
         state.memories.clear();
@@ -471,34 +543,65 @@ impl Store {
             let _ = self.db.pragma_update(None, "wal_autocheckpoint", 1000i64);
         }
         let worker = self.checkpoint_maintenance.take();
-        if let Some(worker) = &worker { worker.request_stop(); }
+        if let Some(worker) = &worker {
+            worker.request_stop();
+        }
         CheckpointDrain(worker)
     }
 
     /// Opportunistic optimization only. Failure leaves SQLite's original
     /// default checkpoint policy and does not create a new user-facing error.
     pub fn resume_checkpoint_maintenance(&mut self) -> bool {
-        if let Some(worker) = &self.checkpoint_maintenance { return worker.is_healthy(); }
+        if let Some(worker) = &self.checkpoint_maintenance {
+            return worker.is_healthy();
+        }
         let start = || -> Option<crate::checkpoint_worker::CheckpointWorker> {
             let path = std::path::PathBuf::from(self.db.path()?);
-            if path.as_os_str().is_empty() { return None; }
+            if path.as_os_str().is_empty() {
+                return None;
+            }
             let maintenance = Self::open_checkpoint_connection(&path).ok()?;
-            let transaction = rusqlite::Transaction::new_unchecked(&self.db, TransactionBehavior::Immediate).ok()?;
+            let transaction =
+                rusqlite::Transaction::new_unchecked(&self.db, TransactionBehavior::Immediate)
+                    .ok()?;
             // Both connections are already bound before startup. This does not
             // migrate, recover runs, create a database or periodically reopen.
-            let version: u32 = maintenance.pragma_query_value(None, "user_version", |r| r.get(0)).ok()?;
-            let application: i64 = maintenance.pragma_query_value(None, "application_id", |r| r.get(0)).ok()?;
-            let mode: String = maintenance.pragma_query_value(None, "journal_mode", |r| r.get(0)).ok()?;
-            let identity: (u32, i64) = maintenance.query_row(
-                "SELECT schema_version,revision FROM app_state WHERE id=1", [], |r| Ok((r.get(0)?,r.get(1)?))).ok()?;
-            if version != DB_SCHEMA_VERSION || application != APPLICATION_ID || !mode.eq_ignore_ascii_case("wal")
+            let version: u32 = maintenance
+                .pragma_query_value(None, "user_version", |r| r.get(0))
+                .ok()?;
+            let application: i64 = maintenance
+                .pragma_query_value(None, "application_id", |r| r.get(0))
+                .ok()?;
+            let mode: String = maintenance
+                .pragma_query_value(None, "journal_mode", |r| r.get(0))
+                .ok()?;
+            let identity: (u32, i64) = maintenance
+                .query_row(
+                    "SELECT schema_version,revision FROM app_state WHERE id=1",
+                    [],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .ok()?;
+            if version != DB_SCHEMA_VERSION
+                || application != APPLICATION_ID
+                || !mode.eq_ignore_ascii_case("wal")
                 || identity != (SCHEMA_VERSION, self.revision)
-                || !crate::checkpoint_worker::same_file_identity(&self.db, &maintenance, &path).ok()? { return None; }
+                || !crate::checkpoint_worker::same_file_identity(&self.db, &maintenance, &path)
+                    .ok()?
+            {
+                return None;
+            }
             transaction.commit().ok()?;
             crate::checkpoint_worker::CheckpointWorker::start(maintenance).ok()
         };
-        let Some(mut worker) = start() else { return false; };
-        if self.db.pragma_update(None, "wal_autocheckpoint", 8192i64).is_err() {
+        let Some(mut worker) = start() else {
+            return false;
+        };
+        if self
+            .db
+            .pragma_update(None, "wal_autocheckpoint", 8192i64)
+            .is_err()
+        {
             worker.shutdown();
             return false;
         }
@@ -508,15 +611,21 @@ impl Store {
     }
 
     fn open_checkpoint_connection(path: &Path) -> rusqlite::Result<SqlConnection> {
-        let connection = SqlConnection::open_with_flags(path,
-            OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX)?;
+        let connection = SqlConnection::open_with_flags(
+            path,
+            OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )?;
         connection.busy_timeout(Duration::ZERO)?;
         connection.pragma_update(None, "synchronous", "FULL")?;
         Ok(connection)
     }
 
     fn notify_checkpoint_maintenance(&mut self) {
-        if self.checkpoint_maintenance.as_ref().is_some_and(|worker| !worker.notify()) {
+        if self
+            .checkpoint_maintenance
+            .as_ref()
+            .is_some_and(|worker| !worker.notify())
+        {
             // Never join on the commit path (the host may hold its Engine).
             // Retain the failed worker owner for explicit drain/Store Drop.
             let _ = self.db.pragma_update(None, "wal_autocheckpoint", 1000i64);
@@ -533,7 +642,10 @@ impl Store {
     }
 
     pub fn agent_profile(&self, agent_id: &str) -> Result<&AgentProfile> {
-        self.state.agents.iter().find(|agent| agent.id == agent_id && !agent.archived)
+        self.state
+            .agents
+            .iter()
+            .find(|agent| agent.id == agent_id && !agent.archived)
             .ok_or_else(|| not_found("Agent", agent_id))
     }
 
@@ -555,7 +667,11 @@ impl Store {
     /// Borrow live typed references. The host clones only selected metadata
     /// before releasing its lock, without copying any conversation bodies.
     pub fn asset(&self, id: &str) -> Option<&Asset> {
-        self.state.asset(id).or_else(|| self.object_libraries.values().find_map(|library|library.asset(id)))
+        self.state.asset(id).or_else(|| {
+            self.object_libraries
+                .values()
+                .find_map(|library| library.asset(id))
+        })
     }
 
     /// Narrow metadata view for host relocation preflight; avoid cloning every
@@ -605,7 +721,11 @@ impl Store {
     }
 
     pub fn apply(&mut self, command: SceneCommand) -> Result<Snapshot> {
-        if let SceneCommand::DeleteAgent { agent_id, replacement_agent_id } = &command {
+        if let SceneCommand::DeleteAgent {
+            agent_id,
+            replacement_agent_id,
+        } = &command
+        {
             return self.delete_agent(agent_id, replacement_agent_id);
         }
         if let SceneCommand::FinishRegionGeometryEdit { scene_id, edit_id } = &command {
@@ -631,17 +751,49 @@ impl Store {
         let mut next = self.state.clone();
         match command {
             SceneCommand::DeleteAgent { .. } => unreachable!("handled transactionally above"),
-            SceneCommand::EditImageAnnotations { scene_id, item_id, source_asset_id, expected_revision, action } => {
-                if next.active_scene_id != scene_id { return Err(CoreError::DrawingConflict); }
+            SceneCommand::EditImageAnnotations {
+                scene_id,
+                item_id,
+                source_asset_id,
+                expected_revision,
+                action,
+            } => {
+                if next.active_scene_id != scene_id {
+                    return Err(CoreError::DrawingConflict);
+                }
                 let target = scene_mut(&mut next, &scene_id)?;
-                if target.closed || target.frozen || is_running(target) { return Err(CoreError::DrawingConflict); }
-                let item = target.items.iter_mut().find(|item| item.id == item_id).ok_or(CoreError::DrawingConflict)?;
-                if item.asset.id != source_asset_id || item.image_annotations.as_ref().map_or(0, |document| document.revision) != expected_revision { return Err(CoreError::DrawingConflict); }
-                if crate::image_annotations::apply(item, action.mutation())? { touch(target); }
+                if target.closed || target.frozen || is_running(target) {
+                    return Err(CoreError::DrawingConflict);
+                }
+                let item = target
+                    .items
+                    .iter_mut()
+                    .find(|item| item.id == item_id)
+                    .ok_or(CoreError::DrawingConflict)?;
+                if item.asset.id != source_asset_id
+                    || item
+                        .image_annotations
+                        .as_ref()
+                        .map_or(0, |document| document.revision)
+                        != expected_revision
+                {
+                    return Err(CoreError::DrawingConflict);
+                }
+                if crate::image_annotations::apply(item, action.mutation())? {
+                    touch(target);
+                }
             }
             SceneCommand::NewScene => create_scene(&mut next)?,
             SceneCommand::NewConversation { scene_id } => {
-                if next.active_scene_id == scene_id && next.agents.iter().any(|agent| agent.archived && agent.id == scene(&next, &scene_id).map(|s|s.agent_id.as_str()).unwrap_or("")) {
+                if next.active_scene_id == scene_id
+                    && next.agents.iter().any(|agent| {
+                        agent.archived
+                            && agent.id
+                                == scene(&next, &scene_id)
+                                    .map(|s| s.agent_id.as_str())
+                                    .unwrap_or("")
+                    })
+                {
                     create_scene(&mut next)?;
                     return self.persist(next);
                 }
@@ -665,7 +817,9 @@ impl Store {
                     return Ok(self.snapshot());
                 }
                 target.conversation_start = Some(target.messages.len());
-                target.title_revision = target.title_revision.checked_add(1)
+                target.title_revision = target
+                    .title_revision
+                    .checked_add(1)
                     .ok_or_else(|| invalid("会话标题版本已达到上限"))?;
                 target.auto_title_attempted = false;
                 target.title = "新场景".into();
@@ -744,7 +898,9 @@ impl Store {
                 let target = scene_mut(&mut next, &scene_id)?;
                 target.title = title.trim().into();
                 target.auto_title_attempted = true;
-                target.title_revision = target.title_revision.checked_add(1)
+                target.title_revision = target
+                    .title_revision
+                    .checked_add(1)
                     .ok_or_else(|| invalid("会话标题版本已达到上限"))?;
                 touch(target);
             }
@@ -923,10 +1079,20 @@ impl Store {
                 )?;
             }
             SceneCommand::RemoveDrawings {
-                scene_id, region_id, background_id, expected_revision, drawing_ids,
+                scene_id,
+                region_id,
+                background_id,
+                expected_revision,
+                drawing_ids,
             } => {
-                edit_drawing(&mut next, &scene_id, &region_id, &background_id,
-                    expected_revision, crate::drawing::Mutation::RemoveBatch(drawing_ids))?;
+                edit_drawing(
+                    &mut next,
+                    &scene_id,
+                    &region_id,
+                    &background_id,
+                    expected_revision,
+                    crate::drawing::Mutation::RemoveBatch(drawing_ids),
+                )?;
             }
             SceneCommand::UpdateDrawings {
                 scene_id,
@@ -947,15 +1113,41 @@ impl Store {
                     return Ok(self.snapshot());
                 }
             }
-            SceneCommand::EraseDrawingStrokes { scene_id, region_id, background_id, expected_revision, erasures } => {
-                if !edit_drawing(&mut next, &scene_id, &region_id, &background_id, expected_revision,
-                    crate::drawing::Mutation::EraseStrokes(erasures))? {
+            SceneCommand::EraseDrawingStrokes {
+                scene_id,
+                region_id,
+                background_id,
+                expected_revision,
+                erasures,
+            } => {
+                if !edit_drawing(
+                    &mut next,
+                    &scene_id,
+                    &region_id,
+                    &background_id,
+                    expected_revision,
+                    crate::drawing::Mutation::EraseStrokes(erasures),
+                )? {
                     self.ensure_current_revision()?;
                     return Ok(self.snapshot());
                 }
             }
-            SceneCommand::DuplicateDrawings {scene_id,region_id,background_id,expected_revision,drawing_ids,offset} => {
-                edit_drawing(&mut next,&scene_id,&region_id,&background_id,expected_revision,crate::drawing::Mutation::Duplicate(drawing_ids,offset))?;
+            SceneCommand::DuplicateDrawings {
+                scene_id,
+                region_id,
+                background_id,
+                expected_revision,
+                drawing_ids,
+                offset,
+            } => {
+                edit_drawing(
+                    &mut next,
+                    &scene_id,
+                    &region_id,
+                    &background_id,
+                    expected_revision,
+                    crate::drawing::Mutation::Duplicate(drawing_ids, offset),
+                )?;
             }
             SceneCommand::UndoDrawing {
                 scene_id,
@@ -998,8 +1190,15 @@ impl Store {
                 if old.asset != item.asset {
                     return Err(invalid("更新素材位置不能替换素材来源"));
                 }
-                if old.state.as_ref().and_then(|s| s.get(crate::blackboard_objects::SOURCE_KEY))
-                    != item.state.as_ref().and_then(|s| s.get(crate::blackboard_objects::SOURCE_KEY)) {
+                if old
+                    .state
+                    .as_ref()
+                    .and_then(|s| s.get(crate::blackboard_objects::SOURCE_KEY))
+                    != item
+                        .state
+                        .as_ref()
+                        .and_then(|s| s.get(crate::blackboard_objects::SOURCE_KEY))
+                {
                     return Err(invalid("更新素材不能替换黑板来源"));
                 }
                 // Range metadata and history are host-owned. A stale card move
@@ -1025,7 +1224,12 @@ impl Store {
                 touch(target);
             }
             SceneCommand::SaveAgent { agent } => {
-                if agent.archived || next.agents.iter().any(|value| value.id == agent.id && value.archived) {
+                if agent.archived
+                    || next
+                        .agents
+                        .iter()
+                        .any(|value| value.id == agent.id && value.archived)
+                {
                     return Err(invalid("此 Agent 已删除"));
                 }
                 if next
@@ -1117,7 +1321,11 @@ impl Store {
                 agent_id,
                 mut tool_names,
             } => {
-                if !next.agents.iter().any(|agent| agent.id == agent_id && !agent.archived) {
+                if !next
+                    .agents
+                    .iter()
+                    .any(|agent| agent.id == agent_id && !agent.archived)
+                {
                     return Err(not_found("Agent", &agent_id));
                 }
                 let server = mcp_server(&next, &server_id)?;
@@ -1207,9 +1415,14 @@ impl Store {
         if self.state.active_scene_id != scene_id || original.closed || original.frozen {
             return Err(invalid("会话已变化"));
         }
-        if refs.iter().filter(|reference| {
-            reference.kind == ReferenceKind::Region && reference.id == region.id
-        }).count() != 1 {
+        if refs
+            .iter()
+            .filter(|reference| {
+                reference.kind == ReferenceKind::Region && reference.id == region.id
+            })
+            .count()
+            != 1
+        {
             return Err(invalid("新选区必须有唯一引用"));
         }
         let mut next = self.state.clone();
@@ -1238,15 +1451,24 @@ impl Store {
         let active = scene(&self.state, &self.state.active_scene_id)?;
         // Match NewScene: a background run keeps its original scene and input.
         // Capturing starts a separate scene rather than retargeting that run.
-        let needs_scene = is_running(active) || active.closed || active.frozen || active.background.is_some()
-            || !active.messages.is_empty() || !active.items.is_empty() || !active.draft.is_empty();
+        let needs_scene = is_running(active)
+            || active.closed
+            || active.frozen
+            || active.background.is_some()
+            || !active.messages.is_empty()
+            || !active.items.is_empty()
+            || !active.draft.is_empty();
         let mut next = self.state.clone();
-        if needs_scene { create_scene(&mut next)?; }
+        if needs_scene {
+            create_scene(&mut next)?;
+        }
         let id = next.active_scene_id.clone();
         let target = scene_mut(&mut next, &id)?;
         target.background = Some(asset);
         target.regions.clear();
-        target.refs.retain(|reference| reference.kind != ReferenceKind::Region);
+        target
+            .refs
+            .retain(|reference| reference.kind != ReferenceKind::Region);
         touch(target);
         self.persist(next)
     }
@@ -1263,8 +1485,10 @@ impl Store {
             return Err(CoreError::RunInProgress);
         }
         let connection_id = original.connection_id.clone();
-        let needs_scene = original.background.is_some() || !original.regions.is_empty()
-            || !original.items.is_empty() || !original.messages.is_empty()
+        let needs_scene = original.background.is_some()
+            || !original.regions.is_empty()
+            || !original.items.is_empty()
+            || !original.messages.is_empty()
             || !original.draft.is_empty();
         let mut next = self.state.clone();
         if needs_scene {
@@ -1273,14 +1497,20 @@ impl Store {
         let active_id = next.active_scene_id.clone();
         let target = scene_mut(&mut next, &active_id)?;
         let region = Region {
-            id: Uuid::new_v4().to_string(), x: 0.0, y: 0.0,
-            width: asset.width.unwrap() as f64, height: asset.height.unwrap() as f64,
+            id: Uuid::new_v4().to_string(),
+            x: 0.0,
+            y: 0.0,
+            width: asset.width.unwrap() as f64,
+            height: asset.height.unwrap() as f64,
             ..Region::default()
         };
         target.title = "黑板".into();
         target.connection_id = connection_id;
         target.background = Some(asset);
-        target.refs = vec![Reference { kind: ReferenceKind::Region, id: region.id.clone() }];
+        target.refs = vec![Reference {
+            kind: ReferenceKind::Region,
+            id: region.id.clone(),
+        }];
         target.regions = vec![region];
         touch(target);
         self.persist(next)
@@ -1348,21 +1578,46 @@ impl Store {
     /// Exact clean raster document for read-only highlight separation. Ordinary
     /// ink revisions cannot invalidate unchanged pixels. Clone no history,
     /// messages, translation or full Scene/Snapshot; caller must recheck after IO.
-    pub fn highlight_region_for_preview(&self, scene_id: &str, region_id: &str,
-        background_id: &str, source_id: &str) -> Result<(Asset, Region)> {
+    pub fn highlight_region_for_preview(
+        &self,
+        scene_id: &str,
+        region_id: &str,
+        background_id: &str,
+        source_id: &str,
+    ) -> Result<(Asset, Region)> {
         let background = self.background_for_preview(scene_id, background_id)?;
-        let region = scene(&self.state, scene_id)?.regions.iter()
-            .find(|region| region.id == region_id).ok_or(CoreError::DrawingConflict)?;
+        let region = scene(&self.state, scene_id)?
+            .regions
+            .iter()
+            .find(|region| region.id == region_id)
+            .ok_or(CoreError::DrawingConflict)?;
         if region.image_override.as_ref().unwrap_or(&background).id != source_id {
             return Err(CoreError::DrawingConflict);
         }
-        Ok((background, Region {
-            id: region.id.clone(), x: region.x, y: region.y, width: region.width, height: region.height,
-            image_override: region.image_override.clone(),
-            drawings: region.drawings.iter().filter(|drawing| drawing.kind == DrawingKind::Mosaic
-                || drawing.rich.as_ref().is_some_and(|r| r.kind.is_raster_edit())).cloned().collect(),
-            ..Default::default()
-        }))
+        Ok((
+            background,
+            Region {
+                id: region.id.clone(),
+                x: region.x,
+                y: region.y,
+                width: region.width,
+                height: region.height,
+                image_override: region.image_override.clone(),
+                drawings: region
+                    .drawings
+                    .iter()
+                    .filter(|drawing| {
+                        drawing.kind == DrawingKind::Mosaic
+                            || drawing
+                                .rich
+                                .as_ref()
+                                .is_some_and(|r| r.kind.is_raster_edit())
+                    })
+                    .cloned()
+                    .collect(),
+                ..Default::default()
+            },
+        ))
     }
 
     /// The capture host owns file registration. Replacing a region keeps its
@@ -1627,10 +1882,22 @@ impl Store {
     }
 
     pub fn add_asset(&mut self, scene_id: &str, asset: Asset) -> Result<Snapshot> {
-        self.add_asset_at(scene_id,asset,0.32,0.2)
+        self.add_asset_at(scene_id, asset, 0.32, 0.2)
     }
-    pub fn add_asset_at(&mut self, scene_id:&str,asset:Asset,x:f64,y:f64)->Result<Snapshot>{
-        if !x.is_finite()||!y.is_finite()||!(0.0..=1.0).contains(&x)||!(0.0..=1.0).contains(&y){return Err(invalid("对象位置无效"));}
+    pub fn add_asset_at(
+        &mut self,
+        scene_id: &str,
+        asset: Asset,
+        x: f64,
+        y: f64,
+    ) -> Result<Snapshot> {
+        if !x.is_finite()
+            || !y.is_finite()
+            || !(0.0..=1.0).contains(&x)
+            || !(0.0..=1.0).contains(&y)
+        {
+            return Err(invalid("对象位置无效"));
+        }
         validate_asset(&asset)?;
         let mut next = self.state.clone();
         let target = scene_mut(&mut next, scene_id)?;
@@ -1643,7 +1910,8 @@ impl Store {
             height: 0.5,
             state: None,
             video_edit: None,
-            video_annotations: None, image_annotations: None,
+            video_annotations: None,
+            image_annotations: None,
         });
         touch(target);
         self.persist(next)
@@ -1688,7 +1956,8 @@ impl Store {
             height,
             state: None,
             video_edit: None,
-            video_annotations: None, image_annotations: None,
+            video_annotations: None,
+            image_annotations: None,
         });
         touch(target);
         self.persist(next)
@@ -1710,9 +1979,7 @@ impl Store {
         viewport_width: u32,
         viewport_height: u32,
     ) -> Result<Snapshot> {
-        if !(2..=32768).contains(&viewport_width)
-            || !(2..=32768).contains(&viewport_height)
-        {
+        if !(2..=32768).contains(&viewport_width) || !(2..=32768).contains(&viewport_height) {
             return Err(invalid("空间尺寸无效，请重新导入"));
         }
         self.import_assets_with_viewport(scene_id, assets, Some((viewport_width, viewport_height)))
@@ -1724,7 +1991,10 @@ impl Store {
         assets: Vec<Asset>,
         viewport: Option<(u32, u32)>,
     ) -> Result<Snapshot> {
-        if assets.iter().any(|asset| asset.capture_coordinates.is_some()) {
+        if assets
+            .iter()
+            .any(|asset| asset.capture_coordinates.is_some())
+        {
             return Err(invalid("导入图片不能伪造屏幕坐标"));
         }
         let target = scene(&self.state, scene_id)?;
@@ -1739,13 +2009,19 @@ impl Store {
             validate_asset(asset)?;
             if !matches!(
                 asset.kind,
-                AssetKind::Image | AssetKind::Video | AssetKind::Text | AssetKind::Html | AssetKind::Svg
+                AssetKind::Image
+                    | AssetKind::Video
+                    | AssetKind::Text
+                    | AssetKind::Html
+                    | AssetKind::Svg
             ) {
                 return Err(invalid("此类素材不能通过文件导入"));
             }
             if asset.kind == AssetKind::Video
-                && (asset.width.is_none() || asset.height.is_none()
-                    || asset.origin_x.is_some() || asset.origin_y.is_some()
+                && (asset.width.is_none()
+                    || asset.height.is_none()
+                    || asset.origin_x.is_some()
+                    || asset.origin_y.is_some()
                     || asset.scale_factor.is_some())
             {
                 return Err(invalid("导入视频缺少像素尺寸或包含屏幕坐标"));
@@ -1786,14 +2062,18 @@ impl Store {
         let target = scene_mut(&mut next, scene_id)?;
         for asset in assets {
             let item_id = id();
-            let (width, height) = if let Some((vw, vh)) = viewport.filter(|_| asset.kind == AssetKind::Video) {
-                // Metadata has already been validated for the complete batch.
-                let ratio = f64::from(asset.width.unwrap()) / f64::from(asset.height.unwrap());
-                let displayed_width = (0.36 * f64::from(vw)).min(0.5 * f64::from(vh) * ratio);
-                (displayed_width / f64::from(vw), displayed_width / ratio / f64::from(vh))
-            } else {
-                (0.36, 0.5)
-            };
+            let (width, height) =
+                if let Some((vw, vh)) = viewport.filter(|_| asset.kind == AssetKind::Video) {
+                    // Metadata has already been validated for the complete batch.
+                    let ratio = f64::from(asset.width.unwrap()) / f64::from(asset.height.unwrap());
+                    let displayed_width = (0.36 * f64::from(vw)).min(0.5 * f64::from(vh) * ratio);
+                    (
+                        displayed_width / f64::from(vw),
+                        displayed_width / ratio / f64::from(vh),
+                    )
+                } else {
+                    (0.36, 0.5)
+                };
             target.refs.push(Reference {
                 kind: ReferenceKind::Item,
                 id: item_id.clone(),
@@ -1807,7 +2087,8 @@ impl Store {
                 height,
                 state: None,
                 video_edit: None,
-                video_annotations: None, image_annotations: None,
+                video_annotations: None,
+                image_annotations: None,
             });
         }
         touch(target);
@@ -1819,23 +2100,55 @@ impl Store {
     /// register or replace sources. Existing references are idempotent.
     pub fn reference_shared_image(&mut self, scene_id: &str, asset: Asset) -> Result<Snapshot> {
         let target = scene(&self.state, scene_id)?;
-        if self.state.active_scene_id != scene_id || target.frozen || target.closed || is_running(target) || target.blackboard_link.is_some() {
+        if self.state.active_scene_id != scene_id
+            || target.frozen
+            || target.closed
+            || is_running(target)
+            || target.blackboard_link.is_some()
+        {
             return Err(invalid("会话已切换或不可引用"));
         }
         validate_asset(&asset)?;
-        if asset.kind != AssetKind::Image { return Err(invalid("此对象不是图片")); }
-        for existing in self.state.scenes.iter().flat_map(|scene| scene.items.iter()) {
-            if existing.asset.id == asset.id && existing.asset != asset { return Err(invalid("图片来源已变更")); }
+        if asset.kind != AssetKind::Image {
+            return Err(invalid("此对象不是图片"));
+        }
+        for existing in self
+            .state
+            .scenes
+            .iter()
+            .flat_map(|scene| scene.items.iter())
+        {
+            if existing.asset.id == asset.id && existing.asset != asset {
+                return Err(invalid("图片来源已变更"));
+            }
         }
         let mut next = self.state.clone();
         let target = scene_mut(&mut next, scene_id)?;
-        let item_id = if let Some(item) = target.items.iter().find(|item| item.asset == asset) { item.id.clone() } else {
+        let item_id = if let Some(item) = target.items.iter().find(|item| item.asset == asset) {
+            item.id.clone()
+        } else {
             let item_id = id();
-            target.items.push(SpaceItem { id: item_id.clone(), asset, x: 0.32, y: 0.2, width: 0.36, height: 0.5, state: None, video_edit: None, video_annotations: None, image_annotations: None });
+            target.items.push(SpaceItem {
+                id: item_id.clone(),
+                asset,
+                x: 0.32,
+                y: 0.2,
+                width: 0.36,
+                height: 0.5,
+                state: None,
+                video_edit: None,
+                video_annotations: None,
+                image_annotations: None,
+            });
             item_id
         };
-        let reference = Reference { kind: ReferenceKind::Item, id: item_id };
-        if target.refs.contains(&reference) { return Ok(self.snapshot()); }
+        let reference = Reference {
+            kind: ReferenceKind::Item,
+            id: item_id,
+        };
+        if target.refs.contains(&reference) {
+            return Ok(self.snapshot());
+        }
         target.refs.push(reference);
         touch(target);
         self.persist(next)
@@ -1984,7 +2297,8 @@ impl Store {
                 ("backgroundId".into(), serde_json::json!(background_id)),
             ])),
             video_edit: None,
-            video_annotations: None, image_annotations: None,
+            video_annotations: None,
+            image_annotations: None,
         });
         target.regions.retain(|r| r.id != region.id);
         target
@@ -2007,39 +2321,70 @@ impl Store {
         scene_id: &str,
         origin: ExternalRunOrigin,
     ) -> Result<ExternalRunContext> {
-        if !origin.validate() { return Err(invalid("外部 Agent 来源无效")); }
+        if !origin.validate() {
+            return Err(invalid("外部 Agent 来源无效"));
+        }
         self.agent_profile(&self.scene(scene_id)?.agent_id)?;
         let mut next = self.state.clone();
         let target = scene_mut(&mut next, scene_id)?;
-        if target.closed { return Err(invalid("会话已关闭，请先恢复会话")); }
-        if is_running(target) { return Err(CoreError::RunInProgress); }
+        if target.closed {
+            return Err(invalid("会话已关闭，请先恢复会话"));
+        }
+        if is_running(target) {
+            return Err(CoreError::RunInProgress);
+        }
         if target.draft.trim().is_empty() && target.refs.is_empty() {
             return Err(CoreError::EmptyInput);
         }
         let run_id = id();
         let refs = target.refs.clone();
-        let conversation_start = target.conversation_start
+        let conversation_start = target
+            .conversation_start
             .filter(|start| *start > 0 && *start == target.messages.len());
         target.messages.push(Message {
-            id: id(), role: MessageRole::User,
-            text: std::mem::take(&mut target.draft), reasoning: None,
-            conversation_start, created_at: now(), run_id: Some(run_id.clone()),
-            refs: Some(refs.clone()), attachments: None, tool_steps: vec![],
+            id: id(),
+            role: MessageRole::User,
+            text: std::mem::take(&mut target.draft),
+            reasoning: None,
+            conversation_start,
+            created_at: now(),
+            run_id: Some(run_id.clone()),
+            refs: Some(refs.clone()),
+            attachments: None,
+            tool_steps: vec![],
         });
         target.run = Some(Run {
-            id: run_id.clone(), kind: RecordedRunKind::Chat, status: RunStatus::Running,
-            connection_id: None, connection_revision: None, external_runtime: Some(origin),
-            memory_authority: None, error: None, steps: vec![],
+            id: run_id.clone(),
+            kind: RecordedRunKind::Chat,
+            status: RunStatus::Running,
+            connection_id: None,
+            connection_revision: None,
+            external_runtime: Some(origin),
+            memory_authority: None,
+            error: None,
+            steps: vec![],
         });
         touch(target);
         let target = scene(&next, scene_id)?;
         let context = ExternalRunContext {
-            scene_id: scene_id.into(), run_id,
-            agent: next.agents.iter().find(|a| a.id == target.agent_id && !a.archived)
-                .ok_or_else(|| not_found("Agent", &target.agent_id))?.clone(),
-            messages: target.messages.iter().skip(target.conversation_start.unwrap_or(0)).cloned().collect(),
-            background: target.background.clone(), regions: target.regions.clone(),
-            items: target.items.clone(), refs,
+            scene_id: scene_id.into(),
+            run_id,
+            agent: next
+                .agents
+                .iter()
+                .find(|a| a.id == target.agent_id && !a.archived)
+                .ok_or_else(|| not_found("Agent", &target.agent_id))?
+                .clone(),
+            messages: target
+                .messages
+                .iter()
+                .skip(target.conversation_start.unwrap_or(0))
+                .cloned()
+                .collect(),
+            background: target.background.clone(),
+            regions: target.regions.clone(),
+            items: target.items.clone(),
+            refs,
         };
         self.persist(next)?;
         Ok(context)
@@ -2317,7 +2662,8 @@ impl Store {
                 height: 0.5,
                 state: None,
                 video_edit: None,
-                video_annotations: None, image_annotations: None,
+                video_annotations: None,
+                image_annotations: None,
             });
         }
         let run = target.run.as_mut().expect("checked running run");
@@ -2703,7 +3049,7 @@ impl Store {
         initial_video: Option<(String, VerifiedVideoRunInput)>,
     ) -> Result<Snapshot> {
         use crate::{persistence_timing::Observation, PersistencePhase};
-        let mut observation=Observation::start(self.persistence_observer);
+        let mut observation = Observation::start(self.persistence_observer);
         let source_set_changed = self
             .geometry_group
             .as_ref()
@@ -2768,7 +3114,7 @@ impl Store {
             self.geometry_group = None;
         }
         observation.mark(PersistencePhase::AdoptState);
-        let snapshot=self.state.clone();
+        let snapshot = self.state.clone();
         observation.mark(PersistencePhase::CloneResult);
         observation.finish();
         Ok(snapshot)
@@ -2844,9 +3190,14 @@ fn new_scene(agent_id: &str, connection_id: Option<String>) -> Scene {
 
 fn create_scene(state: &mut Snapshot) -> Result<()> {
     let previous = &scene(state, &state.active_scene_id)?.agent_id;
-    let agent_id = state.agents.iter().find(|agent| &agent.id == previous && !agent.archived)
+    let agent_id = state
+        .agents
+        .iter()
+        .find(|agent| &agent.id == previous && !agent.archived)
         .or_else(|| state.agents.iter().find(|agent| !agent.archived))
-        .ok_or_else(|| invalid("没有可用的 Agent"))?.id.clone();
+        .ok_or_else(|| invalid("没有可用的 Agent"))?
+        .id
+        .clone();
     let connection_id = state
         .agents
         .iter()
@@ -3370,7 +3721,9 @@ fn validate_connection(connection: &Connection) -> Result<()> {
 
 fn validate_asset(asset: &Asset) -> Result<()> {
     if let Some(coordinates) = asset.capture_coordinates {
-        if asset.kind != AssetKind::Image || !coordinates.valid_for(asset.width.unwrap_or(0), asset.height.unwrap_or(0)) {
+        if asset.kind != AssetKind::Image
+            || !coordinates.valid_for(asset.width.unwrap_or(0), asset.height.unwrap_or(0))
+        {
             return Err(invalid("截图坐标元数据无效"));
         }
     }
@@ -3408,7 +3761,9 @@ fn validate_background(asset: &Asset) -> Result<()> {
 
 fn validate_region_image(asset: &Asset) -> Result<()> {
     validate_background(asset)?;
-    if asset.capture_coordinates.is_some() { return Err(invalid("替换图片不能伪造整屏坐标")); }
+    if asset.capture_coordinates.is_some() {
+        return Err(invalid("替换图片不能伪造整屏坐标"));
+    }
     let width = asset.width.unwrap();
     let height = asset.height.unwrap();
     if Uuid::parse_str(&asset.id).is_err()
@@ -3518,18 +3873,28 @@ fn validate_snapshot(state: &Snapshot) -> Result<()> {
     crate::connections::validate(state)?;
     validate_memories(state)?;
     validate_mcp(state)?;
-    if !state.agents.iter().any(|agent| !agent.archived) { return Err(invalid("至少保留一个 Agent")); }
+    if !state.agents.iter().any(|agent| !agent.archived) {
+        return Err(invalid("至少保留一个 Agent"));
+    }
     for agent in &state.agents {
-        if agent.archived && agent.memory_enabled { return Err(invalid("已删除 Agent 不能启用记忆")); }
+        if agent.archived && agent.memory_enabled {
+            return Err(invalid("已删除 Agent 不能启用记忆"));
+        }
         if agent.name.trim().is_empty() {
             return Err(invalid("Agent 名称不能为空"));
         }
     }
     for target in &state.scenes {
         if let Some(link) = &target.blackboard_link {
-            if link.item_id.is_empty() || link.parent_scene_id == target.id
-                || !state.scenes.iter().any(|parent| parent.id == link.parent_scene_id && parent.blackboard_link.is_none())
-                || state.scenes.iter().any(|other| other.id != target.id && other.blackboard_link.as_ref() == Some(link)) {
+            if link.item_id.is_empty()
+                || link.parent_scene_id == target.id
+                || !state.scenes.iter().any(|parent| {
+                    parent.id == link.parent_scene_id && parent.blackboard_link.is_none()
+                })
+                || state.scenes.iter().any(|other| {
+                    other.id != target.id && other.blackboard_link.as_ref() == Some(link)
+                })
+            {
                 return Err(invalid("黑板关联无效"));
             }
             blackboard_store::board_region(target)?;

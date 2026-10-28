@@ -123,4 +123,4 @@ export type ImageAnnotationEdit =
   | { type: 'remove_drawing'; drawingId: string }
   | { type: 'remove_drawings'; drawingIds: string[] }
   | { type: 'undo_drawing' | 'redo_drawing' };
-export interface RunEvent { sceneId: string; runId: string; text?: string; reasoning?: string; status: 'running' | 'completed' | 'failed' | 'canceled'; error?: string }
+export interface RunEvent { sceneId: string; runId: string; text?: string; reasoning?: string; toolOutput?:{callId:string;tool:string;stream:'stdout'|'stderr';text:string};status: 'running' | 'completed' | 'failed' | 'canceled'; error?: string }

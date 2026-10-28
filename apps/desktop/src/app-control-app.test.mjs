@@ -88,7 +88,9 @@ function fixture() {
     startScroll: record('startScroll'), switchScene: record('switchScene'), newConversation: record('newConversation'), freeze: record('freeze'), closeScene: record('closeScene'),
     removeReferenceObject: record('removeReferenceObject'),
     cancel: record('cancel'),
+    quickBridge:{openQuickInteraction:record('quickCapture')},
     bridge: {
+      getSnapshot:async()=>f.saved,
       getRecordingStatus: async () => f.nativeRecording ?? { id: 'recording', sceneId: 'scene', phase: 'starting' },
       controlRecording: record('controlRecording'), getScrollStatus: async () => f.nativeScroll ?? { id: 'scroll', sceneId: 'scene', phase: 'capturing', width: 200, height: 600, status: 'extended', preview: 'private-preview' },
       openSettings: record('openSettings'),
@@ -110,7 +112,7 @@ function fixture() {
 
 test('actual App dispatcher routes the catalog into existing action handlers and returns compact receipts', async () => {
   const examples = [
-    ['capture.open', {}, 'capture'],
+    ['capture.open', {}, 'capture'], ['capture.quick',{},'quickCapture'],
     ['region.add', { region: { id: 'new' }, backgroundId: 'background' }, 'addRegion'],
     ['chat.setDraft', { text: 'draft' }, 'setDraft'],
     ['chat.send', { text: 'hello', refs: [] }, 'send'],

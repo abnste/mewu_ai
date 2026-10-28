@@ -13,7 +13,21 @@ function fixture(scenes = [scene()]) {
   const current = new Map(scenes.map(value => [value.id, value])), updates = [];
   return { current, updates, buffer: new RunStreamBuffer(id => current.get(id), value => updates.push(value)) };
 }
-const event = (text, extra = {}) => ({ sceneId: 'scene', runId: 'run', text, ...extra });
+
+test('command output remains separate from the reply, bounded, and revoked with its run',()=>{
+  const f=fixture();
+  f.buffer.push(event('',{toolOutput:{callId:'command',tool:'powershell',stream:'stdout',text:'中文\n'}}));f.buffer.flush();
+  assert.equal(f.updates.at(-1).scene.text,'');assert.equal(f.updates.at(-1).scene.toolOutputs[0].text,'中文\n');
+  f.buffer.push(event('',{toolOutput:{callId:'command',tool:'powershell',stream:'stderr',text:'x'.repeat(80000)}}));f.buffer.flush();assert.equal(f.updates.at(-1).scene.toolOutputs[0].text.length,16384);
+  for(let i=0;i<10;i++)f.buffer.push(event('',{toolOutput:{callId:`next-${i}`,tool:'bash',stream:'stdout',text:'ok'}}));f.buffer.flush();assert.equal(f.updates.at(-1).scene.toolOutputs.length,4);
+  f.current.set('scene',scene('scene','replacement'));f.buffer.reconcile([...f.current.values()]);assert.deepEqual(f.updates.at(-1),{});f.buffer.dispose();
+});
+function event(text, extra = {}) {return { sceneId: 'scene', runId: 'run', text, ...extra };}
+
+test('bounded command tails do not start with a split Unicode surrogate',()=>{
+  const f=fixture();f.buffer.push(event('',{toolOutput:{callId:'a',tool:'bash',text:'🙂'+'x'.repeat(16383)}}));f.buffer.flush();
+  assert.equal(f.updates.at(-1).scene.toolOutputs[0].text,'x'.repeat(16383));f.buffer.dispose();
+});
 
 test('1000 reply fragments coalesce into one ordered update without mixing public reasoning', t => {
   t.mock.timers.enable({ apis: ['setTimeout'] });

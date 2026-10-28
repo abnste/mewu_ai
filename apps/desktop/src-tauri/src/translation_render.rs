@@ -234,7 +234,8 @@ fn render_checked(
     check()?;
     let mut overlay = RgbaImage::new(document.width, document.height);
     for (out, source) in overlay
-        .as_mut()
+        .as_flat_samples_mut()
+        .samples
         .chunks_exact_mut(document.width as usize * 4)
         .zip(pixmap.pixels().chunks_exact(document.width as usize))
     {

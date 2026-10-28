@@ -76,7 +76,7 @@ fn plan(db: &SqlConnection, state: &Snapshot, revision: i64) -> Result<HistoryCl
     }
     // Count stored UTF-8 payloads, never pretend logical bytes equal SQLite's
     // page allocation. Assets and immutable raster layouts are separate storage.
-    let sql = "SELECT r.scene_id,length(CAST(r.data AS BLOB)) + coalesce((SELECT sum(length(CAST(e.metadata AS BLOB))+length(CAST(e.content AS BLOB))) FROM agent_run_events e WHERE e.run_id=r.id),0) + coalesce((SELECT length(CAST(v.data AS BLOB)) FROM visual_run_inputs v WHERE v.run_id=r.id),0) + coalesce((SELECT length(CAST(v.data AS BLOB)) FROM video_run_inputs v WHERE v.run_id=r.id),0) FROM agent_run_records r";
+    let sql = "SELECT r.scene_id,length(CAST(r.data AS BLOB)) + coalesce((SELECT sum(length(CAST(e.metadata AS BLOB))+length(CAST(e.content AS BLOB))) FROM agent_run_events e WHERE e.run_id=r.id),0) + coalesce((SELECT sum(length(CAST(t.arguments_json AS BLOB))+coalesce(length(CAST(t.result_json AS BLOB)),0)) FROM agent_tool_transcripts t WHERE t.run_id=r.id),0) + coalesce((SELECT length(CAST(v.data AS BLOB)) FROM visual_run_inputs v WHERE v.run_id=r.id),0) + coalesce((SELECT length(CAST(v.data AS BLOB)) FROM video_run_inputs v WHERE v.run_id=r.id),0) FROM agent_run_records r";
     for row in db
         .prepare(sql)?
         .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?
@@ -136,7 +136,11 @@ impl Store {
                     )
             })
             .cloned()
-            .chain(self.object_libraries.values().flat_map(|library|library.assets()))
+            .chain(
+                self.object_libraries
+                    .values()
+                    .flat_map(|library| library.assets()),
+            )
             .collect()
     }
 
@@ -146,7 +150,7 @@ impl Store {
             if plan(db, state, revision)? != *expected { return Err(CoreError::ConcurrentModification); }
             if expected.scene_ids.is_empty() { return Ok(()); }
             for scene in &expected.scene_ids {
-                for table in ["agent_run_events", "visual_run_inputs", "video_run_inputs"] {
+                for table in ["agent_tool_transcripts", "agent_run_events", "visual_run_inputs", "video_run_inputs"] {
                     db.execute(&format!("DELETE FROM {table} WHERE run_id IN(SELECT id FROM agent_run_records WHERE scene_id=?1)"), [scene])?;
                 }
                 db.execute("DELETE FROM agent_run_records WHERE scene_id=?1", [scene])?;
@@ -167,8 +171,12 @@ impl Store {
     pub fn compact_history_storage(&mut self) -> Result<()> {
         let resume = self.checkpoint_maintenance.is_some();
         self.pause_checkpoint_maintenance().wait();
-        let result = self.db.execute_batch("VACUUM; PRAGMA wal_checkpoint(TRUNCATE);");
-        if resume { self.resume_checkpoint_maintenance(); }
+        let result = self
+            .db
+            .execute_batch("VACUUM; PRAGMA wal_checkpoint(TRUNCATE);");
+        if resume {
+            self.resume_checkpoint_maintenance();
+        }
         result.map_err(Into::into)
     }
 }

@@ -22,6 +22,21 @@
         { "id": "export", "kind": "button", "title": "保存" },
         { "id": "pin", "kind": "button", "title": "贴图", "contextual": true }
       ]
+    },
+    {
+      "id": "video.selection",
+      "title": "视频工具",
+      "items": [
+        { "id": "reference", "kind": "button", "title": "引用", "contextual": true },
+        { "id": "add-region", "kind": "button", "title": "加选区", "contextual": true },
+        { "id": "delete-region", "kind": "button", "title": "删除", "contextual": true },
+        { "id": "separator-edit", "kind": "separator", "title": "分隔线" },
+        { "id": "draw", "kind": "button", "title": "绘制", "contextual": true },
+        { "id": "separator-export", "kind": "separator", "title": "分隔线" },
+        { "id": "copy", "kind": "button", "title": "复制", "contextual": true },
+        { "id": "export", "kind": "button", "title": "保存", "contextual": true },
+        { "id": "pin", "kind": "button", "title": "贴图", "contextual": true }
+      ]
     }
   ]
 }

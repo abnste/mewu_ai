@@ -185,7 +185,7 @@ impl RunJournal {
         text: &str,
         calls: &[ModelToolCall],
     ) -> Result<TurnCommit, String> {
-        let calls = calls
+        let proposed = calls
             .iter()
             .map(|call| ProposedTool {
                 call_id: call.id.clone(),
@@ -207,9 +207,19 @@ impl RunJournal {
                 lease,
                 CompletePublicTurn {
                     text: text.to_owned(),
-                    calls,
+                    calls: proposed,
                 },
             )
+            .map_err(store_error)?;
+        let arguments = commit
+            .tools
+            .iter()
+            .zip(calls)
+            .map(|(prepared, call)| (prepared.lease.clone(), call.arguments.clone()))
+            .collect::<Vec<_>>();
+        engine
+            .store
+            .retain_tool_arguments(&arguments)
             .map_err(store_error)?;
         emit_changed(
             &self.app,

@@ -48,6 +48,7 @@ import { sameOcrTarget } from '../ocr-selection';
 import { finishCapture } from '../capture-completion';
 import { regionImageProjection } from '../region-image';
 import { getWindowSnapMap } from '../window-snap-bridge';
+import { quickImageTarget } from '../quick-targets';
 import { DrawingInputPhase, drawingDiagnosticsEnabled, recordDrawingInput } from '../drawing-diagnostics';
 import { SnapMapLoader, SnapSelectionGesture, SnapshotSelections, snapImagePoint, snapResize, snapTarget, type FrameSnapMap, type SnapNode } from '../window-snap';
 import './capture.css';
@@ -86,6 +87,9 @@ interface Props {
   onExportActivity?: (active: boolean) => void;
   onSelectionComplete?: (region: Region) => void;
   recordingSelection?: boolean;
+  quickText?:import('../contracts').OcrDocument;
+  quickImages?:import('../window-snap').SnapBounds[];
+  onQuickCopied?:()=>void;
   onActiveRegionChange?: (sceneId: string, regionId: string | undefined) => void;
   onFocusComposer?: () => void;
   onBeforeExport?: () => Promise<void>;
@@ -292,6 +296,7 @@ export default function SpaceCanvas(props: Props) {
       onRegisterFlush={flush=>{objectFlushes.set(id,flush);return()=>{if(objectFlushes.get(id)===flush)objectFlushes.delete(id);};}}
       onOpenBlackboard={!itemProps.board&&typeof item().state?.blackboardSceneId==='string'&&props.onOpenBlackboard?()=>props.onOpenBlackboard!(id):undefined}
       onPin={props.onPinItem&&(item().asset.kind==='image'||item().asset.kind==='video')?()=>props.onPinItem!(id):undefined}
+      onAddRegion={!itemProps.board&&props.scene.background?()=>{setActiveItemId('');setForceNew(true);canvas.focus({preventScroll:true});}:undefined}
       busy={props.busy||(itemProps.board&&props.blackboardEnabled===false)}
       video={props.video?{...props.video,sceneId:props.scene.id,busy:props.busy,annotationBusy:props.scene.closed||props.scene.frozen||props.scene.run?.status==='running',authoringBusy:props.authoringBusy,inputLocked:props.inputLocked,drawingAllowed:!drawingSession(),drawingGrant:videoDrawingGrant(),grant:videoGrant()}:undefined}
       item={item()} active={activeItemId()===id} onActivate={()=>activateItem(id)} referenced={props.refs.some(ref=>ref.kind==='item'&&ref.id===id)} onReference={()=>props.onReference({kind:'item',id})} onRemove={()=>props.onRemoveItem(id)} onUpdate={updateItem}
@@ -339,9 +344,9 @@ export default function SpaceCanvas(props: Props) {
   function clearSnapPreview() { snapPointer = undefined; setSnapPreview(undefined); }
   function candidateAt(x: number, y: number) {
     const map = snapMap(), bg = props.scene.background, box = geometry();
-    if (!bg || map?.backgroundId !== bg.id) return;
+    if (!bg) return;
     const pixel = snapImagePoint(x, y, box, box.scale);
-    return pixel && snapTarget(map, pixel.x, pixel.y);
+    return pixel && (quickImageTarget(props.quickImages,bg.width??0,bg.height??0,pixel.x,pixel.y)??(map?.backgroundId===bg.id?snapTarget(map,pixel.x,pixel.y):undefined));
   }
   function previewCandidateAt(pointer: { x: number; y: number; shiftKey: boolean }, observe?: (reason: number) => void) {
     if (snapUnavailable()) { observe?.(1); return; }
@@ -928,6 +933,7 @@ export default function SpaceCanvas(props: Props) {
     <Show when={visibleCodes()}>{view => <SelectionCodeCard result={view().result} region={display(props.scene.regions.find(region => region.id === view().result.regionId)!)} toolbar={toolbarVisible() ? toolbarBox() : undefined} hidden={codesPaused()} disabled={Boolean(props.codeActionBusy)} onAction={(token, id, action) => props.onCodeAction?.(token, id, action) ?? Promise.resolve(false)} />}</Show>
     <Show when={!props.blackboard && pointerNative && props.scene.background}>{background => <PointerInspector sceneId={props.scene.id} background={background()} imageBox={geometry()} dimensions={pointerSelectionDimensions(selection(), geometry(), activeRegion())} disabled={props.busy || exporting() || props.scene.frozen || props.scene.closed || backgroundError() || Boolean(drawingSession() || imageDrawing() || pluginMenu() || ocrPending() || props.translationPending) || props.scene.regions.some(region => ocrVisible(region) || translationVisible(region))} blockedAt={(x, y) => toolbarVisible() && contains(toolbarBox(), x, y, TOLERANCE)} onReady={value => { pointerInspector = value; }} onError={props.onError} />}</Show>
     <Show when={props.scene.background?.id} keyed>{id => <img ref={image => backgroundAttached(image, id)} class="screen-background capture-background" data-asset={id} src={assetUrl(props.scene.background!)} style={geometry().nativePixels ? { left: '0px', top: '0px', width: `${geometry().width}px`, height: `${geometry().height}px` } : undefined} alt={t("屏幕截图")} draggable={false} decoding="sync" onLoad={event => backgroundLoaded(event.currentTarget, id)} onError={event => backgroundFailed(event.currentTarget, id)} />}</Show>
+    <Show when={props.quickText&&!drawingSession()&&!imageDrawing()&&!props.scene.regions.length}>{value=><div class="quick-ocr" style={{left:`${geometry().x}px`,top:`${geometry().y}px`,width:`${geometry().width}px`,height:`${geometry().height}px`}}><OcrTextLayer document={props.quickText!} active hitOnly onClose={()=>{window.getSelection()?.removeAllRanges();canvas.focus();}} onError={props.onError} onSelecting={setSelectionActivity} onCopied={props.onQuickCopied}/></div>}</Show>
     <svg class="capture-mask" width="100%" height="100%" aria-hidden="true">
       <defs><mask id="region-cutouts" maskUnits="userSpaceOnUse"><rect width="100%" height="100%" fill="white" />
         <For each={regionIds()}>{id => {

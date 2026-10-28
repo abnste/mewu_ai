@@ -170,6 +170,7 @@ impl Runtime {
     ) -> Result<()> {
         let mut store = Store::open(&root.join("hooks.db"))?;
         let startup_warning = legacy_shortcuts::import(app, root, &mut store).err();
+        quick_defaults(&mut store)?;
         let (sender, receiver) = mpsc::channel(64);
         let last_scene = app
             .state::<crate::Host>()
@@ -224,6 +225,45 @@ pub(crate) fn system_shortcut_pressed(app: &AppHandle) {
     if let Ok(r) = runtime(app) {
         shortcuts::system_pressed(&r)
     }
+}
+#[cfg(windows)]
+pub(crate) fn modifier_hold_changed(app: &AppHandle, pressed: bool) {
+    if let Ok(r) = runtime(app) {
+        shortcuts::route(
+            &r,
+            &tauri_plugin_global_shortcut::Shortcut::new(
+                None,
+                tauri_plugin_global_shortcut::Code::MetaLeft,
+            ),
+            pressed,
+        );
+    }
+}
+fn quick_defaults(store: &mut Store) -> Result<()> {
+    let source = "defaults.quick-interaction.v1";
+    if store.imported(source)? {
+        return Ok(());
+    }
+    let rule = Rule {
+        id: uuid::Uuid::new_v4().to_string(),
+        revision: 0,
+        name: "快速交互".into(),
+        enabled: true,
+        trigger: Trigger::Hold {
+            accelerator: if cfg!(windows) { "Super" } else { "F8" }.into(),
+            milliseconds: 400,
+        },
+        condition: String::new(),
+        actions: vec![Action::App {
+            method: "capture.quick".into(),
+            params: json!({}),
+        }],
+        cooldown_ms: 0,
+        timeout_ms: 10000,
+        stop_on_error: true,
+    };
+    store.import_once(source, vec![rule])?;
+    Ok(())
 }
 
 /// Compatibility query for the former single-shortcut settings API. The rule
@@ -704,6 +744,8 @@ async fn app_action(work: &Execution, method: &str, params: Value) -> Result<()>
     let origin = crate::app_control_host::NativeEventOrigin {
         ancestors,
         depth: work.event.depth + 1,
+        hold_source: matches!(work.rule.trigger, Trigger::Hold { .. })
+            .then(|| work.rule.id.clone()),
     };
     crate::app_control_host::execute_native(
         &work.shared.app,
@@ -1219,6 +1261,7 @@ pub(crate) async fn run_hook(
         Trigger::Event { name } => name,
         Trigger::Cron { .. } => "schedule.due",
         Trigger::Shortcut { .. } => "shortcut.pressed",
+        Trigger::Hold { .. } => "shortcut.held",
     });
     event.text = text;
     event.payload = json!({"ruleId":rule.id,"ruleRevision":rule.revision});

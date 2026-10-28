@@ -1273,5 +1273,17 @@
   "移动绘制工具条": "Move drawing toolbar",
   "拖动工具条，靠近边缘吸附": "Drag toolbar to dock at an edge",
   "绘制参数": "Drawing options",
-  "读取系统信息": "Read system information"
+  "读取系统信息": "Read system information",
+  "快速交互": "Quick interaction",
+  "长按": "Hold",
+  "按下": "Press",
+  "触发方式": "Activation",
+  "长按毫秒": "Hold duration (ms)",
+  "请先配置 Agent 和模型": "Configure an Agent and model first",
+  "读取文件": "Read file",
+  "写入文件": "Write file",
+  "修改文件": "Edit file",
+  "列出目录": "List directory",
+  "查找文件": "Find files",
+  "搜索文件": "Search files"
 }

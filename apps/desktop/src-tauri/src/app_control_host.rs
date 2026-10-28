@@ -2,11 +2,21 @@
 //! Authenticated local control is a first-party plugin, separate from document
 //! HTTP and WebView capabilities. Mutations enter the same renderer flush lane
 //! as UI actions; native receipts never infer success from an emitted event.
-use mewu_control::{ControlError, ErrorCode, ExecutionOutcome, Request, Response, Server, ServerHandle, ServerOptions};
+use mewu_control::{
+    ControlError, ErrorCode, ExecutionOutcome, Request, Response, Server, ServerHandle,
+    ServerOptions,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::{collections::HashMap, sync::{atomic::{AtomicBool, AtomicU64, Ordering}, Arc, Mutex}, time::{Duration, Instant}};
+use std::{
+    collections::HashMap,
+    sync::{
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        Arc, Mutex,
+    },
+    time::{Duration, Instant},
+};
 use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
 
 const MAX_PENDING: usize = 32;
@@ -16,31 +26,68 @@ const MAX_RESULT: usize = 256 * 1024;
 const TTL: Duration = Duration::from_secs(600);
 const CLAIM_TIMEOUT: Duration = Duration::from_secs(300);
 const METHODS: &[&str] = &[
-    "capture.open", "region.add", "chat.setDraft", "chat.send", "chat.cancel",
-    "blackboard.create", "blackboard.finish", "blackboard.open", "drawing.apply",
-    "recording.start", "recording.control", "scroll.start", "scroll.control",
-    "scene.activate", "scene.new", "scene.newConversation", "scene.freeze",
-    "scene.close", "scene.command", "references.set", "settings.open",
-    "asset.import", "image.export", "ocr.run", "translation.run", "pin.create",
+    "capture.open",
+    "capture.quick",
+    "region.add",
+    "chat.setDraft",
+    "chat.send",
+    "chat.cancel",
+    "blackboard.create",
+    "blackboard.finish",
+    "blackboard.open",
+    "drawing.apply",
+    "recording.start",
+    "recording.control",
+    "scroll.start",
+    "scroll.control",
+    "scene.activate",
+    "scene.new",
+    "scene.newConversation",
+    "scene.freeze",
+    "scene.close",
+    "scene.command",
+    "references.set",
+    "settings.open",
+    "asset.import",
+    "image.export",
+    "ocr.run",
+    "translation.run",
+    "pin.create",
 ];
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct Context { scene_id: Option<String>, revision: Option<u64> }
+struct Context {
+    scene_id: Option<String>,
+    revision: Option<u64>,
+}
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Event {
-    id: String, nonce: String, method: String, params: Value,
+    id: String,
+    nonce: String,
+    method: String,
+    params: Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     scene_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     revision: Option<u64>,
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Phase { Queued, Claimed, Complete }
+enum Phase {
+    Queued,
+    Claimed,
+    Complete,
+}
 struct Operation {
-    fingerprint: [u8; 32], nonce: String, renderer_id: String,
-    plugin_revision: u64, phase: Phase, since: Instant,
+    method: String,
+    feature_dispatched: bool,
+    fingerprint: [u8; 32],
+    nonce: String,
+    renderer_id: String,
+    plugin_revision: u64,
+    phase: Phase,
+    since: Instant,
     result: Option<Result<Value, ControlError>>,
     native_authority: Option<NativeAuthority>,
 }
@@ -48,33 +95,117 @@ struct Operation {
 /// Native automation uses the same renderer flush/claim/receipt lane as CLI,
 /// while retaining its own revocation authority and no dependency on CLI state.
 #[derive(Clone)]
-struct NativeAuthority(Arc<dyn Fn()->Result<(),String>+Send+Sync>,Option<NativeEventOrigin>);
+struct NativeAuthority(
+    Arc<dyn Fn() -> Result<(), String> + Send + Sync>,
+    Option<NativeEventOrigin>,
+);
 /// Native provenance only: never deserializable from a model, plugin or CLI.
-#[derive(Clone,Default,PartialEq,Eq)]
-pub(crate) struct NativeEventOrigin {pub ancestors:Vec<String>,pub depth:u8}
-fn operation_origin(inner:&Inner)->Option<NativeEventOrigin>{
-    let mut merged:Option<NativeEventOrigin>=None;
-    for origin in inner.operations.values().filter(|op|op.phase==Phase::Claimed).filter_map(|op|op.native_authority.as_ref()?.1.as_ref()){
-        let value=merged.get_or_insert_with(NativeEventOrigin::default);value.depth=value.depth.max(origin.depth);
-        for ancestor in &origin.ancestors{if !value.ancestors.contains(ancestor){value.ancestors.push(ancestor.clone());}}
+#[derive(Clone, Default, PartialEq, Eq)]
+pub(crate) struct NativeEventOrigin {
+    pub ancestors: Vec<String>,
+    pub depth: u8,
+    pub hold_source: Option<String>,
+}
+fn operation_origin(inner: &Inner) -> Option<NativeEventOrigin> {
+    let mut merged: Option<NativeEventOrigin> = None;
+    for origin in inner
+        .operations
+        .values()
+        .filter(|op| op.phase == Phase::Claimed)
+        .filter_map(|op| op.native_authority.as_ref()?.1.as_ref())
+    {
+        let value = merged.get_or_insert_with(NativeEventOrigin::default);
+        value.depth = value.depth.max(origin.depth);
+        for ancestor in &origin.ancestors {
+            if !value.ancestors.contains(ancestor) {
+                value.ancestors.push(ancestor.clone());
+            }
+        }
     }
     merged
 }
-pub(crate) fn native_event_origin(app:&AppHandle)->Option<NativeEventOrigin>{app.try_state::<Runtime>().and_then(|r|r.inner.lock().ok().and_then(|inner|operation_origin(&inner)))}
+pub(crate) fn native_event_origin(app: &AppHandle) -> Option<NativeEventOrigin> {
+    app.try_state::<Runtime>().and_then(|r| {
+        r.inner
+            .lock()
+            .ok()
+            .and_then(|inner| operation_origin(&inner))
+    })
+}
+fn feature_admission(
+    inner: &mut Inner,
+    revision: Option<u64>,
+    id: &str,
+    nonce: &str,
+    method: &str,
+) -> Result<Option<NativeEventOrigin>, String> {
+    if !inner.ready {
+        return Err("空间尚未就绪".into());
+    }
+    let renderer = inner.renderer_id.clone().ok_or("空间已变化")?;
+    let op = inner.operations.get_mut(id).ok_or("控制请求已结束")?;
+    expire(op);
+    if op.phase != Phase::Claimed
+        || op.renderer_id != renderer
+        || op.nonce != nonce
+        || op.method != method
+        || op.feature_dispatched
+    {
+        return Err("功能请求已结束、已执行或来源不匹配".into());
+    }
+    let origin = if let Some(authority) = &op.native_authority {
+        (authority.0)()?;
+        authority.1.clone()
+    } else {
+        if revision != Some(op.plugin_revision) {
+            return Err("CLI 插件已变化".into());
+        }
+        None
+    };
+    op.feature_dispatched = true;
+    Ok(origin)
+}
+/// Optional feature-level lease for operations dispatched through the action
+/// bus. The nonce, renderer, method and revocation source are checked at the
+/// actual native feature boundary; a claimed request cannot be replayed.
+pub(crate) fn admit_feature(
+    app: &AppHandle,
+    window: &WebviewWindow,
+    id: &str,
+    nonce: &str,
+    method: &str,
+) -> Result<Option<NativeEventOrigin>, String> {
+    space(window)?;
+    let revision = current_revision(app).ok();
+    let runtime = app.state::<Runtime>();
+    let mut inner = runtime.inner.lock().map_err(|_| "控制状态不可用")?;
+    feature_admission(&mut inner, revision, id, nonce, method)
+}
 #[derive(Default)]
-struct Inner { renderer_id: Option<String>, ready:bool, operations: HashMap<String, Operation> }
+struct Inner {
+    renderer_id: Option<String>,
+    ready: bool,
+    operations: HashMap<String, Operation>,
+}
 #[derive(Default)]
 pub(crate) struct Runtime {
-    revision: AtomicU64, stopped: AtomicBool,
+    revision: AtomicU64,
+    stopped: AtomicBool,
     #[cfg(unix)]
     integration_started: AtomicBool,
-    inner: Mutex<Inner>, server: Mutex<Option<ServerHandle>>,
+    inner: Mutex<Inner>,
+    server: Mutex<Option<ServerHandle>>,
     streams: Mutex<crate::control_run_stream::Streams>,
 }
 
-fn error(code: ErrorCode, message: &'static str) -> ControlError { ControlError::not_sent(code, message) }
+fn error(code: ErrorCode, message: &'static str) -> ControlError {
+    ControlError::not_sent(code, message)
+}
 fn output<T: Serialize>(value: T) -> Result<Value, ControlError> {
-    struct Bounded { bytes: Vec<u8>, exceeded: bool }
+    struct Bounded {
+        bytes: Vec<u8>,
+        exceeded: bool,
+    }
     impl std::io::Write for Bounded {
         fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
             if bytes.len() > MAX_RESULT.saturating_sub(self.bytes.len()) {
@@ -84,58 +215,107 @@ fn output<T: Serialize>(value: T) -> Result<Value, ControlError> {
             self.bytes.extend_from_slice(bytes);
             Ok(bytes.len())
         }
-        fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
     }
-    let mut writer = Bounded { bytes: Vec::new(), exceeded: false };
+    let mut writer = Bounded {
+        bytes: Vec::new(),
+        exceeded: false,
+    };
     if serde_json::to_writer(&mut writer, &value).is_err() {
-        return Err(if writer.exceeded { error(ErrorCode::ResultTooLarge, "结果过大，请缩小查询范围") }
-            else { error(ErrorCode::Internal, "无法读取结果") });
+        return Err(if writer.exceeded {
+            error(ErrorCode::ResultTooLarge, "结果过大，请缩小查询范围")
+        } else {
+            error(ErrorCode::Internal, "无法读取结果")
+        });
     }
     serde_json::from_slice(&writer.bytes).map_err(|_| error(ErrorCode::Internal, "无法读取结果"))
 }
 fn params<T: serde::de::DeserializeOwned>(value: Value) -> Result<T, ControlError> {
-    serde_json::from_value(value).map_err(|_| error(ErrorCode::InvalidRequest, "参数格式无效，请查看 schema"))
+    serde_json::from_value(value)
+        .map_err(|_| error(ErrorCode::InvalidRequest, "参数格式无效，请查看 schema"))
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Empty {}
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct Id { id: String }
+struct Id {
+    id: String,
+}
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct RecordingStatusQuery { #[serde(default)] id: Option<String> }
+struct RecordingStatusQuery {
+    #[serde(default)]
+    id: Option<String>,
+}
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct SceneQuery { scene_id: String, #[serde(default = "default_limit")] limit: usize }
+struct SceneQuery {
+    scene_id: String,
+    #[serde(default = "default_limit")]
+    limit: usize,
+}
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SceneView<'a> {
-    scene_id: &'a str, title: &'a str, agent_id: &'a str, connection_id: &'a Option<String>, revision: u64,
-    background: &'a Option<mewu_core::Asset>, regions: &'a [mewu_core::Region],
-    items: &'a [mewu_core::SpaceItem], refs: &'a [mewu_core::Reference], draft: &'a str,
-    frozen: bool, closed: bool, run: &'a Option<mewu_core::Run>, messages: &'a [mewu_core::Message],
+    scene_id: &'a str,
+    title: &'a str,
+    agent_id: &'a str,
+    connection_id: &'a Option<String>,
+    revision: u64,
+    background: &'a Option<mewu_core::Asset>,
+    regions: &'a [mewu_core::Region],
+    items: &'a [mewu_core::SpaceItem],
+    refs: &'a [mewu_core::Reference],
+    draft: &'a str,
+    frozen: bool,
+    closed: bool,
+    run: &'a Option<mewu_core::Run>,
+    messages: &'a [mewu_core::Message],
 }
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct RunView<'a> {
-    scene_id: &'a str, run: &'a Option<mewu_core::Run>, messages: &'a [mewu_core::Message],
+    scene_id: &'a str,
+    run: &'a Option<mewu_core::Run>,
+    messages: &'a [mewu_core::Message],
     #[serde(skip_serializing_if = "Option::is_none")]
     stream: Option<crate::control_run_stream::StreamView>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Page { #[serde(default)] offset: usize, #[serde(default = "default_limit")] limit: usize }
-fn default_limit() -> usize { 20 }
+struct Page {
+    #[serde(default)]
+    offset: usize,
+    #[serde(default = "default_limit")]
+    limit: usize,
+}
+fn default_limit() -> usize {
+    20
+}
 fn page_limit(limit: usize) -> Result<usize, ControlError> {
-    (1..=100).contains(&limit).then_some(limit).ok_or_else(|| error(ErrorCode::InvalidRequest, "limit 必须为 1–100"))
+    (1..=100)
+        .contains(&limit)
+        .then_some(limit)
+        .ok_or_else(|| error(ErrorCode::InvalidRequest, "limit 必须为 1–100"))
 }
 fn current_revision(app: &AppHandle) -> Result<u64, ControlError> {
     let host = app.state::<crate::Host>();
-    host.exit.ensure_new_operation().map_err(|_| error(ErrorCode::ShuttingDown, "Mewu 正在退出"))?;
-    if !host.storage.is_ready() { return Err(error(ErrorCode::Unavailable, "Mewu 尚未就绪")); }
-    let revision = host.plugins.lock().map_err(|_| error(ErrorCode::Internal, "插件状态不可用"))?
-        .store.cli_revision().map_err(|_| error(ErrorCode::Disabled, "命令行插件不可用"))?
+    host.exit
+        .ensure_new_operation()
+        .map_err(|_| error(ErrorCode::ShuttingDown, "Mewu 正在退出"))?;
+    if !host.storage.is_ready() {
+        return Err(error(ErrorCode::Unavailable, "Mewu 尚未就绪"));
+    }
+    let revision = host
+        .plugins
+        .lock()
+        .map_err(|_| error(ErrorCode::Internal, "插件状态不可用"))?
+        .store
+        .cli_revision()
+        .map_err(|_| error(ErrorCode::Disabled, "命令行插件不可用"))?
         .ok_or_else(|| error(ErrorCode::Disabled, "命令行插件已停用或卸载"));
     revision
 }
@@ -145,34 +325,72 @@ pub(crate) fn require_enabled(app: &AppHandle) -> Result<u64, String> {
 // These hooks run inside the already-authorized Agent path. They never acquire
 // plugins/Engine again, never persist text, and never alter event delivery.
 pub(crate) fn begin_run_stream(app: &AppHandle, scene: &str, run: &str) {
-    let Some(runtime)=app.try_state::<Runtime>() else{return};
-    if runtime.revision.load(Ordering::Acquire)==0 {return;}
-    if let Ok(mut streams)=runtime.streams.lock() {streams.begin(scene,run,Instant::now());};
+    let Some(runtime) = app.try_state::<Runtime>() else {
+        return;
+    };
+    if runtime.revision.load(Ordering::Acquire) == 0 {
+        return;
+    }
+    if let Ok(mut streams) = runtime.streams.lock() {
+        streams.begin(scene, run, Instant::now());
+    };
 }
 pub(crate) fn observe_run_event(app: &AppHandle, event: &Value) {
-    let Some(runtime)=app.try_state::<Runtime>() else{return};
-    if runtime.revision.load(Ordering::Acquire)==0 || event["status"]!="running" {return;}
-    if let (Some(scene),Some(run),Some(text))=(event["sceneId"].as_str(),event["runId"].as_str(),event["text"].as_str()) {
-        if let Ok(mut streams)=runtime.streams.lock() {streams.push(scene,run,text,Instant::now());};
+    let Some(runtime) = app.try_state::<Runtime>() else {
+        return;
+    };
+    if runtime.revision.load(Ordering::Acquire) == 0 || event["status"] != "running" {
+        return;
+    }
+    if let (Some(scene), Some(run), Some(text)) = (
+        event["sceneId"].as_str(),
+        event["runId"].as_str(),
+        event["text"].as_str(),
+    ) {
+        if let Ok(mut streams) = runtime.streams.lock() {
+            streams.push(scene, run, text, Instant::now());
+        };
     }
 }
 
 /// Called with the already-validated plugin snapshot, including the fail-closed
 /// empty snapshot. Never reacquire plugins while a mutation owns that mutex.
 pub(crate) fn reconcile(app: &AppHandle, snapshot: &crate::plugins::PluginSnapshot) {
-    let Some(runtime) = app.try_state::<Runtime>() else { return; };
-    let revision = snapshot.plugins.iter().find(|record|
-        record.manifest.id == "mewu.cli" && record.source == crate::plugins::PluginSource::Official
-        && record.state == crate::plugins::PluginState::Enabled && record.error.is_none()
-        && record.manifest == crate::plugins::parse_manifest(include_bytes!("../../plugins/official-cli.json")).expect("official CLI manifest")
-    ).map(|record| record.revision).unwrap_or(0);
+    let Some(runtime) = app.try_state::<Runtime>() else {
+        return;
+    };
+    let revision = snapshot
+        .plugins
+        .iter()
+        .find(|record| {
+            record.manifest.id == "mewu.cli"
+                && record.source == crate::plugins::PluginSource::Official
+                && record.state == crate::plugins::PluginState::Enabled
+                && record.error.is_none()
+                && record.manifest
+                    == crate::plugins::parse_manifest(include_bytes!(
+                        "../../plugins/official-cli.json"
+                    ))
+                    .expect("official CLI manifest")
+        })
+        .map(|record| record.revision)
+        .unwrap_or(0);
     let previous = runtime.revision.swap(revision, Ordering::AcqRel);
     if previous != revision {
-        if let Ok(mut streams) = runtime.streams.lock() { streams.clear(); }
+        if let Ok(mut streams) = runtime.streams.lock() {
+            streams.clear();
+        }
         if let Ok(mut inner) = runtime.inner.lock() {
-            for operation in inner.operations.values_mut().filter(|op| op.phase == Phase::Queued && op.native_authority.is_none()) {
+            for operation in inner
+                .operations
+                .values_mut()
+                .filter(|op| op.phase == Phase::Queued && op.native_authority.is_none())
+            {
                 operation.phase = Phase::Complete;
-                operation.result = Some(Err(error(ErrorCode::Disabled, "命令行插件已变更，操作未执行")));
+                operation.result = Some(Err(error(
+                    ErrorCode::Disabled,
+                    "命令行插件已变更，操作未执行",
+                )));
             }
         }
     }
@@ -182,12 +400,17 @@ pub(crate) fn reconcile(app: &AppHandle, snapshot: &crate::plugins::PluginSnapsh
 }
 fn ensure_listener(app: &AppHandle) {
     let runtime = app.state::<Runtime>();
-    let Ok(mut slot) = runtime.server.lock() else { return; };
-    let enabled = !runtime.stopped.load(Ordering::Acquire) && runtime.revision.load(Ordering::Acquire) != 0;
+    let Ok(mut slot) = runtime.server.lock() else {
+        return;
+    };
+    let enabled =
+        !runtime.stopped.load(Ordering::Acquire) && runtime.revision.load(Ordering::Acquire) != 0;
     if !enabled {
         if let Some(server) = slot.as_mut() {
             server.revoke();
-            if server.shutdown(Duration::from_secs(2)).is_err() { return; }
+            if server.shutdown(Duration::from_secs(2)).is_err() {
+                return;
+            }
         }
         *slot = None;
         return;
@@ -198,15 +421,23 @@ fn ensure_listener(app: &AppHandle) {
             initialize_integration(app);
             return;
         }
-        if server.shutdown(Duration::from_secs(2)).is_err() { return; }
+        if server.shutdown(Duration::from_secs(2)).is_err() {
+            return;
+        }
         *slot = None;
     }
-    let Ok(endpoint) = mewu_control::Endpoint::for_current_user() else { return; };
+    let Ok(endpoint) = mewu_control::Endpoint::for_current_user() else {
+        return;
+    };
     let target = app.clone();
     let dispatcher = Arc::new(move |request: Request| dispatch(&target, request));
     match Server::start(endpoint, dispatcher, ServerOptions::default()) {
-        Ok(server) => { *slot = Some(server); }
-        Err(_) => { let _ = app.emit_to("settings", "host-error", "无法启动命令行服务"); }
+        Ok(server) => {
+            *slot = Some(server);
+        }
+        Err(_) => {
+            let _ = app.emit_to("settings", "host-error", "无法启动命令行服务");
+        }
     }
     drop(slot);
     initialize_integration(app);
@@ -215,8 +446,12 @@ fn initialize_integration(app: &AppHandle) {
     #[cfg(unix)]
     {
         let runtime = app.state::<Runtime>();
-        if runtime.stopped.load(Ordering::Acquire) || current_revision(app).is_err()
-            || runtime.integration_started.swap(true, Ordering::AcqRel) { return; }
+        if runtime.stopped.load(Ordering::Acquire)
+            || current_revision(app).is_err()
+            || runtime.integration_started.swap(true, Ordering::AcqRel)
+        {
+            return;
+        }
         if crate::app_control_integration::initialize(app).is_err() {
             let _ = app.emit_to("settings", "host-error", "无法完成命令行初始化");
         }
@@ -228,7 +463,9 @@ pub(crate) fn shutdown(app: &AppHandle) {
     if let Some(runtime) = app.try_state::<Runtime>() {
         runtime.stopped.store(true, Ordering::Release);
         runtime.revision.store(0, Ordering::Release);
-        if let Ok(mut streams) = runtime.streams.lock() { streams.clear(); }
+        if let Ok(mut streams) = runtime.streams.lock() {
+            streams.clear();
+        }
         renderer_invalidated(app);
         if let Ok(mut server) = runtime.server.lock() {
             if let Some(server) = server.as_mut() {
@@ -247,38 +484,96 @@ pub(crate) fn renderer_invalidated(app: &AppHandle) {
         if let Ok(mut inner) = runtime.inner.lock() {
             inner.renderer_id = None;
             inner.ready = false;
-            for operation in inner.operations.values_mut().filter(|op| op.phase != Phase::Complete) {
-                let failure = if operation.phase == Phase::Queued { error(ErrorCode::Unavailable, "空间已重载，操作未执行") }
-                    else { ControlError::unknown(ErrorCode::Unavailable, "空间已重载，请检查操作结果") };
-                operation.phase = Phase::Complete; operation.result = Some(Err(failure));
+            for operation in inner
+                .operations
+                .values_mut()
+                .filter(|op| op.phase != Phase::Complete)
+            {
+                let failure = if operation.phase == Phase::Queued {
+                    error(ErrorCode::Unavailable, "空间已重载，操作未执行")
+                } else {
+                    ControlError::unknown(ErrorCode::Unavailable, "空间已重载，请检查操作结果")
+                };
+                operation.phase = Phase::Complete;
+                operation.result = Some(Err(failure));
             }
         }
     }
 }
 fn space(window: &WebviewWindow) -> Result<(), String> {
-    if window.label() == "space" { Ok(()) } else { Err("此窗口不能接收控制请求".into()) }
+    if window.label() == "space" {
+        Ok(())
+    } else {
+        Err("此窗口不能接收控制请求".into())
+    }
 }
 #[tauri::command]
-pub(crate) fn register_control_renderer(app: AppHandle, window: WebviewWindow) -> Result<Value, String> {
+pub(crate) fn register_control_renderer(
+    app: AppHandle,
+    window: WebviewWindow,
+) -> Result<Value, String> {
     space(&window)?;
     renderer_invalidated(&app);
     let id = uuid::Uuid::new_v4().to_string();
-    app.state::<Runtime>().inner.lock().map_err(|_| "控制状态不可用")?.renderer_id = Some(id.clone());
+    app.state::<Runtime>()
+        .inner
+        .lock()
+        .map_err(|_| "控制状态不可用")?
+        .renderer_id = Some(id.clone());
     Ok(json!({"rendererId":id}))
 }
-pub(crate) fn renderer_ready(app:&AppHandle)->bool{app.try_state::<Runtime>().is_some_and(|r|r.inner.lock().is_ok_and(|inner|inner.renderer_id.is_some()&&inner.ready))}
+pub(crate) fn renderer_ready(app: &AppHandle) -> bool {
+    app.try_state::<Runtime>().is_some_and(|r| {
+        r.inner
+            .lock()
+            .is_ok_and(|inner| inner.renderer_id.is_some() && inner.ready)
+    })
+}
 #[tauri::command]
-pub(crate) fn confirm_control_renderer(app:AppHandle,window:WebviewWindow,renderer_id:String)->Result<(),String>{space(&window)?;{let runtime=app.state::<Runtime>();let mut inner=runtime.inner.lock().map_err(|_|"控制状态不可用")?;if inner.renderer_id.as_deref()!=Some(&renderer_id){return Err("空间已变化".into())}inner.ready=true;}crate::hooks::ready(&app);Ok(())}
+pub(crate) fn confirm_control_renderer(
+    app: AppHandle,
+    window: WebviewWindow,
+    renderer_id: String,
+) -> Result<(), String> {
+    space(&window)?;
+    {
+        let runtime = app.state::<Runtime>();
+        let mut inner = runtime.inner.lock().map_err(|_| "控制状态不可用")?;
+        if inner.renderer_id.as_deref() != Some(&renderer_id) {
+            return Err("空间已变化".into());
+        }
+        inner.ready = true;
+    }
+    crate::hooks::ready(&app);
+    Ok(())
+}
 #[tauri::command]
-pub(crate) fn claim_control_request(app: AppHandle, window: WebviewWindow, renderer_id: String, id: String, nonce: String) -> Result<(), String> {
+pub(crate) fn claim_control_request(
+    app: AppHandle,
+    window: WebviewWindow,
+    renderer_id: String,
+    id: String,
+    nonce: String,
+) -> Result<(), String> {
     space(&window)?;
     let revision = current_revision(&app).ok();
     let runtime = app.state::<Runtime>();
     let mut inner = runtime.inner.lock().map_err(|_| "控制状态不可用")?;
-    if inner.renderer_id.as_deref() != Some(&renderer_id) { return Err("空间已变化".into()); }
+    if inner.renderer_id.as_deref() != Some(&renderer_id) {
+        return Err("空间已变化".into());
+    }
     let op = inner.operations.get_mut(&id).ok_or("控制请求已结束")?;
-    let authorized=if let Some(authority)=&op.native_authority{(authority.0)().is_ok()}else{revision==Some(op.plugin_revision)};
-    if op.phase != Phase::Queued || op.nonce != nonce || op.renderer_id != renderer_id || !authorized || op.since.elapsed() >= Duration::from_secs(30) {
+    let authorized = if let Some(authority) = &op.native_authority {
+        (authority.0)().is_ok()
+    } else {
+        revision == Some(op.plugin_revision)
+    };
+    if op.phase != Phase::Queued
+        || op.nonce != nonce
+        || op.renderer_id != renderer_id
+        || !authorized
+        || op.since.elapsed() >= Duration::from_secs(30)
+    {
         return Err("控制请求已过期或撤销".into());
     }
     op.phase = Phase::Claimed;
@@ -287,174 +582,440 @@ pub(crate) fn claim_control_request(app: AppHandle, window: WebviewWindow, rende
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct CompletionError { code: String, message: String, executed: Option<bool> }
+pub(crate) struct CompletionError {
+    code: String,
+    message: String,
+    executed: Option<bool>,
+}
 #[tauri::command]
-pub(crate) fn complete_control_request(app: AppHandle, window: WebviewWindow, renderer_id: String, id: String, nonce: String, result: Option<Value>, error: Option<CompletionError>) -> Result<(), String> {
+pub(crate) fn complete_control_request(
+    app: AppHandle,
+    window: WebviewWindow,
+    renderer_id: String,
+    id: String,
+    nonce: String,
+    result: Option<Value>,
+    error: Option<CompletionError>,
+) -> Result<(), String> {
     space(&window)?;
     let runtime = app.state::<Runtime>();
     let mut inner = runtime.inner.lock().map_err(|_| "控制状态不可用")?;
-    if inner.renderer_id.as_deref() != Some(&renderer_id) { return Err("空间已变化".into()); }
+    if inner.renderer_id.as_deref() != Some(&renderer_id) {
+        return Err("空间已变化".into());
+    }
     let op = inner.operations.get_mut(&id).ok_or("控制请求已结束")?;
     expire(op);
-    if op.nonce != nonce || op.renderer_id != renderer_id || op.phase == Phase::Complete { return Err("控制请求已结束".into()); }
-    if result.is_some() && error.is_some() { return Err("控制结果格式无效".into()); }
+    if op.nonce != nonce || op.renderer_id != renderer_id || op.phase == Phase::Complete {
+        return Err("控制请求已结束".into());
+    }
+    if result.is_some() && error.is_some() {
+        return Err("控制结果格式无效".into());
+    }
     let outcome = match error {
         Some(failure) => {
             let code = match failure.code.as_str() {
-                "CONFLICT" => ErrorCode::Conflict, "BUSY" => ErrorCode::Busy,
-                "INVALID_REQUEST" => ErrorCode::InvalidRequest, "UNSUPPORTED_METHOD" => ErrorCode::Unsupported,
-                "REQUEST_EXPIRED" => ErrorCode::Timeout, "NOT_READY" => ErrorCode::Unavailable,
+                "CONFLICT" => ErrorCode::Conflict,
+                "BUSY" => ErrorCode::Busy,
+                "INVALID_REQUEST" => ErrorCode::InvalidRequest,
+                "UNSUPPORTED_METHOD" => ErrorCode::Unsupported,
+                "REQUEST_EXPIRED" => ErrorCode::Timeout,
+                "NOT_READY" => ErrorCode::Unavailable,
                 _ => ErrorCode::Internal,
             };
-            let execution = if op.phase == Phase::Queued && failure.executed == Some(false) { ExecutionOutcome::NotSent } else { ExecutionOutcome::Unknown };
-            let message = if failure.message.chars().count() <= 256 { failure.message } else { "操作未完成".into() };
+            let execution = if op.phase == Phase::Queued && failure.executed == Some(false) {
+                ExecutionOutcome::NotSent
+            } else {
+                ExecutionOutcome::Unknown
+            };
+            let message = if failure.message.chars().count() <= 256 {
+                failure.message
+            } else {
+                "操作未完成".into()
+            };
             Err(ControlError::new(code, message, execution))
         }
         None if op.phase == Phase::Claimed => {
             let value = result.unwrap_or(Value::Null);
             if serde_json::to_vec(&value).map_or(true, |bytes| bytes.len() > MAX_RESULT) {
-                Err(ControlError::new(ErrorCode::ResultTooLarge, "操作已执行，结果过大", ExecutionOutcome::Executed))
-            } else { Ok(value) }
+                Err(ControlError::new(
+                    ErrorCode::ResultTooLarge,
+                    "操作已执行，结果过大",
+                    ExecutionOutcome::Executed,
+                ))
+            } else {
+                Ok(value)
+            }
         }
         None => return Err("请求尚未获准执行".into()),
     };
-    op.result = Some(outcome); op.phase = Phase::Complete;
+    op.result = Some(outcome);
+    op.phase = Phase::Complete;
     Ok(())
 }
 
 fn dispatch(app: &AppHandle, request: Request) -> Response {
     let id = request.id.clone();
-    let result = request.validate().and_then(|_| current_revision(app)).and_then(|revision| dispatch_inner(app, request, revision));
-    match result { Ok(value) => Response::success(id, value), Err(error) => Response::error(id, error) }
+    let result = request
+        .validate()
+        .and_then(|_| current_revision(app))
+        .and_then(|revision| dispatch_inner(app, request, revision));
+    match result {
+        Ok(value) => Response::success(id, value),
+        Err(error) => Response::error(id, error),
+    }
 }
 fn dispatch_inner(app: &AppHandle, request: Request, revision: u64) -> Result<Value, ControlError> {
     match request.method.as_str() {
         "app.status" => {
             let _: Empty = params(request.params)?;
             let host = app.state::<crate::Host>();
-            let engine = host.lock().map_err(|_| error(ErrorCode::Internal, "状态不可用"))?;
-            output(json!({"protocolVersion":mewu_control::PROTOCOL_VERSION,"application":"MewuAI","version":env!("CARGO_PKG_VERSION"),"platform":std::env::consts::OS,"activeSceneId":engine.store.active_scene().ok().map(|scene|&scene.id),"revision":host.revision.load(Ordering::Acquire),"cliPluginRevision":revision}))
+            let engine = host
+                .lock()
+                .map_err(|_| error(ErrorCode::Internal, "状态不可用"))?;
+            output(
+                json!({"protocolVersion":mewu_control::PROTOCOL_VERSION,"application":"MewuAI","version":env!("CARGO_PKG_VERSION"),"platform":std::env::consts::OS,"activeSceneId":engine.store.active_scene().ok().map(|scene|&scene.id),"revision":host.revision.load(Ordering::Acquire),"cliPluginRevision":revision}),
+            )
         }
-        "app.schema" | "app.capabilities" => { let _: Empty = params(request.params)?; output(catalog()) }
+        "app.schema" | "app.capabilities" => {
+            let _: Empty = params(request.params)?;
+            output(catalog())
+        }
         "scene.list" => {
-            let page: Page = params(request.params)?; let limit = page_limit(page.limit)?;
-            let host = app.state::<crate::Host>(); let engine = host.lock().map_err(|_| error(ErrorCode::Internal,"状态不可用"))?;
+            let page: Page = params(request.params)?;
+            let limit = page_limit(page.limit)?;
+            let host = app.state::<crate::Host>();
+            let engine = host
+                .lock()
+                .map_err(|_| error(ErrorCode::Internal, "状态不可用"))?;
             let scenes = engine.store.scenes();
             let rows: Vec<_> = scenes.iter().skip(page.offset).take(limit).map(|scene| json!({"id":scene.id,"title":scene.title,"agentId":scene.agent_id,"frozen":scene.frozen,"closed":scene.closed,"regionCount":scene.regions.len(),"itemCount":scene.items.len(),"messageCount":scene.messages.len()})).collect();
-            output(json!({"scenes":rows,"nextOffset":(page.offset.saturating_add(rows.len())<scenes.len()).then(||page.offset+rows.len())}))
+            output(
+                json!({"scenes":rows,"nextOffset":(page.offset.saturating_add(rows.len())<scenes.len()).then(||page.offset+rows.len())}),
+            )
         }
         "scene.get" | "run.get" => {
-            let query: SceneQuery = params(request.params)?; let limit = page_limit(query.limit)?;
-            let host = app.state::<crate::Host>(); let engine = host.lock().map_err(|_| error(ErrorCode::Internal,"状态不可用"))?;
-            let scene = engine.store.scene(&query.scene_id).map_err(|_| error(ErrorCode::InvalidRequest,"会话不存在"))?;
+            let query: SceneQuery = params(request.params)?;
+            let limit = page_limit(query.limit)?;
+            let host = app.state::<crate::Host>();
+            let engine = host
+                .lock()
+                .map_err(|_| error(ErrorCode::Internal, "状态不可用"))?;
+            let scene = engine
+                .store
+                .scene(&query.scene_id)
+                .map_err(|_| error(ErrorCode::InvalidRequest, "会话不存在"))?;
             let messages = &scene.messages[scene.messages.len().saturating_sub(limit)..];
             if request.method == "run.get" {
-                let stream = scene.run.as_ref().and_then(|run|app.state::<Runtime>().streams.lock().ok()
-                    .and_then(|mut streams|streams.view(&scene.id,&run.id,run.status==mewu_core::RunStatus::Running,Instant::now())));
-                return output(RunView { scene_id: &scene.id, run: &scene.run, messages, stream });
+                let stream = scene.run.as_ref().and_then(|run| {
+                    app.state::<Runtime>()
+                        .streams
+                        .lock()
+                        .ok()
+                        .and_then(|mut streams| {
+                            streams.view(
+                                &scene.id,
+                                &run.id,
+                                run.status == mewu_core::RunStatus::Running,
+                                Instant::now(),
+                            )
+                        })
+                });
+                return output(RunView {
+                    scene_id: &scene.id,
+                    run: &scene.run,
+                    messages,
+                    stream,
+                });
             }
-            output(SceneView { scene_id: &scene.id, title: &scene.title, agent_id: &scene.agent_id, connection_id: &scene.connection_id,
-                revision: host.revision.load(Ordering::Acquire), background: &scene.background,
-                regions: &scene.regions, items: &scene.items, refs: &scene.refs, draft: &scene.draft,
-                frozen: scene.frozen, closed: scene.closed, run: &scene.run, messages })
+            output(SceneView {
+                scene_id: &scene.id,
+                title: &scene.title,
+                agent_id: &scene.agent_id,
+                connection_id: &scene.connection_id,
+                revision: host.revision.load(Ordering::Acquire),
+                background: &scene.background,
+                regions: &scene.regions,
+                items: &scene.items,
+                refs: &scene.refs,
+                draft: &scene.draft,
+                frozen: scene.frozen,
+                closed: scene.closed,
+                run: &scene.run,
+                messages,
+            })
         }
         "agent.list" | "model.list" => {
             let _: Empty = params(request.params)?;
-            let host = app.state::<crate::Host>(); let engine = host.lock().map_err(|_| error(ErrorCode::Internal,"状态不可用"))?;
+            let host = app.state::<crate::Host>();
+            let engine = host
+                .lock()
+                .map_err(|_| error(ErrorCode::Internal, "状态不可用"))?;
             // Public profiles contain references/hasKey flags, never credentials.
-            if request.method == "agent.list" { output(engine.store.agent_profiles().iter().filter(|agent| !agent.archived).collect::<Vec<_>>()) } else { output(engine.store.connection_profiles()) }
+            if request.method == "agent.list" {
+                output(
+                    engine
+                        .store
+                        .agent_profiles()
+                        .iter()
+                        .filter(|agent| !agent.archived)
+                        .collect::<Vec<_>>(),
+                )
+            } else {
+                output(engine.store.connection_profiles())
+            }
         }
-        "plugin.list" => { let _: Empty = params(request.params)?; let host = app.state::<crate::Host>(); let value = host.plugins.lock().map_err(|_|error(ErrorCode::Internal,"插件状态不可用"))?.store.snapshot().map_err(|_|error(ErrorCode::Internal,"插件状态不可用"))?; output(value) }
+        "plugin.list" => {
+            let _: Empty = params(request.params)?;
+            let host = app.state::<crate::Host>();
+            let value = host
+                .plugins
+                .lock()
+                .map_err(|_| error(ErrorCode::Internal, "插件状态不可用"))?
+                .store
+                .snapshot()
+                .map_err(|_| error(ErrorCode::Internal, "插件状态不可用"))?;
+            output(value)
+        }
         "recording.status" => {
             let query: RecordingStatusQuery = params(request.params)?;
             if let Some(id) = query.id {
                 if uuid::Uuid::parse_str(&id).is_err() || id.len() != 36 {
-                    return Err(error(ErrorCode::InvalidRequest,"录制 ID 必须是 UUID"));
+                    return Err(error(ErrorCode::InvalidRequest, "录制 ID 必须是 UUID"));
                 }
-                output(crate::recording::get_recording_result(app.clone(), &id)
-                    .map_err(|_|error(ErrorCode::Internal,"录屏结果不可用"))?)
+                output(
+                    crate::recording::get_recording_result(app.clone(), &id)
+                        .map_err(|_| error(ErrorCode::Internal, "录屏结果不可用"))?,
+                )
             } else {
-                output(crate::recording::get_recording_status(app.clone())
-                    .map_err(|_|error(ErrorCode::Internal,"录屏状态不可用"))?)
+                output(
+                    crate::recording::get_recording_status(app.clone())
+                        .map_err(|_| error(ErrorCode::Internal, "录屏状态不可用"))?,
+                )
             }
         }
         "operation.get" => {
             let query: Id = params(request.params)?;
-            let runtime = app.state::<Runtime>(); let mut inner = runtime.inner.lock().map_err(|_|error(ErrorCode::Internal,"控制状态不可用"))?;
-            let op = inner.operations.get_mut(&query.id).ok_or_else(||error(ErrorCode::InvalidRequest,"操作记录不存在或已过期"))?;
+            let runtime = app.state::<Runtime>();
+            let mut inner = runtime
+                .inner
+                .lock()
+                .map_err(|_| error(ErrorCode::Internal, "控制状态不可用"))?;
+            let op = inner
+                .operations
+                .get_mut(&query.id)
+                .ok_or_else(|| error(ErrorCode::InvalidRequest, "操作记录不存在或已过期"))?;
             expire(op);
             let mut result = json!({"operationId":query.id,"status":match op.phase {Phase::Queued=>"queued",Phase::Claimed=>"running",Phase::Complete=>"completed"}});
-            match &op.result { Some(Ok(value))=>{result["result"]=value.clone();},Some(Err(failure))=>{result["status"]=json!("failed");result["error"]=serde_json::to_value(failure).map_err(|_|error(ErrorCode::Internal,"控制结果不可用"))?;},None=>{} }
+            match &op.result {
+                Some(Ok(value)) => {
+                    result["result"] = value.clone();
+                }
+                Some(Err(failure)) => {
+                    result["status"] = json!("failed");
+                    result["error"] = serde_json::to_value(failure)
+                        .map_err(|_| error(ErrorCode::Internal, "控制结果不可用"))?;
+                }
+                None => {}
+            }
             output(result)
         }
         method if METHODS.contains(&method) => enqueue(app, request, revision),
-        _ => Err(error(ErrorCode::Unsupported,"不支持此命令，请运行 mewu schema")),
+        _ => Err(error(
+            ErrorCode::Unsupported,
+            "不支持此命令，请运行 mewu schema",
+        )),
     }
 }
 fn expire(operation: &mut Operation) {
     if operation.phase == Phase::Queued && operation.since.elapsed() >= Duration::from_secs(30) {
-        operation.phase = Phase::Complete; operation.result = Some(Err(error(ErrorCode::Timeout,"请求排队超时，未执行")));
+        operation.phase = Phase::Complete;
+        operation.result = Some(Err(error(ErrorCode::Timeout, "请求排队超时，未执行")));
     } else if operation.phase == Phase::Claimed && operation.since.elapsed() >= CLAIM_TIMEOUT {
         operation.phase = Phase::Complete;
-        operation.result = Some(Err(ControlError::unknown(ErrorCode::Timeout,"操作未及时返回，结果未知，请检查当前状态")));
+        operation.result = Some(Err(ControlError::unknown(
+            ErrorCode::Timeout,
+            "操作未及时返回，结果未知，请检查当前状态",
+        )));
     }
 }
 fn enqueue(app: &AppHandle, mut request: Request, revision: u64) -> Result<Value, ControlError> {
-    enqueue_authorized(app,request,revision,None)
+    enqueue_authorized(app, request, revision, None)
 }
-fn enqueue_authorized(app:&AppHandle,mut request:Request,revision:u64,native_authority:Option<NativeAuthority>)->Result<Value,ControlError>{
-    let fingerprint: [u8;32] = Sha256::digest(serde_json::to_vec(&request).map_err(|_|error(ErrorCode::InvalidRequest,"请求无效"))?).into();
-    let context: Context = match request.params.as_object_mut().and_then(|params|params.remove("context")) { Some(context)=>params(context)?,None=>Context::default() };
-    let capacity = MAX_PENDING + if urgent(&request.method, &request.params) { MAX_URGENT } else { 0 };
+fn enqueue_authorized(
+    app: &AppHandle,
+    mut request: Request,
+    revision: u64,
+    native_authority: Option<NativeAuthority>,
+) -> Result<Value, ControlError> {
+    let fingerprint: [u8; 32] = Sha256::digest(
+        serde_json::to_vec(&request).map_err(|_| error(ErrorCode::InvalidRequest, "请求无效"))?,
+    )
+    .into();
+    let context: Context = match request
+        .params
+        .as_object_mut()
+        .and_then(|params| params.remove("context"))
+    {
+        Some(context) => params(context)?,
+        None => Context::default(),
+    };
+    let capacity = MAX_PENDING
+        + if urgent(&request.method, &request.params) {
+            MAX_URGENT
+        } else {
+            0
+        };
     let runtime = app.state::<Runtime>();
     let event = {
-        let mut inner = runtime.inner.lock().map_err(|_|error(ErrorCode::Internal,"控制状态不可用"))?;
-        for operation in inner.operations.values_mut() { expire(operation); }
-        inner.operations.retain(|_,op| op.phase != Phase::Complete || op.since.elapsed()<TTL);
+        let mut inner = runtime
+            .inner
+            .lock()
+            .map_err(|_| error(ErrorCode::Internal, "控制状态不可用"))?;
+        for operation in inner.operations.values_mut() {
+            expire(operation);
+        }
+        inner
+            .operations
+            .retain(|_, op| op.phase != Phase::Complete || op.since.elapsed() < TTL);
         if let Some(op) = inner.operations.get(&request.id) {
-            if op.fingerprint != fingerprint { return Err(error(ErrorCode::Conflict,"请求 ID 已用于其他操作")); }
+            if op.fingerprint != fingerprint {
+                return Err(error(ErrorCode::Conflict, "请求 ID 已用于其他操作"));
+            }
             return Ok(json!({"operationId":request.id,"status":"accepted","duplicate":true}));
         }
-        if inner.operations.values().filter(|op|op.phase!=Phase::Complete).count()>=capacity { return Err(error(ErrorCode::Busy,"待执行操作过多")); }
-        while inner.operations.len()>=MAX_RECEIPTS {
-            let oldest = inner.operations.iter().filter(|(_,op)|op.phase==Phase::Complete).min_by_key(|(_,op)|op.since).map(|(id,_)|id.clone()).ok_or_else(||error(ErrorCode::Busy,"待执行操作过多"))?;
+        if inner
+            .operations
+            .values()
+            .filter(|op| op.phase != Phase::Complete)
+            .count()
+            >= capacity
+        {
+            return Err(error(ErrorCode::Busy, "待执行操作过多"));
+        }
+        while inner.operations.len() >= MAX_RECEIPTS {
+            let oldest = inner
+                .operations
+                .iter()
+                .filter(|(_, op)| op.phase == Phase::Complete)
+                .min_by_key(|(_, op)| op.since)
+                .map(|(id, _)| id.clone())
+                .ok_or_else(|| error(ErrorCode::Busy, "待执行操作过多"))?;
             inner.operations.remove(&oldest);
         }
-        let renderer_id = inner.renderer_id.clone().ok_or_else(||error(ErrorCode::Unavailable,"Mewu 界面尚未就绪"))?;
+        let renderer_id = inner
+            .renderer_id
+            .clone()
+            .ok_or_else(|| error(ErrorCode::Unavailable, "Mewu 界面尚未就绪"))?;
         let nonce = uuid::Uuid::new_v4().to_string();
-        inner.operations.insert(request.id.clone(),Operation{fingerprint,nonce:nonce.clone(),renderer_id,plugin_revision:revision,phase:Phase::Queued,since:Instant::now(),result:None,native_authority});
-        Event{id:request.id.clone(),nonce,method:request.method,params:request.params,scene_id:context.scene_id,revision:context.revision}
+        inner.operations.insert(
+            request.id.clone(),
+            Operation {
+                method: request.method.clone(),
+                feature_dispatched: false,
+                fingerprint,
+                nonce: nonce.clone(),
+                renderer_id,
+                plugin_revision: revision,
+                phase: Phase::Queued,
+                since: Instant::now(),
+                result: None,
+                native_authority,
+            },
+        );
+        Event {
+            id: request.id.clone(),
+            nonce,
+            method: request.method,
+            params: request.params,
+            scene_id: context.scene_id,
+            revision: context.revision,
+        }
     };
-    if app.emit_to("space","mewu-control-request",event).is_err() {
-        if let Ok(mut inner)=runtime.inner.lock(){if let Some(op)=inner.operations.get_mut(&request.id){op.phase=Phase::Complete;op.result=Some(Err(error(ErrorCode::Unavailable,"空间未接收请求")));}}
-        return Err(error(ErrorCode::Unavailable,"空间未接收请求"));
+    if app.emit_to("space", "mewu-control-request", event).is_err() {
+        if let Ok(mut inner) = runtime.inner.lock() {
+            if let Some(op) = inner.operations.get_mut(&request.id) {
+                op.phase = Phase::Complete;
+                op.result = Some(Err(error(ErrorCode::Unavailable, "空间未接收请求")));
+            }
+        }
+        return Err(error(ErrorCode::Unavailable, "空间未接收请求"));
     }
     Ok(json!({"operationId":request.id,"status":"queued"}))
 }
-pub(crate) async fn execute_native(app:&AppHandle,method:&str,params:Value,authority:Arc<dyn Fn()->Result<(),String>+Send+Sync>,deadline:Instant,origin:Option<NativeEventOrigin>)->Result<Value,String>{
+pub(crate) async fn execute_native(
+    app: &AppHandle,
+    method: &str,
+    params: Value,
+    authority: Arc<dyn Fn() -> Result<(), String> + Send + Sync>,
+    deadline: Instant,
+    origin: Option<NativeEventOrigin>,
+) -> Result<Value, String> {
     (authority)()?;
-    if !METHODS.contains(&method){return Err("不支持此 Mewu 操作".into())}
-    let id=format!("native-{}",uuid::Uuid::new_v4());let request=Request::new(&id,method,params);request.validate().map_err(|_|"操作参数无效")?;
-    enqueue_authorized(app,request,0,Some(NativeAuthority(authority.clone(),origin))).map_err(|e|e.message)?;
+    if !METHODS.contains(&method) {
+        return Err("不支持此 Mewu 操作".into());
+    }
+    let id = format!("native-{}", uuid::Uuid::new_v4());
+    let request = Request::new(&id, method, params);
+    request.validate().map_err(|_| "操作参数无效")?;
+    enqueue_authorized(
+        app,
+        request,
+        0,
+        Some(NativeAuthority(authority.clone(), origin)),
+    )
+    .map_err(|e| e.message)?;
     loop {
-        let stopped=(authority)().err().or_else(||(Instant::now()>=deadline).then(||"操作等待超时".to_string()));
-        let terminal={let runtime=app.state::<Runtime>();let mut inner=runtime.inner.lock().map_err(|_|"操作状态不可用")?;let op=inner.operations.get_mut(&id).ok_or("操作记录已过期")?;expire(op);
-            if op.phase==Phase::Complete{op.result.clone()}
-            else if let Some(reason)=stopped{
-                let failure=if op.phase==Phase::Queued{ControlError::not_sent(ErrorCode::Disabled,reason)}else{ControlError::unknown(ErrorCode::Unavailable,"操作已开始，结果未确认，请检查当前状态")};
-                op.result=Some(Err(failure));op.phase=Phase::Complete;op.result.clone()
-            }else{None}};
-        if let Some(result)=terminal{return result.map_err(|e|e.message)}
+        let stopped = (authority)()
+            .err()
+            .or_else(|| (Instant::now() >= deadline).then(|| "操作等待超时".to_string()));
+        let terminal = {
+            let runtime = app.state::<Runtime>();
+            let mut inner = runtime.inner.lock().map_err(|_| "操作状态不可用")?;
+            let op = inner.operations.get_mut(&id).ok_or("操作记录已过期")?;
+            expire(op);
+            if op.phase == Phase::Complete {
+                op.result.clone()
+            } else if let Some(reason) = stopped {
+                let failure = if op.phase == Phase::Queued {
+                    ControlError::not_sent(ErrorCode::Disabled, reason)
+                } else {
+                    ControlError::unknown(
+                        ErrorCode::Unavailable,
+                        "操作已开始，结果未确认，请检查当前状态",
+                    )
+                };
+                op.result = Some(Err(failure));
+                op.phase = Phase::Complete;
+                op.result.clone()
+            } else {
+                None
+            }
+        };
+        if let Some(result) = terminal {
+            return result.map_err(|e| e.message);
+        }
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
 }
 fn urgent(method: &str, params: &Value) -> bool {
-    let Some(fields) = params.as_object() else { return false; };
-    let valid_id = |key| fields.get(key).and_then(Value::as_str).is_some_and(|id| !id.is_empty() && id.len() <= 256 && !id.chars().any(char::is_control));
+    let Some(fields) = params.as_object() else {
+        return false;
+    };
+    let valid_id = |key| {
+        fields.get(key).and_then(Value::as_str).is_some_and(|id| {
+            !id.is_empty() && id.len() <= 256 && !id.chars().any(char::is_control)
+        })
+    };
     match method {
         "chat.cancel" => fields.len() == 1 && valid_id("expectedRunId"),
-        "recording.control" | "scroll.control" => fields.len() == 2 && valid_id("id")
-            && matches!(fields.get("action").and_then(Value::as_str), Some("stop" | "cancel")),
+        "recording.control" | "scroll.control" => {
+            fields.len() == 2
+                && valid_id("id")
+                && matches!(
+                    fields.get("action").and_then(Value::as_str),
+                    Some("stop" | "cancel")
+                )
+        }
         _ => false,
     }
 }
@@ -471,15 +1032,111 @@ mod catalog_tests;
 mod tests {
     use super::*;
     #[test]
-    fn lifecycle_provenance_is_native_claimed_only_and_does_not_count_parallel_parents_as_depth(){
-        let make=|phase,origin|Operation{fingerprint:[0;32],nonce:String::new(),renderer_id:String::new(),plugin_revision:0,phase,since:Instant::now(),result:None,native_authority:Some(NativeAuthority(Arc::new(||panic!("reading provenance must not invoke an effect or grant")),Some(origin)))};
-        let a=NativeEventOrigin{ancestors:vec!["rule-a".into()],depth:1};let b=NativeEventOrigin{ancestors:vec!["rule-b".into()],depth:2};
-        let mut inner=Inner::default();inner.operations.insert("a".into(),make(Phase::Queued,a.clone()));
+    fn feature_admission_binds_nonce_renderer_method_authority_and_exactly_one_dispatch() {
+        let make = || Operation {
+            method: "capture.quick".into(),
+            feature_dispatched: false,
+            fingerprint: [0; 32],
+            nonce: "nonce".into(),
+            renderer_id: "renderer".into(),
+            plugin_revision: 7,
+            phase: Phase::Claimed,
+            since: Instant::now(),
+            result: None,
+            native_authority: None,
+        };
+        let mut inner = Inner {
+            renderer_id: Some("renderer".into()),
+            ready: true,
+            ..Default::default()
+        };
+        inner.operations.insert("op".into(), make());
+        for (revision, nonce, method) in [
+            (Some(7), "wrong", "capture.quick"),
+            (Some(7), "nonce", "capture.open"),
+            (Some(8), "nonce", "capture.quick"),
+        ] {
+            assert!(feature_admission(&mut inner, revision, "op", nonce, method).is_err());
+            assert!(!inner.operations["op"].feature_dispatched);
+        }
+        assert!(
+            feature_admission(&mut inner, Some(7), "op", "nonce", "capture.quick")
+                .unwrap()
+                .is_none()
+        );
+        assert!(feature_admission(&mut inner, Some(7), "op", "nonce", "capture.quick").is_err());
+        inner.operations.insert("op".into(), make());
+        inner.renderer_id = Some("replacement".into());
+        assert!(feature_admission(&mut inner, Some(7), "op", "nonce", "capture.quick").is_err());
+        inner.renderer_id = Some("renderer".into());
+        let op = inner.operations.get_mut("op").unwrap();
+        op.native_authority = Some(NativeAuthority(
+            Arc::new(|| Err("revoked".into())),
+            Some(NativeEventOrigin {
+                hold_source: Some("hold-rule".into()),
+                ..Default::default()
+            }),
+        ));
+        assert!(feature_admission(&mut inner, None, "op", "nonce", "capture.quick").is_err());
+        inner.operations.get_mut("op").unwrap().native_authority = Some(NativeAuthority(
+            Arc::new(|| Ok(())),
+            Some(NativeEventOrigin {
+                hold_source: Some("hold-rule".into()),
+                ..Default::default()
+            }),
+        ));
+        assert_eq!(
+            feature_admission(&mut inner, None, "op", "nonce", "capture.quick")
+                .unwrap()
+                .unwrap()
+                .hold_source
+                .as_deref(),
+            Some("hold-rule")
+        );
+    }
+    #[test]
+    fn lifecycle_provenance_is_native_claimed_only_and_does_not_count_parallel_parents_as_depth() {
+        let make = |phase, origin| Operation {
+            method: "capture.open".into(),
+            feature_dispatched: false,
+            fingerprint: [0; 32],
+            nonce: String::new(),
+            renderer_id: String::new(),
+            plugin_revision: 0,
+            phase,
+            since: Instant::now(),
+            result: None,
+            native_authority: Some(NativeAuthority(
+                Arc::new(|| panic!("reading provenance must not invoke an effect or grant")),
+                Some(origin),
+            )),
+        };
+        let a = NativeEventOrigin {
+            ancestors: vec!["rule-a".into()],
+            depth: 1,
+            ..Default::default()
+        };
+        let b = NativeEventOrigin {
+            ancestors: vec!["rule-b".into()],
+            depth: 2,
+            ..Default::default()
+        };
+        let mut inner = Inner::default();
+        inner
+            .operations
+            .insert("a".into(), make(Phase::Queued, a.clone()));
         assert!(operation_origin(&inner).is_none());
-        inner.operations.get_mut("a").unwrap().phase=Phase::Claimed;
-        let origin=operation_origin(&inner).unwrap();assert_eq!(origin.ancestors,a.ancestors);assert_eq!(origin.depth,1);
-        inner.operations.insert("b".into(),make(Phase::Claimed,b));let origin=operation_origin(&inner).unwrap();assert_eq!(origin.depth,2);assert_eq!(origin.ancestors.len(),2);
-        inner.operations.get_mut("a").unwrap().phase=Phase::Complete;inner.operations.get_mut("b").unwrap().phase=Phase::Complete;assert!(operation_origin(&inner).is_none());
+        inner.operations.get_mut("a").unwrap().phase = Phase::Claimed;
+        let origin = operation_origin(&inner).unwrap();
+        assert_eq!(origin.ancestors, a.ancestors);
+        assert_eq!(origin.depth, 1);
+        inner.operations.insert("b".into(), make(Phase::Claimed, b));
+        let origin = operation_origin(&inner).unwrap();
+        assert_eq!(origin.depth, 2);
+        assert_eq!(origin.ancestors.len(), 2);
+        inner.operations.get_mut("a").unwrap().phase = Phase::Complete;
+        inner.operations.get_mut("b").unwrap().phase = Phase::Complete;
+        assert!(operation_origin(&inner).is_none());
     }
     #[test]
     fn result_budget_stops_serializing_before_walking_the_entire_collection() {
@@ -494,32 +1151,71 @@ mod tests {
         let values: Vec<_> = (0..4096).map(|_| Counted(&count)).collect();
         let failure = output(&values).unwrap_err();
         assert_eq!(failure.code, ErrorCode::ResultTooLarge);
-        assert!(count.get() < 300, "must not serialize all 4 MiB before rejecting");
-        assert_eq!(output(json!({"text":"红黄蓝"})).unwrap(), json!({"text":"红黄蓝"}));
+        assert!(
+            count.get() < 300,
+            "must not serialize all 4 MiB before rejecting"
+        );
+        assert_eq!(
+            output(json!({"text":"红黄蓝"})).unwrap(),
+            json!({"text":"红黄蓝"})
+        );
     }
 
     #[test]
     fn pending_timeout_is_not_sent_but_claimed_timeout_is_unknown_and_never_requeued() {
-        let mut op = Operation { fingerprint: [0;32], nonce: "n".into(), renderer_id: "r".into(), plugin_revision: 1,
-            phase: Phase::Queued, since: Instant::now() - Duration::from_secs(31), result: None, native_authority:None };
+        let mut op = Operation {
+            method: "capture.open".into(),
+            feature_dispatched: false,
+            fingerprint: [0; 32],
+            nonce: "n".into(),
+            renderer_id: "r".into(),
+            plugin_revision: 1,
+            phase: Phase::Queued,
+            since: Instant::now() - Duration::from_secs(31),
+            result: None,
+            native_authority: None,
+        };
         expire(&mut op);
         assert!(op.phase == Phase::Complete);
-        assert_eq!(op.result.as_ref().unwrap().as_ref().unwrap_err().outcome, ExecutionOutcome::NotSent);
-        op.phase = Phase::Claimed; op.since = Instant::now() - CLAIM_TIMEOUT; op.result = None;
+        assert_eq!(
+            op.result.as_ref().unwrap().as_ref().unwrap_err().outcome,
+            ExecutionOutcome::NotSent
+        );
+        op.phase = Phase::Claimed;
+        op.since = Instant::now() - CLAIM_TIMEOUT;
+        op.result = None;
         expire(&mut op);
         assert!(op.phase == Phase::Complete);
-        assert_eq!(op.result.as_ref().unwrap().as_ref().unwrap_err().outcome, ExecutionOutcome::Unknown);
+        assert_eq!(
+            op.result.as_ref().unwrap().as_ref().unwrap_err().outcome,
+            ExecutionOutcome::Unknown
+        );
         expire(&mut op);
-        assert_eq!(op.result.as_ref().unwrap().as_ref().unwrap_err().outcome, ExecutionOutcome::Unknown);
+        assert_eq!(
+            op.result.as_ref().unwrap().as_ref().unwrap_err().outcome,
+            ExecutionOutcome::Unknown
+        );
     }
 
     #[test]
     fn overloaded_queue_reserves_only_bounded_stop_and_cancel_capacity() {
         assert!(urgent("chat.cancel", &json!({"expectedRunId":"run"})));
-        assert!(urgent("recording.control", &json!({"id":"recording","action":"stop"})));
-        assert!(urgent("scroll.control", &json!({"id":"scroll","action":"cancel"})));
-        assert!(!urgent("recording.control", &json!({"id":"recording","action":"resume"})));
-        assert!(!urgent("recording.control", &json!({"id":"recording","action":"stop","arbitrary":true})));
+        assert!(urgent(
+            "recording.control",
+            &json!({"id":"recording","action":"stop"})
+        ));
+        assert!(urgent(
+            "scroll.control",
+            &json!({"id":"scroll","action":"cancel"})
+        ));
+        assert!(!urgent(
+            "recording.control",
+            &json!({"id":"recording","action":"resume"})
+        ));
+        assert!(!urgent(
+            "recording.control",
+            &json!({"id":"recording","action":"stop","arbitrary":true})
+        ));
         assert!(!urgent("chat.send", &json!({"action":"cancel"})));
         assert!(!urgent("chat.cancel", &json!({"expectedRunId":""})));
     }

@@ -177,7 +177,7 @@ fn human_views_render_real_results_without_protocol_noise_or_terminal_injection(
     assert!(
         text.contains("capture.open")
             && text.contains("recording.start")
-            && text.contains("可调用方法（37）")
+            && text.contains("可调用方法（38）")
     );
     let mut output = Vec::new();
     presentation::emit_text(&mut output,"run.get",&Response::success("r",json!({"sceneId":"scene-id","run":{"status":"completed"},"messages":[{"role":"assistant","text":"第一行\n第二行","reasoning":"do not show this"}]}))).unwrap();

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 import { t } from "../i18n";
 import { createEffect, createMemo, createSignal, For, onCleanup, Show, untrack } from 'solid-js';
-import { Code2, Copy, Download, File, Image, Link2, Maximize2, Pencil, Pin, RotateCcw, Video, X } from 'lucide-solid';
+import { Code2, Copy, Download, File, Image, Link2, Maximize2, Pencil, Pin, Plus, RotateCcw, Trash2, Video, X } from 'lucide-solid';
 import ObjectMoveGrip from './ObjectMoveGrip';
 import { beginObjectDrag, type ObjectDrag } from '../extension-object-drag';
 import {objectMoveGripPosition} from '../object-move-grip';
@@ -35,6 +35,7 @@ interface Props {
   onExport?: () => void;
   onExportImage?: (variant: ImageExportVariant) => void;
   onCopy?: () => void;
+  onAddRegion?: () => void;
   onPin?: () => Promise<boolean | void>;
   video?: Omit<VideoArtifactProps, 'item' | 'active'>;
   busy?: boolean;
@@ -280,14 +281,18 @@ export default function ArtifactCard(props: Props) {
         </Show>
       </Show>
       <Show when={props.item.asset.kind === 'video'}>
-        <Show when={props.video}>{value => <VideoArtifact {...value()} item={props.item} blackboard={props.blackboard} active={Boolean(props.active && (!props.blackboard || props.interactive && !moving()))} onActivate={props.onActivate} objectActions={<>
+        <Show when={props.video}>{value => <VideoArtifact {...value()} item={props.item} blackboard={props.blackboard} active={Boolean(props.active && (!props.blackboard || props.interactive && !moving()))} onActivate={props.onActivate} leadingActions={<>
           <Show when={!props.blackboard}>
-          <Show when={props.aiAvailable !== false}><button data-caption={t('引用')} class="capture-reference" classList={{ 'capture-referenced': props.referenced }} title={props.referenced?t('取消引用'):t('引用')} aria-label={props.referenced?t('取消引用'):t('引用')} disabled={props.busy} onClick={props.onReference}>@</button></Show>
-          <button data-caption={t('复制')} title={t('复制')} aria-label={t('复制视频文件')} disabled={props.busy} onClick={props.onCopy}><Copy size={20}/></button>
-          <button data-caption={t('保存')} title={t('保存')} aria-label={t('保存视频')} disabled={props.busy} onClick={props.onExport}><Download size={20}/></button>
+          <Show when={props.aiAvailable !== false}><button data-layout-id="reference" data-caption={t('引用')} class="capture-reference" classList={{ 'capture-referenced': props.referenced }} title={props.referenced?t('取消引用'):t('引用')} aria-label={props.referenced?t('取消引用'):t('引用')} disabled={props.busy} onClick={props.onReference}>@</button></Show>
+          <Show when={props.onAddRegion}><button data-layout-id="add-region" data-caption={t('加选区')} title={t('加选区')} aria-label={t('加选区')} disabled={props.busy} onClick={props.onAddRegion}><Plus size={18}/></button></Show>
+          <button data-layout-id="delete-region" data-caption={t('删除')} title={t('删除')} aria-label={t('移除 {0}').replaceAll('{0}',()=>props.item.asset.name)} disabled={props.busy} onClick={props.onRemove}><Trash2 size={17}/></button>
           </Show>
-          <Show when={props.onPin}><button data-caption={t('置顶')} title={t('置顶')} aria-label={t('置顶')} disabled={props.busy||pinning()} onClick={() => void pinObject()}><Pin size={20}/></button></Show>
-          <Show when={!props.blackboard}><button data-caption={t('移除')} title={t('移除')} aria-label={t('移除 {0}').replaceAll('{0}',()=>props.item.asset.name)} disabled={props.busy} onClick={props.onRemove}><X size={20}/></button></Show>
+        </>} trailingActions={<>
+          <Show when={!props.blackboard}>
+          <button data-layout-id="copy" data-caption={t('复制')} title={t('复制')} aria-label={t('复制视频文件')} disabled={props.busy} onClick={props.onCopy}><Copy size={20}/></button>
+          <button data-layout-id="export" data-caption={t('保存')} title={t('保存')} aria-label={t('保存视频')} disabled={props.busy} onClick={props.onExport}><Download size={20}/></button>
+          </Show>
+          <Show when={props.onPin}><button data-layout-id="pin" data-caption={t('贴图')} title={t('贴图')} aria-label={t('置顶')} disabled={props.busy||pinning()} onClick={() => void pinObject()}><Pin size={20}/></button></Show>
         </>} />}</Show>
       </Show>
       <Show when={isDocument()}>

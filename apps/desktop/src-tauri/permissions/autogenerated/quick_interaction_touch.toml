@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-quick-interaction-touch"
+description = "Enables the quick_interaction_touch command without any pre-configured scope."
+commands.allow = ["quick_interaction_touch"]
+
+[[permission]]
+identifier = "deny-quick-interaction-touch"
+description = "Denies the quick_interaction_touch command without any pre-configured scope."
+commands.deny = ["quick_interaction_touch"]

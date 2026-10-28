@@ -6,13 +6,14 @@ import type { OcrDocument } from '../contracts';
 import { nearestOcrGlyph, ocrLayout, unrotateOcrPoint, type OcrGlyph } from '../ocr-selection';
 import './ocr.css';
 
-interface Props { document: OcrDocument; active: boolean; label?: string; repeatLabel?: string; onClose: () => void; onRepeat?: () => void; onError: (message: string) => void; onSelecting?: (value: boolean) => void }
+interface Props { document: OcrDocument; active: boolean; label?: string; repeatLabel?: string; onClose: () => void; onRepeat?: () => void; onError: (message: string) => void; onSelecting?: (value: boolean) => void;hitOnly?:boolean;onCopied?:()=>void }
 
 export default function OcrTextLayer(props: Props) {
   let surface!: HTMLDivElement, textHost!: HTMLSpanElement;
   let pointer: number | undefined, anchor = -1;
   const key = createMemo(() => JSON.stringify(props.document));
   const layout = createMemo(on(key, () => ocrLayout(props.document)));
+  const hitWords=createMemo(()=>props.document.lines.flatMap(line=>line.words));
   const [range, setRange] = createSignal<[number, number]>();
   const [menu, setMenu] = createSignal<{ x: number; y: number }>();
   const highlights = createMemo(() => {
@@ -66,13 +67,13 @@ export default function OcrTextLayer(props: Props) {
   async function copy(all: boolean) {
     const text = all ? layout().text : selectedText(); setMenu(undefined);
     if (!text) return;
-    try { await navigator.clipboard.writeText(text); }
+    try { await navigator.clipboard.writeText(text); props.onCopied?.(); }
     catch { props.onError('无法复制文字'); }
   }
   function clipboard(event: ClipboardEvent) {
     const text = selectedText();
     event.stopPropagation();
-    if (text && event.clipboardData) { event.preventDefault(); event.clipboardData.setData('text/plain', text); }
+    if (text && event.clipboardData) { event.preventDefault(); event.clipboardData.setData('text/plain', text);setTimeout(()=>props.onCopied?.(),0); }
   }
   function keydown(event: KeyboardEvent) {
     event.stopPropagation();
@@ -93,8 +94,9 @@ export default function OcrTextLayer(props: Props) {
   onCleanup(() => { finish(); clearSelection(); document.removeEventListener('selectionchange', changed); });
   return <div ref={surface} class="ocr-text-layer" classList={{ 'ocr-active': props.active }} tabIndex={0} role="textbox" aria-label={props.label ?? t('识别文字')} aria-readonly="true" aria-multiline="true" onPointerDown={begin} onPointerMove={move} onPointerUp={event => { move(event); finish(event); }} onPointerCancel={finish} onLostPointerCapture={finish} onKeyDown={keydown} onCopy={clipboard} onContextMenu={event => { event.preventDefault(); event.stopPropagation(); surface.focus({ preventScroll: true }); const box = surface.getBoundingClientRect(); setMenu({ x: Math.max(0, Math.min(event.clientX - box.x, box.width - 112)), y: Math.max(0, Math.min(event.clientY - box.y, box.height - 138)) }); }}>
     <span ref={textHost} class="ocr-readable-text">{layout().text}</span>
+    <Show when={props.hitOnly}><svg class="quick-ocr-hits" viewBox={`0 0 ${props.document.width} ${props.document.height}`} preserveAspectRatio="none"><g transform={`rotate(${props.document.textAngle??0} ${props.document.width/2} ${props.document.height/2})`}><For each={hitWords()}>{box=><rect x={box.x} y={box.y} width={box.width} height={box.height}/>}</For></g></svg></Show>
     <div class="ocr-highlights-clip" aria-hidden="true"><svg viewBox={`0 0 ${props.document.width} ${props.document.height}`} preserveAspectRatio="none"><g transform={`rotate(${props.document.textAngle ?? 0} ${props.document.width / 2} ${props.document.height / 2})`}><For each={highlights()}>{box => <rect x={box.x} y={box.y} width={box.width} height={box.height} />}</For></g></svg></div>
-    <Show when={props.active}><div class="ocr-text-actions" onPointerDown={event => { event.preventDefault(); event.stopPropagation(); }}><button title={t("复制全文")} aria-label={props.label ? t("复制{0}全文").replaceAll("{0}", () => String(props.label)) : t('复制识别全文')} onClick={() => void copy(true)}><Copy size={14} /></button><Show when={props.onRepeat}><button title={props.repeatLabel ?? t('重新识别')} aria-label={props.repeatLabel ?? t('重新识别文字')} onClick={() => props.onRepeat?.()}><RotateCw size={14} /></button></Show><button title={t("退出选字")} aria-label={t("退出选字")} onClick={props.onClose}><X size={14} /></button></div></Show>
+    <Show when={props.active&&(!props.hitOnly||range())}><div class="ocr-text-actions" onPointerDown={event => { event.preventDefault(); event.stopPropagation(); }}><button title={t("复制全文")} aria-label={props.label ? t("复制{0}全文").replaceAll("{0}", () => String(props.label)) : t('复制识别全文')} onClick={() => void copy(true)}><Copy size={14} /></button><Show when={props.onRepeat}><button title={props.repeatLabel ?? t('重新识别')} aria-label={props.repeatLabel ?? t('重新识别文字')} onClick={() => props.onRepeat?.()}><RotateCw size={14} /></button></Show><button title={t("退出选字")} aria-label={t("退出选字")} onClick={props.onClose}><X size={14} /></button></div></Show>
     <Show when={menu()}>{position => <div class="ocr-context-menu" role="menu" style={{ left: `${position().x}px`, top: `${position().y}px` }} onPointerDown={event => { event.preventDefault(); event.stopPropagation(); }}><button role="menuitem" disabled={!range()} onClick={() => void copy(false)}>{t("复制")}</button><button role="menuitem" onClick={() => void copy(true)}>{t("复制全文")}</button><button role="menuitem" onClick={() => { select(0, layout().text.length); setMenu(undefined); }}>{t("全选")}</button><button role="menuitem" onClick={props.onClose}>{t("退出选字")}</button></div>}</Show>
   </div>;
 }

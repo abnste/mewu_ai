@@ -11,6 +11,7 @@ struct Entry {
     rule_id: String,
     revision: u64,
     key: Shortcut,
+    hold: Option<u32>,
 }
 #[derive(Clone, Serialize)]
 pub(super) struct Status {
@@ -25,6 +26,8 @@ pub(super) struct Registry {
     update: Mutex<()>,
     keys: Mutex<HashMap<u32, Entry>>,
     pressed: Mutex<std::collections::HashSet<u32>>,
+    hold_tokens: Mutex<HashMap<u32, u64>>,
+    hold_epoch: AtomicU64,
     status: Mutex<HashMap<String, Status>>,
     editor: Mutex<Option<(String, Instant)>>,
     #[cfg(target_os = "linux")]
@@ -54,13 +57,51 @@ fn parse(value: &str) -> Result<Shortcut> {
     }
     Ok(key)
 }
+fn binding(trigger: &Trigger) -> Result<Option<Shortcut>> {
+    match trigger {
+        Trigger::Hold { accelerator, .. } if accelerator == "Super" => {
+            #[cfg(windows)]
+            {
+                return Ok(Some(Shortcut::new(
+                    None,
+                    tauri_plugin_global_shortcut::Code::MetaLeft,
+                )));
+            }
+            #[cfg(not(windows))]
+            {
+                return Err("此系统不支持单独长按系统修饰键；请选择功能键或组合键".into());
+            }
+        }
+        Trigger::Shortcut { accelerator } | Trigger::Hold { accelerator, .. } => {
+            parse(accelerator).map(Some)
+        }
+        _ => Ok(None),
+    }
+}
+fn hold(rule: &Rule) -> Option<u32> {
+    if let Trigger::Hold { milliseconds, .. } = &rule.trigger {
+        Some(*milliseconds)
+    } else {
+        None
+    }
+}
+#[cfg(windows)]
+fn modifier_hold(key: &Shortcut) -> bool {
+    key.mods.is_empty() && key.key == tauri_plugin_global_shortcut::Code::MetaLeft
+}
 // Windows reserves this physical chord. Its native transport feeds the same
 // generic rule registry; it has no capture action or special rule identity.
 #[cfg(windows)]
 fn reserved_transport(key: &Shortcut) -> bool {
     key.mods == (Modifiers::SUPER | Modifiers::SHIFT) && format!("{:?}", key.key) == "KeyS"
 }
-fn register(r: &Shared, key: Shortcut) -> Result<()> {
+fn register(r: &Shared, key: Shortcut, hold: Option<u32>) -> Result<()> {
+    #[cfg(windows)]
+    if modifier_hold(&key) {
+        return crate::hold_key_windows::configure(&r.app, hold.ok_or("长按快捷键缺少时长")?);
+    }
+    #[cfg(not(windows))]
+    let _ = hold;
     #[cfg(windows)]
     if reserved_transport(&key) {
         crate::system_capture_shortcut::Change::apply(&r.app, true)?.commit();
@@ -72,6 +113,11 @@ fn register(r: &Shared, key: Shortcut) -> Result<()> {
         .map_err(|_| "全局快捷键注册失败，可能已被系统或其他软件占用".into())
 }
 fn unregister(r: &Shared, key: Shortcut) -> Result<()> {
+    #[cfg(windows)]
+    if modifier_hold(&key) {
+        crate::hold_key_windows::disable();
+        return Ok(());
+    }
     #[cfg(windows)]
     if reserved_transport(&key) {
         crate::system_capture_shortcut::Change::apply(&r.app, false)?.commit();
@@ -93,6 +139,14 @@ pub(super) fn canonicalize(rule: &mut Rule) -> Result<()> {
     if let Trigger::Shortcut { accelerator } = &mut rule.trigger {
         *accelerator = parse(accelerator)?.to_string();
     }
+    if let Trigger::Hold { accelerator, .. } = &mut rule.trigger {
+        if matches!(accelerator.as_str(), "Win" | "Meta" | "Super") {
+            *accelerator = "Super".into();
+        } else {
+            *accelerator = parse(accelerator)?.to_string();
+        }
+    }
+    let _ = binding(&rule.trigger)?;
     rule.validate()?;
     if !rule.condition.trim().is_empty() {
         mewu_hooks::validate_script(&rule.condition)?;
@@ -119,12 +173,12 @@ pub(super) fn save(r: &Shared, expected: u64, mut rule: Rule) -> Result<mewu_hoo
             previous = store.rule(&rule.id)?;
         }
         if rule.enabled {
-            if let Trigger::Shortcut { accelerator } = &rule.trigger {
-                let wanted = parse(accelerator)?.id();
+            if let Some(wanted) = binding(&rule.trigger)? {
+                let wanted = wanted.id();
                 for other in store.rules()? {
                     if other.enabled && other.id != rule.id {
-                        if let Trigger::Shortcut { accelerator } = &other.trigger {
-                            if parse(accelerator)?.id() == wanted {
+                        if let Some(other_key) = binding(&other.trigger)? {
+                            if other_key.id() == wanted {
                                 return Err("此快捷键已被其他规则使用".into());
                             }
                         }
@@ -144,11 +198,7 @@ pub(super) fn save(r: &Shared, expected: u64, mut rule: Rule) -> Result<mewu_hoo
         return Ok(saved);
     }
     let wanted = if rule.enabled {
-        if let Trigger::Shortcut { accelerator } = &rule.trigger {
-            Some(parse(accelerator)?)
-        } else {
-            None
-        }
+        binding(&rule.trigger)?
     } else {
         None
     };
@@ -162,13 +212,29 @@ pub(super) fn save(r: &Shared, expected: u64, mut rule: Rule) -> Result<mewu_hoo
             if r.app.global_shortcut().is_registered(key) {
                 return Err("此快捷键已被 Mewu 的其他功能使用".into());
             }
-            register(r, key)?;
+            register(r, key, hold(&rule))?;
             reserved = Some(key);
         }
+    }
+    #[cfg(windows)]
+    let changed_hold = if let (Some(old), Some(key)) = (&old, wanted) {
+        modifier_hold(&key) && old.hold != hold(&rule)
+    } else {
+        false
+    };
+    #[cfg(windows)]
+    if changed_hold {
+        register(r, wanted.expect("checked key"), hold(&rule))?;
     }
     let saved = match lock(&r.store)?.save(expected, rule.clone()) {
         Ok(v) => v,
         Err(e) => {
+            #[cfg(windows)]
+            if changed_hold {
+                if let Some(old) = &old {
+                    let _ = register(r, old.key, old.hold);
+                }
+            }
             if let Some(key) = reserved {
                 let _ = unregister(r, key);
             }
@@ -193,6 +259,7 @@ pub(super) fn save(r: &Shared, expected: u64, mut rule: Rule) -> Result<mewu_hoo
                     rule_id: rule.id.clone(),
                     revision,
                     key,
+                    hold: hold(&rule),
                 },
             );
         }
@@ -216,6 +283,7 @@ pub(super) fn save(r: &Shared, expected: u64, mut rule: Rule) -> Result<mewu_hoo
     }
     drop(statuses);
     super::cancel_rule(r, &rule.id);
+    crate::quick_capture::withdraw(&r.app, &rule.id);
     Ok(saved)
 }
 // A changed rule revision also changes the event authority captured by the
@@ -225,12 +293,13 @@ fn shortcut_binding_changed(old: Option<&Rule>, new: Option<&Rule>) -> bool {
     [old, new]
         .into_iter()
         .flatten()
-        .any(|r| r.enabled && matches!(r.trigger, Trigger::Shortcut { .. }))
+        .any(|r| r.enabled && r.trigger.accelerator().is_some())
 }
 pub(super) fn remove(r: &Shared, expected: u64, id: &str, revision: u64) -> Result<()> {
     let _update = lock(&r.shortcuts.update)?;
     let previous = lock(&r.store)?.rule(id)?;
     lock(&r.store)?.remove(expected, id, revision)?;
+    crate::quick_capture::withdraw(&r.app, id);
     super::cancel_rule(r, id);
     #[cfg(target_os = "linux")]
     if crate::capture_shortcut_wayland_host::is_wayland() {
@@ -256,6 +325,10 @@ pub(super) fn remove(r: &Shared, expected: u64, id: &str, revision: u64) -> Resu
     Ok(())
 }
 pub(super) fn clear(r: &Shared) {
+    if let Ok(mut held) = r.shortcuts.hold_tokens.lock() {
+        held.clear();
+    }
+    crate::quick_capture::detach(&r.app);
     #[cfg(target_os = "linux")]
     r.shortcuts.portal_epoch.fetch_add(1, Ordering::AcqRel);
     if let Ok(mut pressed) = r.shortcuts.pressed.lock() {
@@ -288,9 +361,8 @@ pub(super) fn reconcile(r: &Shared) -> Result<()> {
     }
     let rules = lock(&r.store)?.rules()?;
     for rule in rules.into_iter().filter(|r| r.enabled) {
-        if let Trigger::Shortcut { accelerator } = &rule.trigger {
-            let key = parse(accelerator)?;
-            match register(r, key) {
+        if let Some(key) = binding(&rule.trigger)? {
+            match register(r, key, hold(&rule)) {
                 Ok(()) => {
                     lock(&r.shortcuts.keys)?.insert(
                         key.id(),
@@ -298,6 +370,7 @@ pub(super) fn reconcile(r: &Shared) -> Result<()> {
                             rule_id: rule.id.clone(),
                             revision: rule.revision,
                             key,
+                            hold: hold(&rule),
                         },
                     );
                     lock(&r.shortcuts.status)?.insert(
@@ -325,11 +398,29 @@ pub(super) fn reconcile(r: &Shared) -> Result<()> {
     Ok(())
 }
 pub(super) fn statuses(r: &Shared) -> HashMap<String, Status> {
-    r.shortcuts
+    let values = r
+        .shortcuts
         .status
         .lock()
         .map(|s| s.clone())
-        .unwrap_or_default()
+        .unwrap_or_default();
+    #[cfg(windows)]
+    {
+        let mut values = values;
+        if let Some(message) = crate::hold_key_windows::warning() {
+            if let Ok(keys) = r.shortcuts.keys.lock() {
+                for entry in keys.values().filter(|entry| modifier_hold(&entry.key)) {
+                    if let Some(value) = values.get_mut(&entry.rule_id) {
+                        value.status = "unavailable";
+                        value.message = Some(message.into());
+                    }
+                }
+            }
+        }
+        return values;
+    }
+    #[cfg(not(windows))]
+    values
 }
 pub(super) fn awaiting_release(r: &Shared) -> Result<bool> {
     Ok(!lock(&r.shortcuts.pressed)?.is_empty())
@@ -394,6 +485,12 @@ pub(super) fn route(r: &Shared, key: &Shortcut, pressed: bool) -> bool {
     if let Ok(mut keys) = r.shortcuts.pressed.lock() {
         if !pressed {
             keys.remove(&key.id());
+            if let Ok(mut tokens) = r.shortcuts.hold_tokens.lock() {
+                tokens.remove(&key.id());
+            }
+            if entry.hold.is_some() {
+                crate::quick_capture::released(&r.app, &entry.rule_id);
+            }
             return true;
         }
         if !keys.insert(key.id()) {
@@ -406,10 +503,61 @@ pub(super) fn route(r: &Shared, key: &Shortcut, pressed: bool) -> bool {
     if recording(r, Some(&key.to_string())) {
         return true;
     }
+    if entry.hold.is_some() {
+        schedule_hold(r, entry, key.id());
+        return true;
+    }
     let mut event = Event::new("shortcut.pressed");
     event.payload = json!({"ruleId":entry.rule_id,"ruleRevision":entry.revision});
     emit(&r.app, event);
     true
+}
+fn schedule_hold(r: &Shared, entry: Entry, key_id: u32) {
+    let Some(milliseconds) = entry.hold else {
+        return;
+    };
+    let Some(shared) = runtime(&r.app).ok() else {
+        return;
+    };
+    let token = r.shortcuts.hold_epoch.fetch_add(1, Ordering::AcqRel) + 1;
+    if let Ok(mut tokens) = r.shortcuts.hold_tokens.lock() {
+        tokens.insert(key_id, token);
+    }
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(milliseconds as u64)).await;
+        if require(&shared).is_err()
+            || !shared
+                .shortcuts
+                .pressed
+                .lock()
+                .is_ok_and(|keys| keys.contains(&key_id))
+        {
+            return;
+        }
+        if !shared
+            .shortcuts
+            .hold_tokens
+            .lock()
+            .is_ok_and(|keys| keys.get(&key_id) == Some(&token))
+        {
+            return;
+        }
+        if !shared.store.lock().is_ok_and(|store| {
+            store.rule(&entry.rule_id).is_ok_and(|rule| {
+                rule.is_some_and(|rule| {
+                    rule.enabled
+                        && rule.revision == entry.revision
+                        && hold(&rule) == Some(milliseconds)
+                })
+            })
+        }) {
+            return;
+        }
+        crate::quick_capture::held(&shared.app, &entry.rule_id);
+        let mut event = Event::new("shortcut.held");
+        event.payload = json!({"ruleId":entry.rule_id,"ruleRevision":entry.revision});
+        emit(&shared.app, event);
+    });
 }
 #[cfg(test)]
 mod tests {
@@ -451,6 +599,9 @@ mod tests {
         assert!(shortcut_binding_changed(Some(&ordinary), Some(&hotkey)));
         assert!(shortcut_binding_changed(Some(&hotkey), Some(&ordinary)));
         assert!(shortcut_binding_changed(Some(&hotkey), None));
+        let held = rule(json!({"kind":"hold","accelerator":"F8","milliseconds":400}));
+        assert!(shortcut_binding_changed(None, Some(&held)));
+        assert!(shortcut_binding_changed(Some(&held), None));
         let mut disabled = hotkey.clone();
         disabled.enabled = false;
         assert!(!shortcut_binding_changed(Some(&disabled), None));

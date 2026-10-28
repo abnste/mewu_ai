@@ -373,12 +373,15 @@ pub fn is_geometry_finish_command(command: &SceneCommand) -> bool {
 // write when exit reserves input. The renderer drains these while RUNNING,
 // before begin_exit_preparation; they are never PREPARING flush commands.
 fn is_manual_drawing_history(command: &SceneCommand) -> bool {
-    matches!(command,
-        SceneCommand::UndoDrawing { .. } | SceneCommand::RedoDrawing { .. }
-        | SceneCommand::EditImageAnnotations {
-            action: mewu_core::ImageAnnotationEdit::UndoDrawing | mewu_core::ImageAnnotationEdit::RedoDrawing,
-            ..
-        }
+    matches!(
+        command,
+        SceneCommand::UndoDrawing { .. }
+            | SceneCommand::RedoDrawing { .. }
+            | SceneCommand::EditImageAnnotations {
+                action: mewu_core::ImageAnnotationEdit::UndoDrawing
+                    | mewu_core::ImageAnnotationEdit::RedoDrawing,
+                ..
+            }
     )
 }
 
@@ -388,8 +391,16 @@ pub fn is_exit_flush_command(command: &SceneCommand) -> bool {
         || matches!(command, SceneCommand::SetRegionGeometry { .. })
         || matches!(
             command,
-            SceneCommand::EditImageAnnotations { action: mewu_core::ImageAnnotationEdit::AddDrawing { .. } | mewu_core::ImageAnnotationEdit::UpdateDrawing { .. } | mewu_core::ImageAnnotationEdit::UpdateDrawings { .. } | mewu_core::ImageAnnotationEdit::EraseDrawingStrokes { .. }, .. }
-            | SceneCommand::AddDrawing { .. } | SceneCommand::UpdateDrawing { .. } | SceneCommand::UpdateDrawings { .. } | SceneCommand::EraseDrawingStrokes { .. }
+            SceneCommand::EditImageAnnotations {
+                action: mewu_core::ImageAnnotationEdit::AddDrawing { .. }
+                    | mewu_core::ImageAnnotationEdit::UpdateDrawing { .. }
+                    | mewu_core::ImageAnnotationEdit::UpdateDrawings { .. }
+                    | mewu_core::ImageAnnotationEdit::EraseDrawingStrokes { .. },
+                ..
+            } | SceneCommand::AddDrawing { .. }
+                | SceneCommand::UpdateDrawing { .. }
+                | SceneCommand::UpdateDrawings { .. }
+                | SceneCommand::EraseDrawingStrokes { .. }
         )
 }
 
@@ -530,7 +541,9 @@ pub async fn request_update_restart(
 ) -> Result<(), String> {
     let (send, receive) = oneshot::channel();
     start_shutdown(app, None, Some(send), Some(update))?;
-    receive.await.map_err(|_| "update_save_failed".to_string())?
+    receive
+        .await
+        .map_err(|_| "update_save_failed".to_string())?
 }
 
 fn start_shutdown(
@@ -539,15 +552,27 @@ fn start_shutdown(
     completion: Option<oneshot::Sender<Result<(), String>>>,
     update: Option<crate::app_update::PreparedInstall>,
 ) -> Result<(), String> {
-    static HOOK_PREFLIGHT:std::sync::atomic::AtomicBool=std::sync::atomic::AtomicBool::new(false);
-    if !crate::hooks::enabled(app){return start_shutdown_after_hooks(app,migration,completion,update);}
-    if !app.state::<Host>().exit.accepts_new_operations()||HOOK_PREFLIGHT.swap(true,Ordering::AcqRel){return Err(EXIT_BUSY.into())}
-    let app=app.clone();
-    tauri::async_runtime::spawn(async move{
+    static HOOK_PREFLIGHT: std::sync::atomic::AtomicBool =
+        std::sync::atomic::AtomicBool::new(false);
+    if !crate::hooks::enabled(app) {
+        return start_shutdown_after_hooks(app, migration, completion, update);
+    }
+    if !app.state::<Host>().exit.accepts_new_operations()
+        || HOOK_PREFLIGHT.swap(true, Ordering::AcqRel)
+    {
+        return Err(EXIT_BUSY.into());
+    }
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
         crate::hooks::before_quit(&app).await;
-        if let Err(error)=start_shutdown_after_hooks(&app,migration,completion,update){crate::hooks::resume(&app);let _=app.emit_to("settings","host-error",&error);let _=app.emit_to("space","host-error",&error);}
-        HOOK_PREFLIGHT.store(false,Ordering::Release);
-    });Ok(())
+        if let Err(error) = start_shutdown_after_hooks(&app, migration, completion, update) {
+            crate::hooks::resume(&app);
+            let _ = app.emit_to("settings", "host-error", &error);
+            let _ = app.emit_to("space", "host-error", &error);
+        }
+        HOOK_PREFLIGHT.store(false, Ordering::Release);
+    });
+    Ok(())
 }
 fn start_shutdown_after_hooks(
     app: &AppHandle,
@@ -584,6 +609,7 @@ fn start_shutdown_after_hooks(
     }
     // Revoke listening before the renderer collects its final draft state.
     crate::speech_host::cancel_all(app);
+    crate::quick_capture::detach(app);
     if let Some(extensions) = app.try_state::<crate::extension_host::ExtensionHost>() {
         extensions.cancel_all();
     }
@@ -649,7 +675,10 @@ fn start_shutdown_after_hooks(
             abort(&app, &id, &error);
             return;
         }
-        if let Err(error)=crate::hooks::drain(&app,Duration::from_secs(5)).await{abort(&app,&id,&error);return;}
+        if let Err(error) = crate::hooks::drain(&app, Duration::from_secs(5)).await {
+            abort(&app, &id, &error);
+            return;
+        }
         if let Err(error) = app
             .state::<Host>()
             .memory
@@ -663,6 +692,10 @@ fn start_shutdown_after_hooks(
         // which can fail and require retaining the app have succeeded.
         if !crate::speech_worker::wait_until_idle(Duration::from_secs(5)).await {
             abort(&app, &id, "语音输入尚未停止，已取消退出");
+            return;
+        }
+        if !crate::quick_capture::wait_until_idle(Duration::from_secs(16)).await {
+            abort(&app, &id, "截图分析尚未停止，已取消退出");
             return;
         }
         let formulas_idle = tauri::async_runtime::spawn_blocking(|| {
@@ -799,11 +832,17 @@ fn start_shutdown_after_hooks(
             // FULL commits are already durable in WAL; stalled maintenance must
             // not strand an irreversible exit. Process exit releases any final
             // in-flight I/O before the next owner obtains the storage lock.
-            let maintenance = app.state::<Host>().lock().ok()
+            let maintenance = app
+                .state::<Host>()
+                .lock()
+                .ok()
                 .map(|mut engine| engine.store.pause_checkpoint_maintenance());
             if let Some(maintenance) = maintenance {
-                let _ = tokio::time::timeout(Duration::from_secs(5),
-                    tauri::async_runtime::spawn_blocking(move || maintenance.wait())).await;
+                let _ = tokio::time::timeout(
+                    Duration::from_secs(5),
+                    tauri::async_runtime::spawn_blocking(move || maintenance.wait()),
+                )
+                .await;
             }
             // No reversible exit work remains. Release the screenshot key
             // before installer/restart handoff; process exit is the final OS
@@ -1478,7 +1517,11 @@ mod tests {
     fn linux_shortcut_restore_defers_exact_settings_launch_until_window_transition_ends() {
         let settings = LinuxStartupCapture::new(&["mewu".into(), "--settings".into()]);
         assert!(!settings.restore_at_ready());
-        for args in [vec!["mewu", "--background"], vec!["mewu"], vec!["mewu", "--settings", "extra"]] {
+        for args in [
+            vec!["mewu", "--background"],
+            vec!["mewu"],
+            vec!["mewu", "--settings", "extra"],
+        ] {
             let args = args.into_iter().map(String::from).collect::<Vec<_>>();
             assert!(LinuxStartupCapture::new(&args).restore_at_ready());
         }
@@ -1526,7 +1569,8 @@ mod tests {
             stroke_width: 4.,
             points: vec![mewu_core::DrawingPoint { x: 10., y: 10. }],
             text: Some("已修改文字".into()),
-            font_size: Some(20.), text_style: None,
+            font_size: Some(20.),
+            text_style: None,
             origin: None,
             rich: None,
         };
@@ -1552,8 +1596,11 @@ mod tests {
             drawing_id: "text".into(),
         };
         let remove_batch = SceneCommand::RemoveDrawings {
-            scene_id: "s".into(), background_id: "b".into(), region_id: "r".into(),
-            expected_revision: 1, drawing_ids: vec!["text".into(), "other".into()],
+            scene_id: "s".into(),
+            background_id: "b".into(),
+            region_id: "r".into(),
+            expected_revision: 1,
+            drawing_ids: vec!["text".into(), "other".into()],
         };
         let state = ExitState::default();
         let (id, _) = state.begin().unwrap();
@@ -1574,20 +1621,100 @@ mod tests {
 
     #[test]
     fn image_drawing_exit_flush_is_action_bounded_and_geometry_cannot_change_its_document() {
-        use mewu_core::{Drawing,DrawingKind,DrawingPoint,ImageAnnotationEdit};
-        let (mut store,scene_id)=item_geometry_store();
-        let image=store.active_scene().unwrap().items[0].clone();
-        let drawing=Drawing { id:uuid::Uuid::new_v4().to_string(),kind:DrawingKind::Line,color:"#ff0000".into(),stroke_width:2.,points:vec![DrawingPoint{x:10.,y:10.},DrawingPoint{x:30.,y:30.}],text:None,font_size:None, text_style: None,origin:None,rich:None };
-        let command=|action,revision|SceneCommand::EditImageAnnotations { scene_id:scene_id.clone(),item_id:image.id.clone(),source_asset_id:image.asset.id.clone(),expected_revision:revision,action };
-        let state=ExitState::default();let(id,_)=state.begin().unwrap();state.prepare_with("space",&id,||{}).unwrap();
-        for action in [ImageAnnotationEdit::UndoDrawing,ImageAnnotationEdit::RedoDrawing,ImageAnnotationEdit::RemoveDrawing{drawing_id:drawing.id.clone()},ImageAnnotationEdit::RemoveDrawings{drawing_ids:vec![drawing.id.clone()]}] { let replay=command(action,0);assert!(!is_exit_flush_command(&replay));assert!(state.ensure_scene_command_with_store("space",&replay,&store).is_err()); }
-        let add=command(ImageAnnotationEdit::AddDrawing{drawing:drawing.clone()},0);assert!(is_exit_flush_command(&add));state.ensure_scene_command_with_store("space",&add,&store).unwrap();store.apply(add).unwrap();
-        let saved=store.active_scene().unwrap().items[0].clone();let before=store.snapshot();
-        assert!(store.apply(command(ImageAnnotationEdit::AddDrawing{drawing},0)).is_err());assert_eq!(store.snapshot(),before);
-        let mut wrong=command(ImageAnnotationEdit::UndoDrawing,1);if let SceneCommand::EditImageAnnotations{source_asset_id,..}=&mut wrong{*source_asset_id=uuid::Uuid::new_v4().to_string();}assert!(store.apply(wrong).is_err());assert_eq!(store.snapshot(),before);
-        let geometry=item_geometry_command(&scene_id,saved.clone());state.ensure_scene_command_with_store("space",&geometry,&store).unwrap();
-        for modify in [0,1,2] {let mut forged=saved.clone();let doc=forged.image_annotations.as_mut().unwrap();match modify {0=>doc.revision+=1,1=>doc.drawings.clear(),_=>doc.source_asset_id=uuid::Uuid::new_v4().to_string()};assert!(state.ensure_scene_command_with_store("space",&item_geometry_command(&scene_id,forged),&store).is_err());}
-        assert!(state.advance(&id,DRAINING));assert!(state.ensure_scene_command_with_store("space",&geometry,&store).is_err());
+        use mewu_core::{Drawing, DrawingKind, DrawingPoint, ImageAnnotationEdit};
+        let (mut store, scene_id) = item_geometry_store();
+        let image = store.active_scene().unwrap().items[0].clone();
+        let drawing = Drawing {
+            id: uuid::Uuid::new_v4().to_string(),
+            kind: DrawingKind::Line,
+            color: "#ff0000".into(),
+            stroke_width: 2.,
+            points: vec![
+                DrawingPoint { x: 10., y: 10. },
+                DrawingPoint { x: 30., y: 30. },
+            ],
+            text: None,
+            font_size: None,
+            text_style: None,
+            origin: None,
+            rich: None,
+        };
+        let command = |action, revision| SceneCommand::EditImageAnnotations {
+            scene_id: scene_id.clone(),
+            item_id: image.id.clone(),
+            source_asset_id: image.asset.id.clone(),
+            expected_revision: revision,
+            action,
+        };
+        let state = ExitState::default();
+        let (id, _) = state.begin().unwrap();
+        state.prepare_with("space", &id, || {}).unwrap();
+        for action in [
+            ImageAnnotationEdit::UndoDrawing,
+            ImageAnnotationEdit::RedoDrawing,
+            ImageAnnotationEdit::RemoveDrawing {
+                drawing_id: drawing.id.clone(),
+            },
+            ImageAnnotationEdit::RemoveDrawings {
+                drawing_ids: vec![drawing.id.clone()],
+            },
+        ] {
+            let replay = command(action, 0);
+            assert!(!is_exit_flush_command(&replay));
+            assert!(state
+                .ensure_scene_command_with_store("space", &replay, &store)
+                .is_err());
+        }
+        let add = command(
+            ImageAnnotationEdit::AddDrawing {
+                drawing: drawing.clone(),
+            },
+            0,
+        );
+        assert!(is_exit_flush_command(&add));
+        state
+            .ensure_scene_command_with_store("space", &add, &store)
+            .unwrap();
+        store.apply(add).unwrap();
+        let saved = store.active_scene().unwrap().items[0].clone();
+        let before = store.snapshot();
+        assert!(store
+            .apply(command(ImageAnnotationEdit::AddDrawing { drawing }, 0))
+            .is_err());
+        assert_eq!(store.snapshot(), before);
+        let mut wrong = command(ImageAnnotationEdit::UndoDrawing, 1);
+        if let SceneCommand::EditImageAnnotations {
+            source_asset_id, ..
+        } = &mut wrong
+        {
+            *source_asset_id = uuid::Uuid::new_v4().to_string();
+        }
+        assert!(store.apply(wrong).is_err());
+        assert_eq!(store.snapshot(), before);
+        let geometry = item_geometry_command(&scene_id, saved.clone());
+        state
+            .ensure_scene_command_with_store("space", &geometry, &store)
+            .unwrap();
+        for modify in [0, 1, 2] {
+            let mut forged = saved.clone();
+            let doc = forged.image_annotations.as_mut().unwrap();
+            match modify {
+                0 => doc.revision += 1,
+                1 => doc.drawings.clear(),
+                _ => doc.source_asset_id = uuid::Uuid::new_v4().to_string(),
+            };
+            assert!(state
+                .ensure_scene_command_with_store(
+                    "space",
+                    &item_geometry_command(&scene_id, forged),
+                    &store
+                )
+                .is_err());
+        }
+        assert!(state.advance(&id, DRAINING));
+        assert!(state
+            .ensure_scene_command_with_store("space", &geometry, &store)
+            .is_err());
     }
 
     #[test]
@@ -1597,23 +1724,59 @@ mod tests {
         assert!(state.is_running() && state.has_attempt());
         assert!(!state.accepts_new_operations());
         let commands = [
-            SceneCommand::UndoDrawing { scene_id: "s".into(), background_id: "b".into(), region_id: "r".into(), expected_revision: 2 },
-            SceneCommand::RedoDrawing { scene_id: "s".into(), background_id: "b".into(), region_id: "r".into(), expected_revision: 3 },
-            SceneCommand::EditImageAnnotations { scene_id: "s".into(), item_id: "i".into(), source_asset_id: "b".into(), expected_revision: 2, action: mewu_core::ImageAnnotationEdit::UndoDrawing },
-            SceneCommand::EditImageAnnotations { scene_id: "s".into(), item_id: "i".into(), source_asset_id: "b".into(), expected_revision: 3, action: mewu_core::ImageAnnotationEdit::RedoDrawing },
+            SceneCommand::UndoDrawing {
+                scene_id: "s".into(),
+                background_id: "b".into(),
+                region_id: "r".into(),
+                expected_revision: 2,
+            },
+            SceneCommand::RedoDrawing {
+                scene_id: "s".into(),
+                background_id: "b".into(),
+                region_id: "r".into(),
+                expected_revision: 3,
+            },
+            SceneCommand::EditImageAnnotations {
+                scene_id: "s".into(),
+                item_id: "i".into(),
+                source_asset_id: "b".into(),
+                expected_revision: 2,
+                action: mewu_core::ImageAnnotationEdit::UndoDrawing,
+            },
+            SceneCommand::EditImageAnnotations {
+                scene_id: "s".into(),
+                item_id: "i".into(),
+                source_asset_id: "b".into(),
+                expected_revision: 3,
+                action: mewu_core::ImageAnnotationEdit::RedoDrawing,
+            },
         ];
         for command in &commands {
             assert!(!is_exit_flush_command(command));
             state.ensure_scene_command(command).unwrap();
         }
         assert!(state.ensure_scene_command(&SceneCommand::NewScene).is_err());
-        assert!(state.ensure_scene_command(&SceneCommand::RemoveDrawing { scene_id: "s".into(), background_id: "b".into(), region_id: "r".into(), expected_revision: 2, drawing_id: "d".into() }).is_err());
+        assert!(state
+            .ensure_scene_command(&SceneCommand::RemoveDrawing {
+                scene_id: "s".into(),
+                background_id: "b".into(),
+                region_id: "r".into(),
+                expected_revision: 2,
+                drawing_id: "d".into()
+            })
+            .is_err());
         state.prepare_with("space", &id, || {}).unwrap();
-        for command in &commands { assert!(state.ensure_scene_command(command).is_err()); }
+        for command in &commands {
+            assert!(state.ensure_scene_command(command).is_err());
+        }
         assert!(state.advance(&id, DRAINING));
-        for command in &commands { assert!(state.ensure_scene_command(command).is_err()); }
+        for command in &commands {
+            assert!(state.ensure_scene_command(command).is_err());
+        }
         assert!(state.advance(&id, READY));
-        for command in &commands { assert!(state.ensure_scene_command(command).is_err()); }
+        for command in &commands {
+            assert!(state.ensure_scene_command(command).is_err());
+        }
     }
 
     #[test]
@@ -1948,9 +2111,7 @@ mod tests {
         assert!(state.ensure_new_operation().is_err());
         // Existing compensation is deliberately background-allowed, not fresh work.
         state.ensure_background().unwrap();
-        store
-            .compensate_failed_minimize(&scene, false)
-            .unwrap();
+        store.compensate_failed_minimize(&scene, false).unwrap();
         let after = store.snapshot();
         assert_eq!(after.active_scene_id, scene);
         for original in &before.scenes {

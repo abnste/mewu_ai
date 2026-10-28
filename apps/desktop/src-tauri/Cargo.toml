@@ -19,9 +19,11 @@ required-features = ["catalog-validator"]
 tauri-build = { version = "=2.7.1", features = [] }
 
 [dependencies]
+encoding_rs = "=0.8.42"
 mewu-control = { path = "../../../crates/mewu-control" }
 mewu-core = { path = "../../../crates/mewu-core" }
 mewu-agent-runtime = { path = "../../../crates/mewu-agent-runtime" }
+mewu-agent-tools = { path = "../../../crates/mewu-agent-tools" }
 mewu-extension = { path = "../../../crates/mewu-extension" }
 mewu-agent-workspace = { path = "../../../crates/mewu-agent-workspace" }
 mewu-hooks = { path = "../../../crates/mewu-hooks" }

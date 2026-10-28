@@ -5,6 +5,7 @@ export type HookTrigger =
   | { kind: 'cron'; expression: string; timezone: string }
   | { kind: 'prompt' | 'reply'; matcher: HookMatcher }
   | { kind: 'shortcut'; accelerator: string }
+  | { kind: 'hold'; accelerator: string; milliseconds:number }
   | { kind: 'event'; name: string };
 export type HookAction =
   | { kind: 'injectPrompt'; text: string }
@@ -21,6 +22,7 @@ export type HookAction =
   | { kind: 'delay'; milliseconds: number };
 export type HookInput = { kind: 'move'; x: number; y: number } | { kind: 'click'; button: 'left' | 'right' | 'middle'; count: number } | { kind:'button'; button:'left'|'right'|'middle'; direction:'press'|'release' } | { kind: 'key'; key: string } | { kind: 'text'; text: string } | { kind: 'scroll'; x: number; y: number } | { kind: 'delay'; milliseconds: number };
 export interface HookRule { id: string; revision: number; name: string; enabled: boolean; trigger: HookTrigger; condition: string; actions: HookAction[]; cooldownMs: number; timeoutMs: number; stopOnError: boolean }
+export function hookCategory(trigger:HookTrigger):HookCategory{return trigger.kind==='hold'?'shortcut':trigger.kind;}
 export interface HookRun { id: string; ruleId: string; ruleRevision: number; eventId: string; eventName: string; startedAt: number; finishedAt?: number | null; status: 'running' | 'completed' | 'failed' | 'canceled' | 'skipped' | 'interrupted'; completedActions: number; error?: string | null }
 export interface HookSnapshot { revision: number; rules: HookRule[]; runs: HookRun[]; enabled: boolean; shortcuts: Record<string, { status: string; message?: string; label?: string }>; nextRuns: Record<string, number>; events: { name: string; title: string }[]; mcpServers: { id: string; name: string; tools: { name: string }[] }[]; platform: string;warning?:string|null }
 export function newHookRule(category: HookCategory, platform = ''): HookRule {
@@ -45,7 +47,7 @@ export function newHookAction(kind: HookAction['kind'], platform = ''): HookActi
   }
 }
 export function formatHookShortcut(value:string,platform=''):string {
-  const names:Record<string,string>={control:'Ctrl',ctrl:'Ctrl',shift:'Shift',alt:platform==='macos'?'⌥':'Alt',super:platform==='macos'?'⌘':platform==='windows'?'Win':'Super',meta:platform==='macos'?'⌘':platform==='windows'?'Win':'Super'};
+  const names:Record<string,string>={control:'Ctrl',ctrl:'Ctrl',shift:'Shift',alt:platform==='macos'?'⌥':'Alt',metaleft:platform==='macos'?'⌘':platform==='windows'?'Win':'Super',super:platform==='macos'?'⌘':platform==='windows'?'Win':'Super',meta:platform==='macos'?'⌘':platform==='windows'?'Win':'Super'};
   return value.split('+').map(part=>{const key=part.trim();if(/^Key[A-Z]$/i.test(key))return key.slice(3).toUpperCase();if(/^Digit\d$/i.test(key))return key.slice(5);return names[key.toLowerCase()]||(/^[a-z]$/i.test(key)?key.toUpperCase():key);}).join(' + ');
 }
 export function hookAccelerator(event: Pick<KeyboardEvent, 'code' | 'ctrlKey' | 'altKey' | 'shiftKey' | 'metaKey' | 'isComposing'> & Partial<Pick<KeyboardEvent, 'key'>>): string | undefined {

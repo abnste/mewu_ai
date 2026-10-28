@@ -244,7 +244,12 @@ mod platform {
         let start = range.map_or(0, |r| r.start_ticks);
         let end = range.map_or(expected.duration_ticks, |r| r.end_ticks);
         let duration = end - start;
-        let mut reader = source_stream::Reader::open_presentation(source, expected.width, expected.height, cancel)?;
+        let mut reader = source_stream::Reader::open_presentation(
+            source,
+            expected.width,
+            expected.height,
+            cancel,
+        )?;
         let mut current = loop {
             let frame = reader.next(cancel)?.ok_or(ClipError::InvalidRange)?;
             if frame.pts >= end {
@@ -643,7 +648,12 @@ mod platform {
             /// MF may expose H.264 composition timestamps before the container
             /// edit is applied. Correct only an edit matching the first native
             /// sample, never an arbitrary non-zero start or an already mapped source.
-            pub fn open_presentation(path: &Path, width: u32, height: u32, cancel: &AtomicBool) -> Result<Self> {
+            pub fn open_presentation(
+                path: &Path,
+                width: u32,
+                height: u32,
+                cancel: &AtomicBool,
+            ) -> Result<Self> {
                 check(cancel)?;
                 let mut probe = Self::open(path, width, height)?;
                 probe.seek_once(0, 240)?;
@@ -675,7 +685,9 @@ mod platform {
                     let mut position = PROPVARIANT::default();
                     (*position.Anonymous.Anonymous).vt = VT_I8;
                     (*position.Anonymous.Anonymous).Anonymous.hVal = i64::try_from(
-                        ticks.checked_add(self.presentation_offset).ok_or("source seek overflow")?
+                        ticks
+                            .checked_add(self.presentation_offset)
+                            .ok_or("source seek overflow")?,
                     )?;
                     let result = self.reader.SetCurrentPosition(&GUID::zeroed(), &position);
                     let cleared = PropVariantClear(&mut position);
@@ -736,7 +748,8 @@ mod platform {
                         }
                         self.eof = flags & MF_SOURCE_READERF_ENDOFSTREAM.0 as u32 != 0;
                         if let Some(sample) = sample {
-                            let pts = u64::try_from(time)?.checked_sub(self.presentation_offset)
+                            let pts = u64::try_from(time)?
+                                .checked_sub(self.presentation_offset)
                                 .ok_or("source timestamp precedes verified edit")?;
                             let duration = u64::try_from(sample.GetSampleDuration()?)?;
                             if duration == 0
@@ -786,7 +799,7 @@ mod platform {
                             };
                             let offset = row * pitch + self.layout.x as usize * 4;
                             let source = &pixels[offset..offset + self.width as usize * 4];
-                            let target = &mut rgba.as_mut()
+                            let target = &mut rgba.as_flat_samples_mut().samples
                                 [y * self.width as usize * 4..(y + 1) * self.width as usize * 4];
                             for (from, to) in source.chunks_exact(4).zip(target.chunks_exact_mut(4))
                             {

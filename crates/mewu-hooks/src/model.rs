@@ -56,6 +56,10 @@ pub enum Trigger {
     Shortcut {
         accelerator: String,
     },
+    Hold {
+        accelerator: String,
+        milliseconds: u32,
+    },
     Event {
         name: String,
     },
@@ -66,8 +70,14 @@ impl Trigger {
             Self::Cron { .. } => "cron",
             Self::Prompt { .. } => "prompt",
             Self::Reply { .. } => "reply",
-            Self::Shortcut { .. } => "shortcut",
+            Self::Shortcut { .. } | Self::Hold { .. } => "shortcut",
             Self::Event { .. } => "event",
+        }
+    }
+    pub fn accelerator(&self) -> Option<&str> {
+        match self {
+            Self::Shortcut { accelerator } | Self::Hold { accelerator, .. } => Some(accelerator),
+            _ => None,
         }
     }
 }
@@ -419,6 +429,15 @@ impl Rule {
                 }
             }
             Trigger::Shortcut { accelerator } => bounded(accelerator, 120, "快捷键")?,
+            Trigger::Hold {
+                accelerator,
+                milliseconds,
+            } => {
+                bounded(accelerator, 120, "快捷键")?;
+                if !(200..=3000).contains(milliseconds) {
+                    return Err("长按时间须为200至3000毫秒".into());
+                }
+            }
             Trigger::Event { name } => valid_event_name(name)?,
         }
         if self.actions.is_empty() || self.actions.len() > 16 {
@@ -468,6 +487,10 @@ impl Rule {
                 && event.payload.get("ruleRevision").and_then(Value::as_u64)
                     == Some(self.revision)),
             Trigger::Shortcut { .. } => Ok(event.name == "shortcut.pressed"
+                && event.payload.get("ruleId").and_then(Value::as_str) == Some(&self.id)
+                && event.payload.get("ruleRevision").and_then(Value::as_u64)
+                    == Some(self.revision)),
+            Trigger::Hold { .. } => Ok(event.name == "shortcut.held"
                 && event.payload.get("ruleId").and_then(Value::as_str) == Some(&self.id)
                 && event.payload.get("ruleRevision").and_then(Value::as_u64)
                     == Some(self.revision)),

@@ -11,9 +11,9 @@ const source = await readFile(new URL('./app-control.ts', import.meta.url), 'utf
 const api = await import(`data:text/javascript;base64,${Buffer.from(stripTypeScriptTypes(source, { mode: 'transform' })).toString('base64')}`);
 const queryMethods = ['app.status', 'app.schema', 'app.capabilities', 'scene.list', 'scene.get', 'run.get', 'agent.list', 'model.list', 'plugin.list', 'recording.status', 'operation.get'];
 
-test('actual JSON catalog contains exactly 26 implemented UI operations and 11 native queries', () => {
+test('actual JSON catalog contains exactly 27 implemented UI operations and 11 native queries', () => {
   assert.equal(catalog.protocolVersion, 1); assert.equal(catalog.pluginId, 'mewu.cli'); assert.equal(catalog.automaticRetries, false);
-  assert.equal(catalog.commands.length, 37);
+  assert.equal(catalog.commands.length, 38);
   assert.equal(new Set(catalog.commands.map(command => command.method)).size, catalog.commands.length);
   assert.deepEqual(catalog.commands.filter(command => command.execution === 'operation').map(command => command.method).sort(), [...api.appControlMethods].sort());
   assert.deepEqual(catalog.commands.filter(command => command.execution === 'query').map(command => command.method).sort(), queryMethods.sort());

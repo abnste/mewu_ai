@@ -35,6 +35,7 @@ export class VoiceInput {
     setDraft: (text: string) => void;
     changed: (pending?: VoicePending) => void;
     error: (error: unknown) => void;
+    recognized?: (text:string,scope:VoiceScope)=>void;
     id?: () => string;
   }) {}
   private valid(ticket: Ticket): boolean { return !this.disposed && this.ticket === ticket && !ticket.canceled && sameVoiceScope(this.hooks.current(), ticket.scope); }
@@ -62,6 +63,7 @@ export class VoiceInput {
       if (result.requestId !== ticket.request.requestId || result.sceneId !== ticket.scope.sceneId || !['recognized', 'candidate'].includes(result.confidence)) throw new Error('语音结果已失效');
       appendDictation('', result.text); // Validate before retaining a bounded IME result.
       ticket.result = result;
+      ticket.runSettled = true;
       if (this.hooks.composing()) { ticket.phase = 'stopping'; this.publish(ticket); }
       else this.insert(ticket);
     } catch (error) { if (this.valid(ticket)) this.hooks.error(error); }
@@ -73,6 +75,7 @@ export class VoiceInput {
     ticket.result = undefined;
     this.hooks.setDraft(text); // Synchronous read/merge/write of the latest draft.
     this.release(ticket);
+    this.hooks.recognized?.(text,ticket.scope);
   }
   compositionEnded() {
     const ticket = this.ticket; if (!ticket?.result) return;

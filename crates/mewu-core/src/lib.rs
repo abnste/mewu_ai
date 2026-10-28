@@ -1,22 +1,23 @@
 // SPDX-License-Identifier: MPL-2.0
 /// SQLite storage generation; distinct from the public snapshot schema.
-pub const STORAGE_SCHEMA_VERSION: u32 = 12;
-mod connections;
-mod checkpoint_worker;
+pub const STORAGE_SCHEMA_VERSION: u32 = 13;
 mod asset_lookup;
+mod blackboard_objects;
+mod checkpoint_worker;
+mod connections;
 mod drawing;
 mod external_memory;
 mod external_memory_types;
 mod geometry_history;
+mod image_annotations;
 mod journal;
 mod journal_types;
 mod memory;
 mod model;
-mod persistence_timing;
 mod ocr;
+mod persistence_timing;
 mod rich_annotations;
 mod store;
-mod blackboard_objects;
 mod translation;
 mod video_annotation_algorithm;
 mod video_annotation_layouts;
@@ -25,31 +26,37 @@ mod video_edit;
 mod video_registered_layouts;
 mod video_vector_layouts;
 mod visual_annotations;
-mod image_annotations;
-pub use image_annotations::{image_annotation_region, image_annotation_source_fence, image_annotation_writable, ImageAnnotationDocument, ImageAnnotationEdit};
 pub use connections::validate_connection_profile;
 pub use external_memory_types::*;
+pub use image_annotations::{
+    image_annotation_region, image_annotation_source_fence, image_annotation_writable,
+    ImageAnnotationDocument, ImageAnnotationEdit,
+};
 pub use journal_types::*;
 pub use model::*;
-pub use persistence_timing::{PersistenceMark, PersistenceObserver, PersistencePhase, PersistenceTiming};
 pub use ocr::validate_ocr_document;
+pub use persistence_timing::{
+    PersistenceMark, PersistenceObserver, PersistencePhase, PersistenceTiming,
+};
 pub use rich_annotations::{
-    RasterRole, RichAlignment, RichContent, RichDrawingRef, RichKind, RichLayout, RichRendererIdentity,
-    VerifiedRichLayout, MAX_RICH_CONTENT_BYTES, MAX_RICH_PIXELS, MAX_RICH_PNG_BYTES,
-    MAX_RICH_RUN_CONTENT_BYTES, MAX_RICH_RUN_PNG_BYTES, RICH_DRAWING_COLOR,
+    RasterRole, RichAlignment, RichContent, RichDrawingRef, RichKind, RichLayout,
+    RichRendererIdentity, VerifiedRichLayout, MAX_RICH_CONTENT_BYTES, MAX_RICH_PIXELS,
+    MAX_RICH_PNG_BYTES, MAX_RICH_RUN_CONTENT_BYTES, MAX_RICH_RUN_PNG_BYTES, RICH_DRAWING_COLOR,
     RICH_DRAWING_STROKE_WIDTH,
 };
-pub use store::{CheckpointDrain, CoreError, ExportView, Store};
 pub use store::extension_objects::{ObjectLibrary, ObjectTemplate};
-pub use store::session_title_store::{title_request_is_current, SessionTitleRequest};
 pub use store::history_storage::HistoryCleanupPlan;
+pub use store::session_title_store::{title_request_is_current, SessionTitleRequest};
+pub use store::{CheckpointDrain, CoreError, ExportView, Store};
 pub use translation::validate_translation_document;
 pub use video_annotation_algorithm::{
     active_at as video_annotations_at, project_interval as project_video_annotation_interval,
     resolve_model_interval as resolve_video_model_interval,
     source_point as video_annotation_source_point, source_rect as video_annotation_source_rect,
 };
-pub use video_annotation_layouts::{VerifiedVideoTextLayout, VideoTextBox, VideoTextContent, VideoTextLayoutRef};
+pub use video_annotation_layouts::{
+    VerifiedVideoTextLayout, VideoTextBox, VideoTextContent, VideoTextLayoutRef,
+};
 pub use video_annotations::*;
 pub use video_registered_layouts::{
     VideoAnnotationLayouts, MAX_VIDEO_DOCUMENT_LAYOUT_DESCRIPTOR_BYTES,

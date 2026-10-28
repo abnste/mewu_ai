@@ -1,0 +1,310 @@
+// SPDX-License-Identifier: MPL-2.0
+//! Modifier-only hold transport. The hook callback only updates a tiny state
+//! machine and posts messages; rule dispatch never runs inside the hook.
+use std::{
+    cell::RefCell,
+    ptr::null_mut,
+    sync::{
+        atomic::{AtomicBool, AtomicU32, Ordering},
+        Mutex, OnceLock,
+    },
+    time::Instant,
+};
+use tauri::AppHandle;
+use windows_sys::Win32::{
+    Foundation::{LPARAM, LRESULT, WPARAM},
+    System::{LibraryLoader::GetModuleHandleW, Threading::GetCurrentThreadId},
+    UI::{
+        Input::KeyboardAndMouse::{
+            GetAsyncKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT,
+            KEYEVENTF_KEYUP,
+        },
+        WindowsAndMessaging::*,
+    },
+};
+const PRESS: u32 = WM_APP + 0x501;
+const RELEASE: u32 = WM_APP + 0x502;
+const STOP: u32 = WM_APP + 0x503;
+const TAG: usize = 0x4d455755;
+static ENABLED: AtomicBool = AtomicBool::new(false);
+static THREAD: AtomicU32 = AtomicU32::new(0);
+static THRESHOLD: AtomicU32 = AtomicU32::new(400);
+static STOPPING: AtomicBool = AtomicBool::new(false);
+static EDITING: AtomicBool = AtomicBool::new(false);
+static FAULT: AtomicBool = AtomicBool::new(false);
+pub fn warning() -> Option<&'static str> {
+    FAULT
+        .load(Ordering::Acquire)
+        .then_some("系统长按快捷键接管失败，请重新启用该规则")
+}
+const RESET: u32 = WM_APP + 0x504;
+pub fn set_editing(value: bool) {
+    EDITING.store(value, Ordering::Release);
+    post(RESET);
+}
+fn seed() {
+    KEYS.with(|cell| {
+        let mut keys = cell.borrow_mut();
+        *keys = Default::default();
+        for key in 1..256 {
+            if unsafe { GetAsyncKeyState(key) } < 0 {
+                keys.seed_down(key as u32, clock());
+            }
+        }
+    });
+}
+thread_local! {static KEYS:RefCell<crate::hold_sequence::Sequence>=RefCell::new(Default::default());}
+fn clock() -> u64 {
+    static CLOCK: OnceLock<Instant> = OnceLock::new();
+    CLOCK
+        .get_or_init(Instant::now)
+        .elapsed()
+        .as_millis()
+        .min(u64::MAX as u128) as u64
+}
+fn post(message: u32) -> bool {
+    unsafe { PostThreadMessageW(THREAD.load(Ordering::Acquire), message, 0, 0) != 0 }
+}
+fn replay(key: u32, up: bool) -> bool {
+    let input = INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: key as u16,
+                wScan: 0,
+                dwFlags: if up { KEYEVENTF_KEYUP } else { 0 },
+                time: 0,
+                dwExtraInfo: TAG,
+            },
+        },
+    };
+    unsafe { SendInput(1, &input, std::mem::size_of::<INPUT>() as i32) == 1 }
+}
+unsafe extern "system" fn keyboard(code: i32, w: WPARAM, l: LPARAM) -> LRESULT {
+    if code < 0 || !ENABLED.load(Ordering::Acquire) {
+        return CallNextHookEx(null_mut(), code, w, l);
+    }
+    let event = &*(l as *const KBDLLHOOKSTRUCT);
+    if EDITING.load(Ordering::Acquire) && KEYS.with(|keys| keys.borrow().held.is_none()) {
+        return CallNextHookEx(null_mut(), code, w, l);
+    }
+    if event.dwExtraInfo == TAG || event.flags & (LLKHF_INJECTED | LLKHF_LOWER_IL_INJECTED) != 0 {
+        return CallNextHookEx(null_mut(), code, w, l);
+    }
+    let down = matches!(w as u32, WM_KEYDOWN | WM_SYSKEYDOWN);
+    let up = matches!(w as u32, WM_KEYUP | WM_SYSKEYUP);
+    if !down && !up {
+        return CallNextHookEx(null_mut(), code, w, l);
+    }
+    let consumed = std::panic::catch_unwind(|| {
+        KEYS.with(|cell| {
+            let decision = cell.borrow_mut().key(
+                event.vkCode,
+                down,
+                clock(),
+                THRESHOLD.load(Ordering::Acquire),
+            );
+            if (decision.pressed && !post(PRESS)) || (decision.released && !post(RELEASE)) {
+                FAULT.store(true, Ordering::Release);
+                ENABLED.store(false, Ordering::Release);
+                return false;
+            }
+            if !decision.replay.is_empty() {
+                let inputs: Vec<_> = decision
+                    .replay
+                    .iter()
+                    .map(|(key, up)| INPUT {
+                        r#type: INPUT_KEYBOARD,
+                        Anonymous: INPUT_0 {
+                            ki: KEYBDINPUT {
+                                wVk: *key as u16,
+                                wScan: 0,
+                                dwFlags: if *up { KEYEVENTF_KEYUP } else { 0 },
+                                time: 0,
+                                dwExtraInfo: TAG,
+                            },
+                        },
+                    })
+                    .collect();
+                if SendInput(
+                    inputs.len() as u32,
+                    inputs.as_ptr(),
+                    std::mem::size_of::<INPUT>() as i32,
+                ) != inputs.len() as u32
+                {
+                    FAULT.store(true, Ordering::Release);
+                    ENABLED.store(false, Ordering::Release);
+                    // The original physical key-up must still release a Win
+                    // down if SendInput inserted only part of the tap batch.
+                    if up && matches!(event.vkCode, 0x5b | 0x5c) {
+                        return false;
+                    }
+                }
+            }
+            decision.consume
+        })
+    })
+    .unwrap_or_else(|_| {
+        FAULT.store(true, Ordering::Release);
+        ENABLED.store(false, Ordering::Release);
+        false
+    });
+    if consumed {
+        1
+    } else {
+        CallNextHookEx(null_mut(), code, w, l)
+    }
+}
+unsafe extern "system" fn mouse(code: i32, w: WPARAM, l: LPARAM) -> LRESULT {
+    if code >= 0 && matches!(w as u32, WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MBUTTONDOWN) {
+        let event = &*(l as *const MSLLHOOKSTRUCT);
+        if event.flags & LLMHF_INJECTED == 0 {
+            crate::quick_capture::mouse_touch();
+        }
+    }
+    CallNextHookEx(null_mut(), code, w, l)
+}
+fn worker() -> &'static Mutex<Option<std::thread::JoinHandle<()>>> {
+    static WORKER: OnceLock<Mutex<Option<std::thread::JoinHandle<()>>>> = OnceLock::new();
+    WORKER.get_or_init(Default::default)
+}
+pub async fn drain(timeout: std::time::Duration) -> Result<(), String> {
+    disable();
+    let began = Instant::now();
+    loop {
+        let finished = worker()
+            .lock()
+            .map_err(|_| "长按快捷键状态不可用")?
+            .as_ref()
+            .is_none_or(|thread| thread.is_finished());
+        if finished {
+            let old = worker().lock().map_err(|_| "长按快捷键状态不可用")?.take();
+            if let Some(old) = old {
+                old.join().map_err(|_| "长按快捷键线程异常结束")?;
+            }
+            return Ok(());
+        }
+        if began.elapsed() >= timeout {
+            return Err("长按快捷键尚未停止，已取消退出".into());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+}
+pub fn configure(app: &AppHandle, milliseconds: u32) -> Result<(), String> {
+    let mut worker = worker().lock().map_err(|_| "长按快捷键不可用")?;
+    THRESHOLD.store(milliseconds, Ordering::Release);
+    FAULT.store(false, Ordering::Release);
+    if STOPPING.load(Ordering::Acquire) {
+        let until = Instant::now() + std::time::Duration::from_secs(3);
+        while worker.as_ref().is_some_and(|w| !w.is_finished()) {
+            if Instant::now() >= until {
+                return Err("旧长按快捷键正在释放".into());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        if let Some(old) = worker.take() {
+            let _ = old.join();
+        }
+        STOPPING.store(false, Ordering::Release);
+    }
+    if worker.as_ref().is_some_and(|w| !w.is_finished()) && THREAD.load(Ordering::Acquire) != 0 {
+        ENABLED.store(true, Ordering::Release);
+        return Ok(());
+    }
+    let app = app.clone();
+    let (tx, rx) = std::sync::mpsc::sync_channel(1);
+    *worker = Some(
+        std::thread::Builder::new()
+            .name("mewu-hold-key".into())
+            .spawn(move || unsafe {
+                let mut message: MSG = std::mem::zeroed();
+                PeekMessageW(&mut message, null_mut(), 0, 0, PM_NOREMOVE);
+                THREAD.store(GetCurrentThreadId(), Ordering::Release);
+                let keyboard_hook = SetWindowsHookExW(
+                    WH_KEYBOARD_LL,
+                    Some(keyboard),
+                    GetModuleHandleW(std::ptr::null()),
+                    0,
+                );
+                let mut mouse_hook: HHOOK = std::ptr::null_mut();
+                if keyboard_hook.is_null() {
+                    THREAD.store(0, Ordering::Release);
+                    let _ = tx.send(false);
+                    return;
+                }
+                seed();
+                ENABLED.store(true, Ordering::Release);
+                let _ = tx.send(true);
+                while GetMessageW(&mut message, null_mut(), 0, 0) > 0 {
+                    match message.message {
+                        PRESS | RELEASE => {
+                            let pressed = message.message == PRESS;
+                            if pressed && mouse_hook.is_null() {
+                                mouse_hook = SetWindowsHookExW(
+                                    WH_MOUSE_LL,
+                                    Some(mouse),
+                                    GetModuleHandleW(std::ptr::null()),
+                                    0,
+                                );
+                            }
+                            if !pressed && !mouse_hook.is_null() {
+                                UnhookWindowsHookEx(mouse_hook);
+                                mouse_hook = std::ptr::null_mut();
+                            }
+                            let target = app.clone();
+                            let _ = app.run_on_main_thread(move || {
+                                crate::hooks::modifier_hold_changed(&target, pressed)
+                            });
+                        }
+                        RESET => {
+                            if !mouse_hook.is_null() {
+                                UnhookWindowsHookEx(mouse_hook);
+                                mouse_hook = std::ptr::null_mut();
+                            }
+                            let target = app.clone();
+                            let _ = app.run_on_main_thread(move || {
+                                crate::hooks::modifier_hold_changed(&target, false)
+                            });
+                            seed();
+                        }
+                        STOP => break,
+                        _ => {
+                            TranslateMessage(&message);
+                            DispatchMessageW(&message);
+                        }
+                    }
+                }
+                ENABLED.store(false, Ordering::Release);
+                KEYS.with(|cell| {
+                    let keys = cell.borrow();
+                    if !keys.forwarded {
+                        if let Some((key, _)) = keys.held {
+                            if GetAsyncKeyState(key as i32) < 0 {
+                                let _ = replay(key, false);
+                            }
+                        }
+                    }
+                });
+                UnhookWindowsHookEx(keyboard_hook);
+                if !mouse_hook.is_null() {
+                    UnhookWindowsHookEx(mouse_hook);
+                }
+                THREAD.store(0, Ordering::Release);
+            })
+            .map_err(|_| "无法启动长按快捷键")?,
+    );
+    match rx.recv_timeout(std::time::Duration::from_secs(3)) {
+        Ok(true) => Ok(()),
+        _ => {
+            disable();
+            Err("无法安装长按快捷键；普通截图快捷键仍可使用".into())
+        }
+    }
+}
+pub fn disable() {
+    ENABLED.store(false, Ordering::Release);
+    if THREAD.load(Ordering::Acquire) != 0 {
+        STOPPING.store(true, Ordering::Release);
+        post(STOP);
+    }
+}

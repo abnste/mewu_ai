@@ -24,12 +24,15 @@ import { VideoAnnotationReader, type VideoAnnotationReadState } from '../video-a
 import { intersectVideoInterval, sameVideoAnnotationTarget, videoAnnotationIdentity, videoAnnotationPreviewTicks, videoAnnotationTarget, videoAnnotationVisible, videoSourceIdentity } from '../video-annotations';
 import { VideoAnnotationPlaybackHold } from '../video-annotation-playback';
 import { reducedVideoPreview, type PreviewResolution } from '../video-preview';
+import ToolbarLayout from './ToolbarLayout';
 
 const metadataCache = new Map<string, VideoMetadata>();
 export interface VideoArtifactProps {
   sceneId: string; item: SpaceItem; active: boolean; busy: boolean; grant?: VideoGrant;
   blackboard?: boolean;
   objectActions?: JSX.Element;
+  leadingActions?: JSX.Element;
+  trailingActions?: JSX.Element;
   previewResolution?: PreviewResolution;
   lane: VideoRequestLane; onRegister: RegisterVideoFlush;
   onActivate?: () => void;
@@ -127,7 +130,7 @@ export default function VideoArtifact(props: VideoArtifactProps) {
     const editorBox = { x: box.left, y: box.top, width: box.width, height: box.height };
     setDrawingBox(previous => Object.keys(editorBox).every(key => previous[key as keyof typeof previous] === editorBox[key as keyof typeof editorBox]) ? previous : editorBox);
     const controls = props.blackboard ? document.querySelector('.drawing-blackboard .drawing-toolbar')?.getBoundingClientRect() : undefined;
-    const composer = document.querySelector('.composer:not(.composer-hidden)')?.getBoundingClientRect();
+    const composer = document.querySelector('.composer:not(.composer-hidden), .quick-voice')?.getBoundingClientRect();
     const actionBounds = actionPopover?.getBoundingClientRect();
     const { actions, timeline: next } = placeVideoToolbars(box, { width: window.innerWidth, height: window.innerHeight }, { width: actionBounds?.width ?? 318, height: actionBounds?.height ?? 58 }, popover?.getBoundingClientRect().height ?? 0, composer, controls);
     setActionPlacement(previous => previous.left === actions.left && previous.top === actions.top ? previous : { left: actions.left, top: actions.top });
@@ -311,14 +314,14 @@ export default function VideoArtifact(props: VideoArtifactProps) {
       <Show when={ownedExport()}>{value => <div class="video-export-state"><LoaderCircle class="spin" size={13} /><span>{value().canceling ? t('取消中') : value().percent === undefined ? (value().kind === 'copy' ? t('复制中') : t('保存中')) : `${Math.round(value().percent!)}%`}</span><button class="icon-button compact" aria-label={value().kind === 'copy' ? t('取消复制视频') : t('取消保存视频')} title={t("取消")} disabled={value().canceling} onClick={props.onCancelExport}><X size={14} /></button></div>}</Show>
     </div>
       <div ref={observeActions} class="video-preview-actions" hidden={drawingOpen()} inert={drawingOpen()} role="toolbar" aria-label={t('视频工具')} style={{ left: `${actionPlacement().left}px`, top: `${actionPlacement().top}px` }} onPointerDown={event => event.stopPropagation()}>
-        {props.objectActions}
+        <ToolbarLayout surface="video.selection">
+        {props.leadingActions ?? props.objectActions}
+        <span data-layout-id="separator-edit" class="capture-separator" />
+        <Show when={drawingAvailable()}><button data-layout-id="draw" data-caption={t("绘制")} title={t("绘制 · D")} aria-label={t("绘制视频标注")} disabled={props.busy || props.annotationBusy || props.inputLocked || props.drawingAllowed === false || drawingOpen()} onClick={() => void openDrawing()}><Pencil size={18} /></button></Show>
+        <span data-layout-id="separator-export" class="capture-separator" />
+        {props.trailingActions}
+        </ToolbarLayout>
         <Show when={drawingAvailable() || props.item.videoAnnotations}><div class="video-preview-annotation-actions" on:keydown={event => { if (nativeSelectOwnsEscape(event) || event.isComposing || event.keyCode === 229 || (event.target as Element)?.closest('input,textarea,select,[contenteditable="true"]')) return; if (event.key === 'Escape' && selectedAnnotation()) { event.preventDefault(); event.stopPropagation(); setSelectedAnnotation(undefined); video.focus(); } }}>
-        <Show when={drawingAvailable()}><button class="icon-button compact" data-caption={t("绘制")} title={t("绘制 · D")} aria-label={t("绘制视频标注")} disabled={props.busy || props.annotationBusy || props.inputLocked || props.drawingAllowed === false || drawingOpen()} onClick={() => void openDrawing()}><Pencil size={15} /></button></Show>
-        <Show when={props.item.videoAnnotations && (props.item.videoAnnotations.objects.length || props.item.videoAnnotations.undo.length || props.item.videoAnnotations.redo.length)}>
-        <button class="icon-button compact" data-caption={t("撤销")} title={t("撤销标注")} aria-label={t("撤销视频标注")} disabled={annotationDisabled() || !props.item.videoAnnotations?.undo.length} onClick={() => replayAnnotations('undo')}><Undo2 size={15} /></button>
-        <button class="icon-button compact" data-caption={t("重做")} title={t("重做标注")} aria-label={t("重做视频标注")} disabled={annotationDisabled() || !props.item.videoAnnotations?.redo.length} onClick={() => replayAnnotations('redo')}><Redo2 size={15} /></button>
-        <button class="icon-button compact" data-caption={t("删除")} title={t("删除标注")} aria-label={t("删除视频标注")} disabled={annotationDisabled() || !selectedAnnotation()} onClick={() => { const id = selectedAnnotation(); if (id) void editAnnotation({ type: 'remove', annotationId: id }); }}><Trash2 size={15} /></button>
-        </Show>
         <Show when={annotationState().loading || annotationEditing()}><LoaderCircle class="spin" size={14} /></Show>
         <Show when={annotationState().error || visiblePixels() > 32 * 1024 * 1024}><span class="inline-error">{annotationState().error || t('视频标注预览过大')}</span><button class="icon-button compact" title={t("重试")} aria-label={t("重新读取视频标注")} disabled={props.busy} onClick={() => setAnnotationRetry(value => value + 1)}><RefreshCw size={14} /></button></Show>
         </div></Show>

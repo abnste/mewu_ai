@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
+import './agent-tool-output.css';
 import { createEffect, createMemo, createSignal, For, on, onCleanup, onMount, Show } from 'solid-js';
 import { Bot, Check, ChevronDown, ChevronUp, CircleAlert, Cpu, FolderOpen, History, Link2, LoaderCircle, MessageSquare, Minus, RotateCcw, Send, Square, SquarePen, X } from 'lucide-solid';
 import type { AgentProfile, ConnectionProfile, Reference, Scene } from '../contracts';
@@ -25,7 +26,7 @@ import { extensionServiceKey } from '../extension-state';
 interface Props {
   extensions?: ExtensionRecord[];
   scene: Scene; agents: AgentProfile[]; connections: ConnectionProfile[]; draft: string; refs: Reference[];
-  stream?: { runId: string; text: string; reasoning?: string }; expanded: boolean; error?: string; sending: boolean; closing: boolean;
+  stream?: { runId: string; text: string; reasoning?: string;toolOutputs?:import('../run-stream-buffer').LiveToolOutput[] }; expanded: boolean; error?: string; sending: boolean; closing: boolean;
   position?: { x: number; y: number }; selectionActive: boolean; focusRequest: number;
   onPosition: (position?: { x: number; y: number }) => void;
   onDraft: (text: string) => void; onSend: () => void; onCancel: () => void; onImport: () => void;
@@ -242,6 +243,7 @@ export default function Composer(props: Props) {
           }}</Show>}</For>
           <Show when={streaming() && (latest() || currentReasoning())}><article class="message assistant"><ReasoningView identity={`${props.scene.id}/${props.stream!.runId}`} disclosure={disclosure(`${props.scene.id}/${props.stream!.runId}`)} text={currentReasoning()} running={running()} /><Show when={latest()}><Markdown text={latest()} /></Show></article></Show>
         </Show>
+        <Show when={streaming()&&props.stream?.toolOutputs?.length}><div class="agent-tool-output"><For each={props.stream?.toolOutputs}>{output=><details><summary>{output.tool}</summary><pre>{output.text}</pre></details>}</For></div></Show>
         <Show when={running() && !currentReasoning() && !(streaming() && props.stream?.text) && !props.scene.run?.steps?.some(step => step.status === 'running')}><div class="thinking"><LoaderCircle size={13} class="spin" /><span>{t('正在思考')}</span></div></Show>
         <Show when={props.scene.run?.id} keyed>{_runId => <ToolProgress steps={props.scene.run?.steps ?? []} running={running()} />}</Show>
         <Show when={interrupted() && props.scene.run?.id} keyed>{runId => <RunJournal runPulse={runPulse()} sceneId={props.scene.id} runId={runId} terminalLabel={t(props.scene.run?.status === 'canceled' ? '已停止' : '未完成')} unavailable={props.sending || props.closing} onContinue={props.onContinueJournal} />}</Show>

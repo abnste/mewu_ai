@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 import PinObjectLayer from './components/PinObjectLayer';
+import QuickVoice from './components/QuickVoice';
+import * as quickBridge from './quick-interaction';
+import type { OcrDocument } from './contracts';
 import { startToolbarLayouts } from './toolbar-layout-session';
 import { referencePinObject, subscribePinObjects, type PinObject } from './pin-objects';
 import { syncNativeLanguage } from './language-bridge';
@@ -189,6 +192,39 @@ export default function App() {
   const [codeActionBusy, setCodeActionBusy] = createSignal(false);
   let stopCodeEvents: (() => void) | undefined;
   const scene = createMemo(() => snapshot()?.scenes.find(s => s.id === snapshot()?.activeSceneId));
+  const [quick,setQuick]=createSignal<quickBridge.QuickInteraction>({generation:0,active:false,held:false,interacted:false});
+  const [quickText,setQuickText]=createSignal<{generation:number;backgroundId:string;providerKey:string;document:OcrDocument}>();
+  const [quickImages,setQuickImages]=createSignal<{generation:number;backgroundId:string;images:import('./window-snap').SnapBounds[]}>();
+  const [quickError,setQuickError]=createSignal('');
+  const quickActive=()=>quick().active&&(!quick().sceneId||quick().sceneId===scene()?.id);
+  const quickOcrKey=()=>pluginSnapshot().plugins.filter(p=>p.state==='enabled'&&!p.error&&p.manifest.contributions.some(c=>c.kind==='selection.ocr')).map(p=>`${p.manifest.id}:${p.revision}`).join('/');
+  let quickVoiceGeneration=0,quickRecognition='',quickInitialRun:string|undefined;
+  let stopQuick:(()=>void)|undefined;onCleanup(()=>stopQuick?.());
+  onMount(()=>{void quickBridge.subscribeQuickInteraction(view=>{
+    if(disposed||view.generation<quick().generation)return;
+    if(view.generation!==quick().generation){quickInitialRun=undefined;setQuickText(undefined);setQuickImages(undefined);setQuickError('');}
+    if(!view.active&&quick().active){void voice.cancel().catch(showError);}
+    setQuick(view);
+  }).then(stop=>{if(disposed)stop();else stopQuick=stop;}).catch(showError);});
+  async function markQuickInteraction(){const value=quick();if(value.active)await quickBridge.touchQuickInteraction(value.generation);}
+  const quickPointer=()=>{if(quickActive())void markQuickInteraction().catch(()=>{});};
+  document.addEventListener('pointerdown',quickPointer,true);onCleanup(()=>document.removeEventListener('pointerdown',quickPointer,true));
+  createEffect(()=>{
+    const value=quick(),current=scene();
+    if(!value.active||!value.sceneId||current?.id!==value.sceneId||!current.background||current.closed)return;
+    const providerKey=quickOcrKey();const key=`${value.generation}:${current.background.id}:${providerKey}`;if(quickRecognition===key)return;
+    quickRecognition=key;quickInitialRun=current.run?.id;
+    void quickBridge.quickImageRegions(value.generation).then(images=>{if(!disposed&&quickActive()&&quick().generation===value.generation&&scene()?.background?.id===current.background!.id)setQuickImages({generation:value.generation,backgroundId:current.background!.id,images});},()=>{/* Optional accessibility image metadata never blocks manual selection. */});
+    if(providerKey)void quickBridge.recognizeQuickInteraction(value.generation).then(document=>{
+      if(!disposed&&quickActive()&&quick().generation===value.generation&&scene()?.background?.id===current.background!.id&&quickOcrKey()===providerKey)setQuickText({generation:value.generation,backgroundId:current.background!.id,providerKey,document});
+    },error=>{if(!disposed&&quickActive()&&(quick().held||quick().interacted)&&quick().generation===value.generation&&quickOcrKey()===providerKey)setQuickError(error instanceof Error?error.message:String(error));});
+  });
+  async function finishQuickAction(action:()=>Promise<boolean>):Promise<boolean>{
+    const generation=quick().generation,id=scene()?.id;const success=await action();
+    if(success&&id&&quickActive()&&quick().generation===generation&&scene()?.id===id)await closeScene(id);
+    return success;
+  }
+  const quickCopied=()=>{const id=scene()?.id;if(quickActive()&&id)void closeScene(id);};
   createEffect(() => { const current=scene(); if(current?.blackboardLink) setBlackboardEditing(current.id); });
   const refs = () => scene() ? referenceDrafts()[scene()!.id] ?? scene()!.refs : [];
   const draft = () => scene() ? drafts()[scene()!.id] ?? scene()!.draft : '';
@@ -196,10 +232,11 @@ export default function App() {
   const voiceEntry = createMemo(() => pluginSnapshot().plugins.filter(plugin => plugin.state === 'enabled' && !plugin.error).flatMap(plugin => plugin.manifest.contributions.filter(contribution => contribution.kind === 'input.speech-to-text').map(contribution => ({ plugin, contribution })))[0]);
   function voiceScope(): VoiceScope | undefined {
     const current = scene(), entry = voiceEntry();
+    if(quickActive()&&!agentReady())return;
     if (!current || !entry || disposed || busy() || sending() || exitPreparing() || recording() || scroll() || selectionActive() || settings() || sessionsOpen() || pendingDrawingDrafts().length || current.closed || current.frozen || current.run?.status === 'running' || document.visibilityState === 'hidden') return;
     return { sceneId: current.id, agentId: current.agentId, backgroundId: current.background?.id ?? null, runId: current.run?.id ?? null, pluginId: entry.plugin.manifest.id, revision: entry.plugin.revision, contributionId: entry.contribution.id };
   }
-  const voice = new VoiceInput({ current: voiceScope, run: request => voiceSubscribed && voice.isActive(request.requestId) ? voiceBridge.runDictation(request) : Promise.reject(new Error('语音输入尚未就绪')), cancel: voiceBridge.cancelDictation, composing: () => voiceComposing, draft, setDraft, changed: setVoicePending, error: showError });
+  const voice = new VoiceInput({ current: voiceScope, run: request => voiceSubscribed && voice.isActive(request.requestId) ? voiceBridge.runDictation(request) : Promise.reject(new Error('语音输入尚未就绪')), cancel: voiceBridge.cancelDictation, composing: () => voiceComposing, draft, setDraft, changed: setVoicePending, error: showError,recognized:(text,scope)=>{if(!quickActive()||quick().sceneId!==scope.sceneId)return;const generation=quick().generation;void markQuickInteraction().then(()=>{if(!disposed&&quickActive()&&quick().generation===generation&&draft()===text){if(!agentReady()){setQuickError(t('请先配置 Agent 和模型'));return;}void send();}}).catch(showError);} });
   function toggleVoice() {
     if (voicePending()) { void voice.cancel().catch(showError); return; }
     if (voiceCapabilitiesRetry()) { void readVoiceCapabilities(); return; }
@@ -288,6 +325,7 @@ export default function App() {
     finally { if (!disposed) setCodeActionBusy(false); finish(); }
   }
   const voiceControl = createMemo(() => voiceEntry() ? { capabilities: voiceCapabilities(), readingCapabilities: voiceCapabilitiesReading(), retryCapabilities: voiceCapabilitiesRetry(), language: voiceLanguage(), pending: voicePending(), disabled: !voiceScope(), onLanguage: chooseVoiceLanguage, onToggle: toggleVoice } : undefined);
+  createEffect(()=>{const value=quick();if(value.active&&(value.held||value.interacted)&&agentReady()&&value.sceneId===scene()?.id&&voiceCapabilities()?.supported&&voiceScope()&&quickVoiceGeneration!==value.generation){if(voice.start(voiceLanguage()))quickVoiceGeneration=value.generation;}});
   let commands: Promise<void> = Promise.resolve();
   let debounce: ReturnType<typeof setTimeout> | undefined;
   let errorTimer: ReturnType<typeof setTimeout> | undefined;
@@ -844,7 +882,7 @@ export default function App() {
     }
   }
   async function exportVideoItem(itemId: string) { await outputVideoItem(itemId, 'save'); }
-  function copyVideoItem(itemId: string) { return outputVideoItem(itemId, 'copy'); }
+  function copyVideoItem(itemId: string) { return finishQuickAction(()=>outputVideoItem(itemId, 'copy')); }
   function cancelVideoExport() {
     if (!videoOutputIntent) return;
     videoOutputIntent.canceled = true;
@@ -1347,7 +1385,7 @@ export default function App() {
       throw error;
     }
   }
-  async function executeControl<M extends AppControlMethod>(method: M, params: AppControlParameters[M]): Promise<unknown> {
+  async function executeControl<M extends AppControlMethod>(method: M, params: AppControlParameters[M],proof?:{id:string;nonce:string}): Promise<unknown> {
     const operation = { method, params } as AppControlOperation;
     if (disposed || !scene()) throw new AppControlError('NOT_READY', '空间尚未就绪');
     // Native claim already checked the exact request nonce, renderer lifetime
@@ -1357,6 +1395,8 @@ export default function App() {
     switch (operation.method) {
       case 'capture.open':
         await capture(true); return controlReceipt();
+      case 'capture.quick':
+        await quickBridge.openQuickInteraction(proof);accept(await bridge.getSnapshot());return controlReceipt();
       case 'region.add': {
         await withControlBusy(() => addRegion(scene()!.id, operation.params.region));
         // Match the UI's saved-region completion, including a Portal request
@@ -1625,7 +1665,7 @@ export default function App() {
         const ownedRefs=()=>referenceDrafts()[currentId]??ownedScene().refs;
         const ownedDraft=()=>drafts()[currentId]??ownedScene().draft;
         return <Show when={!ownedScene().closed}>
-        <SpaceCanvas recordingSelection={recordingSelectionSource()?.sceneId===currentId && recordingSelectionSource()?.backgroundId===ownedScene().background?.id} onRegisterObjectFlush={objectFlush.register} onPinItem={pinMediaItem} onActiveRegionChange={activeCaptureRegionChanged} blackboardEnabled={blackboardAvailable()} aiAvailable={agentReady()} onBlackboardReplay={replaySpace} blackboard={isBlackboard(ownedScene())} blackboardDrawing={blackboardEditing()===currentId} onBlackboardClose={finishBlackboard} onOpenBlackboard={blackboardAvailable()?id=>void reopenBlackboard(id):undefined} onRegisterDrawingHistory={registerDrawingHistory} onRasterSnapshot={accept} showButtonLabels={preferences().showButtonLabels} translationLanguage={preferences().translationLanguage} video={{ previewResolution: preferences().videoPreviewResolution, lane: videoLane, onRegisterPause: videoPlayers.register, onRegisterPlayer: videoNavigation.register, onPauseAll: videoPlayers.pauseAll.bind(videoPlayers), onAnnotationEdit: applyVideoAnnotation, onAnnotationTextEdit: applyVideoAnnotationText, drawing: { onApplyDrawing: applyVideoDrawing, onDocument: applyVideoDrawingDocument, onEditText: applyVideoDrawingText, onSnapshot: accept, onReadVector: videoDrawingBridge.getVideoAnnotationVector, onReadText: videoAnnotationBridge.getVideoAnnotationText, onRegisterDrawingAuthoringFlush: videoDrawingFlush.register }, onRegister: videoFlush.register, onEdit: applyVideoEdit, exporting: videoExport(), onCancelExport: cancelVideoExport, onError: showError }} onVideoExport={exportVideoItem} onVideoCopy={copyVideoItem} onCodeSource={acceptCodeSource} codeView={codeView()} codeActionBusy={codeActionBusy()} onCodeAction={codeAction} onRegisterDrawingFlush={drawingFlush.register} onExportActivity={setExportActive} onGeometryReplay={replayGeometry} onPin={createPin} onTranslationRemove={removeTranslation} translationPending={translations().find(value => value.request.target.sceneId === currentId)} translationNotice={translationNotices()[currentId]} onTranslationRequest={startTranslation} onTranslationCancel={() => translationRequests.cancelScene(currentId)} onClearTranslationNotice={() => setTranslationNotices(old => withoutScene(old, currentId))} onScrollCapture={startScroll} plugins={pluginSnapshot().plugins} onPluginWorkflow={runWorkflow} onDrawingCommand={drawingCommand} onDrawingDocumentCommand={drawingDocumentCommand} onImageDrawingCommand={command} onCopyDrawingTable={copyDrawingTable} onOcrRequest={request => plugins.runPluginOcr(request.requestId, request.pluginId, request.revision, request.contributionId, request.target)} onOcrCancel={plugins.cancelPluginOcr} onOcrResult={accept} scene={canvasScene(ownedScene())} refs={ownedRefs()} maskOpacity={preferences().maskOpacity} authoringBusy={busy() || sending()} inputLocked={exitPreparing() || Boolean(recording() || scroll())} busy={busy() || sending() || exitPreparing() || Boolean(recording() || scroll())} geometryController={regionGeometry} geometryView={geometryView()} onBeforeExport={flush} onCopyClose={closeScene} onRecordRegion={id => void startRecording(id)} onAddRegion={region => addRegion(currentId, region)} onSelectionActivity={setSelectionActive} onFocusComposer={() => setFocusRequest(v => v + 1)} onSelectionComplete={selectionCompleted} onRemoveRegion={id => removeReferenceObject('region', id)} onReference={toggleReference} onUpdateItem={item => command({ type: 'update_item', sceneId: currentId, item })} onRemoveItem={id => removeReferenceObject('item', id)} onError={showError} />
+        <SpaceCanvas quickImages={quickActive()&&quickImages()?.generation===quick().generation&&quickImages()?.backgroundId===ownedScene().background?.id?quickImages()?.images:undefined} quickText={quickActive()&&quickText()?.generation===quick().generation&&!!quickOcrKey()&&quickText()?.providerKey===quickOcrKey()&&quickText()?.backgroundId===ownedScene().background?.id?quickText()?.document:undefined} onQuickCopied={quickCopied} recordingSelection={recordingSelectionSource()?.sceneId===currentId && recordingSelectionSource()?.backgroundId===ownedScene().background?.id} onRegisterObjectFlush={objectFlush.register} onPinItem={id=>finishQuickAction(()=>pinMediaItem(id))} onActiveRegionChange={activeCaptureRegionChanged} blackboardEnabled={blackboardAvailable()} aiAvailable={agentReady()} onBlackboardReplay={replaySpace} blackboard={isBlackboard(ownedScene())} blackboardDrawing={blackboardEditing()===currentId} onBlackboardClose={finishBlackboard} onOpenBlackboard={blackboardAvailable()?id=>void reopenBlackboard(id):undefined} onRegisterDrawingHistory={registerDrawingHistory} onRasterSnapshot={accept} showButtonLabels={preferences().showButtonLabels} translationLanguage={preferences().translationLanguage} video={{ previewResolution: preferences().videoPreviewResolution, lane: videoLane, onRegisterPause: videoPlayers.register, onRegisterPlayer: videoNavigation.register, onPauseAll: videoPlayers.pauseAll.bind(videoPlayers), onAnnotationEdit: applyVideoAnnotation, onAnnotationTextEdit: applyVideoAnnotationText, drawing: { onApplyDrawing: applyVideoDrawing, onDocument: applyVideoDrawingDocument, onEditText: applyVideoDrawingText, onSnapshot: accept, onReadVector: videoDrawingBridge.getVideoAnnotationVector, onReadText: videoAnnotationBridge.getVideoAnnotationText, onRegisterDrawingAuthoringFlush: videoDrawingFlush.register }, onRegister: videoFlush.register, onEdit: applyVideoEdit, exporting: videoExport(), onCancelExport: cancelVideoExport, onError: showError }} onVideoExport={exportVideoItem} onVideoCopy={copyVideoItem} onCodeSource={acceptCodeSource} codeView={codeView()} codeActionBusy={codeActionBusy()} onCodeAction={codeAction} onRegisterDrawingFlush={drawingFlush.register} onExportActivity={setExportActive} onGeometryReplay={replayGeometry} onPin={(...args)=>finishQuickAction(()=>createPin(...args))} onTranslationRemove={removeTranslation} translationPending={translations().find(value => value.request.target.sceneId === currentId)} translationNotice={translationNotices()[currentId]} onTranslationRequest={startTranslation} onTranslationCancel={() => translationRequests.cancelScene(currentId)} onClearTranslationNotice={() => setTranslationNotices(old => withoutScene(old, currentId))} onScrollCapture={startScroll} plugins={pluginSnapshot().plugins} onPluginWorkflow={runWorkflow} onDrawingCommand={drawingCommand} onDrawingDocumentCommand={drawingDocumentCommand} onImageDrawingCommand={command} onCopyDrawingTable={copyDrawingTable} onOcrRequest={request => plugins.runPluginOcr(request.requestId, request.pluginId, request.revision, request.contributionId, request.target)} onOcrCancel={plugins.cancelPluginOcr} onOcrResult={accept} scene={canvasScene(ownedScene())} refs={ownedRefs()} maskOpacity={preferences().maskOpacity} authoringBusy={busy() || sending()} inputLocked={exitPreparing() || Boolean(recording() || scroll())} busy={busy() || sending() || exitPreparing() || Boolean(recording() || scroll())} geometryController={regionGeometry} geometryView={geometryView()} onBeforeExport={flush} onCopyClose={closeScene} onRecordRegion={id => void startRecording(id)} onAddRegion={region => addRegion(currentId, region)} onSelectionActivity={setSelectionActive} onFocusComposer={() => setFocusRequest(v => v + 1)} onSelectionComplete={selectionCompleted} onRemoveRegion={id => removeReferenceObject('region', id)} onReference={toggleReference} onUpdateItem={item => command({ type: 'update_item', sceneId: currentId, item })} onRemoveItem={id => removeReferenceObject('item', id)} onError={showError} />
         <Show when={blackboardEditing()!==currentId}><PinObjectLayer exiting={exitPreparing()} aiAvailable={agentAvailable()} objects={pinObjects()} busy={busy()||sending()||exitPreparing()} referenced={pinReferenced} onReference={object=>void referencePin(object)} onError={showError}/></Show>
         <Show when={blackboardEditing()!==currentId}><nav class="space-utilities" aria-label={t('空间操作')}>
           <button class="icon-button" aria-label={t('退出')} title={t('退出')} disabled={busy()||exitPreparing()} onClick={()=>void closeScene(currentId)}><X size={17}/></button>
@@ -1637,7 +1677,7 @@ export default function App() {
           <ExtensionTransientOverlay sceneId={currentId} disabled={exitPreparing()||Boolean(recording()||scroll())} onError={showError}/>
           <ExtensionSpaceCommands sceneId={currentId} disabled={busy()||sending()||exitPreparing()||selectionActive()||exportActive()||Boolean(recording()||scroll())||ownedScene().closed||ownedScene().frozen||ownedScene().run?.status==='running'} onError={showError}/>
         </nav>
-        <Show when={agentAvailable()}><Composer extensions={composerExtensions()} onRestoreArtifact={restoreCode} ready={agentReady()} onReferenceInserted={referenceInserted} referenceInsertion={referenceInsertion()} showButtonLabels={preferences().showButtonLabels} thinkingGlowEnabled={preferences().thinkingGlowEnabled} thinkingGlowColor={preferences().thinkingGlowColor} onVideoAnswer={action => void jumpToVideoAnswer(action)} onContinueJournal={continueJournal} voice={voiceControl()} onComposition={active => { if (scene()?.id !== currentId) return; voiceComposing = active; if (!active) voice.compositionEnded(); }} scene={ownedScene()} agents={snapshot()!.agents} connections={snapshot()!.connections.filter(value=>capabilities()?.configuredConnectionIds.includes(value.id))} draft={ownedDraft()} refs={ownedRefs()} stream={streams()[currentId]} error={sendErrors()[currentId]} expanded={expanded()[currentId] ?? false} position={composerPositions()[currentId]} onPosition={value => setComposerPositions(old => ({ ...old, [currentId]: value }))} selectionActive={selectionActive()} focusRequest={focusRequest()} sending={sending()} closing={Boolean(closingScene())} onDraft={setDraft} onSend={() => void send()} onCancel={() => void cancel()} onImport={() => void importFiles()} onFreeze={() => void freeze()} onClose={() => void closeScene(currentId)} onNew={() => void newConversation()} onCapture={() => void capture()} onSessions={() => setSessionsOpen(true)} onFocusRef={focusReference} onRemoveRef={toggleReference} onExpanded={value => setExpanded(old => ({ ...old, [currentId]: value }))} onAgent={agentId => void command({ type: 'set_agent', sceneId: currentId, agentId }).catch(showError)} onSelectConnection={connectionId => void command({ type: 'set_scene_connection', sceneId: currentId, connectionId }).catch(showError)} onConnection={() => void openConnection()} onError={showError} /></Show></Show>
+        <Show when={quickActive()}><QuickVoice ready={agentReady()} voice={voiceControl()} draft={ownedDraft()} thinking={ownedScene().run?.status==='running'} text={ownedScene().run?.id!==quickInitialRun?(streams()[currentId]?.text||ownedScene().messages.filter(m=>m.role==='assistant'&&m.runId===ownedScene().run?.id).at(-1)?.text):undefined} error={quickError()||sendErrors()[currentId]}/></Show><Show when={agentAvailable()&&!quickActive()}><Composer extensions={composerExtensions()} onRestoreArtifact={restoreCode} ready={agentReady()} onReferenceInserted={referenceInserted} referenceInsertion={referenceInsertion()} showButtonLabels={preferences().showButtonLabels} thinkingGlowEnabled={preferences().thinkingGlowEnabled} thinkingGlowColor={preferences().thinkingGlowColor} onVideoAnswer={action => void jumpToVideoAnswer(action)} onContinueJournal={continueJournal} voice={voiceControl()} onComposition={active => { if (scene()?.id !== currentId) return; voiceComposing = active; if (!active) voice.compositionEnded(); }} scene={ownedScene()} agents={snapshot()!.agents} connections={snapshot()!.connections.filter(value=>capabilities()?.configuredConnectionIds.includes(value.id))} draft={ownedDraft()} refs={ownedRefs()} stream={streams()[currentId]} error={sendErrors()[currentId]} expanded={expanded()[currentId] ?? false} position={composerPositions()[currentId]} onPosition={value => setComposerPositions(old => ({ ...old, [currentId]: value }))} selectionActive={selectionActive()} focusRequest={focusRequest()} sending={sending()} closing={Boolean(closingScene())} onDraft={setDraft} onSend={() => void send()} onCancel={() => void cancel()} onImport={() => void importFiles()} onFreeze={() => void freeze()} onClose={() => void closeScene(currentId)} onNew={() => void newConversation()} onCapture={() => void capture()} onSessions={() => setSessionsOpen(true)} onFocusRef={focusReference} onRemoveRef={toggleReference} onExpanded={value => setExpanded(old => ({ ...old, [currentId]: value }))} onAgent={agentId => void command({ type: 'set_agent', sceneId: currentId, agentId }).catch(showError)} onSelectConnection={connectionId => void command({ type: 'set_scene_connection', sceneId: currentId, connectionId }).catch(showError)} onConnection={() => void openConnection()} onError={showError} /></Show></Show>
         <Show when={sessionsOpen()}><SessionDock scenes={snapshot()!.scenes.filter(scene=>!scene.blackboardLink)} activeId={snapshot()!.activeSceneId} busy={busy()} onClose={() => setSessionsOpen(false)} onCloseScene={id => void closeScene(id)} onActivate={id => { if (id !== scene()!.id) void switchScene({ type: 'activate_scene', sceneId: id }); else setSessionsOpen(false); }} /></Show>
       </Show>;}}
     </Show>

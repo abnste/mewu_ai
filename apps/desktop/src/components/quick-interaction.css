@@ -1,0 +1,12 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+.quick-voice{position:fixed;z-index:80;left:50%;bottom:26px;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:10px;max-width:min(680px,calc(100vw - 32px));pointer-events:none}
+.quick-voice-bubble{pointer-events:auto;display:flex;align-items:center;justify-content:center;padding:6px 9px;border-radius:30px;background:var(--surface);box-shadow:var(--shadow-menu);color:var(--text)}
+.quick-voice-bubble.listening,.quick-voice-bubble.thinking{box-shadow:0 0 0 3px var(--accent-soft),var(--shadow-menu)}
+.quick-voice-answer{pointer-events:auto;max-height:45vh;overflow:auto;min-width:160px;padding:14px 18px;border-radius:16px;background:var(--surface);color:var(--text);box-shadow:var(--shadow-menu);user-select:text}
+.quick-voice-transcript,.quick-voice-error{pointer-events:auto;max-width:100%;padding:8px 14px;border-radius:12px;color:var(--text);background:var(--surface);font-size:13px;user-select:text;box-shadow:var(--shadow-menu)}
+.quick-ocr{position:absolute;z-index:6;pointer-events:none}
+.quick-ocr .ocr-text-layer{pointer-events:none;inset:0}
+.quick-ocr .ocr-text-actions,.quick-ocr .ocr-context-menu{pointer-events:auto}
+.quick-ocr-hits{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+.quick-ocr-hits rect{fill:transparent;pointer-events:all;cursor:text}
+.quick-ocr-hits rect:hover{fill:#8bc3ff33}

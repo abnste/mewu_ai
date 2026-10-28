@@ -32,7 +32,7 @@ use std::{
     time::Duration,
 };
 use tokio::{
-    io::{AsyncRead, AsyncWrite, AsyncBufReadExt, AsyncWriteExt, BufReader, ReadBuf},
+    io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, ReadBuf},
     process::Command,
     sync::{OwnedSemaphorePermit, Semaphore},
 };
@@ -58,6 +58,10 @@ pub enum McpCallOutcome {
 fn process_slots() -> &'static Arc<Semaphore> {
     static SLOTS: OnceLock<Arc<Semaphore>> = OnceLock::new();
     SLOTS.get_or_init(|| Arc::new(Semaphore::new(4)))
+}
+fn command_slots() -> &'static Arc<Semaphore> {
+    static SLOTS: OnceLock<Arc<Semaphore>> = OnceLock::new();
+    SLOTS.get_or_init(|| Arc::new(Semaphore::new(2)))
 }
 
 #[derive(Default)]
@@ -140,11 +144,12 @@ pub fn final_shutdown(ticket: &QuiesceTicket) -> Result<(), String> {
     if registry.permanent || registry.quiescing != Some(ticket.epoch) {
         return Err("MCP 停止状态已变化".into());
     }
-    if process_slots().available_permits() != 4 {
+    if process_slots().available_permits() != 4 || command_slots().available_permits() != 2 {
         return Err("MCP 尚未停止，已取消退出".into());
     }
     registry.permanent = true;
     process_slots().close();
+    command_slots().close();
     Ok(())
 }
 /// Legacy irreversible exit hook. New migration/exit paths must use a ticket
@@ -153,6 +158,7 @@ pub fn shutdown_all() {
     let mut registry = registry().lock().unwrap_or_else(|e| e.into_inner());
     registry.permanent = true;
     process_slots().close();
+    command_slots().close();
     for process in registry.children.iter().filter_map(Weak::upgrade) {
         process.kill();
     }
@@ -160,7 +166,7 @@ pub fn shutdown_all() {
 pub async fn wait_until_idle(timeout: Duration) -> bool {
     let started = tokio::time::Instant::now();
     loop {
-        if process_slots().available_permits() == 4 {
+        if process_slots().available_permits() == 4 && command_slots().available_permits() == 2 {
             return true;
         }
         if started.elapsed() >= timeout {
@@ -863,64 +869,116 @@ pub struct McpSession {
 }
 
 // Shared transport only: no Agent or MCP wire messages are interpreted here.
-async fn start_stdio(config: &McpCommand, environment: Option<&std::collections::BTreeMap<String,String>>) -> Result<(ProcessGuard, BoundedRead<PipeReader>, PipeWriter), String> {
-    let (executable,cwd)=validate_command(config)?;
+async fn start_stdio(
+    config: &McpCommand,
+    environment: Option<&std::collections::BTreeMap<String, String>>,
+) -> Result<(ProcessGuard, BoundedRead<PipeReader>, PipeWriter), String> {
+    let (executable, cwd) = validate_command(config)?;
     start_stdio_prepared(executable, &config.args, cwd, environment, None, false).await
 }
-async fn start_stdio_prepared(executable:PathBuf, arguments:&[String], cwd:PathBuf, environment: Option<&std::collections::BTreeMap<String,String>>, gate: Option<Box<dyn FnOnce() -> Result<(),String> + Send>>, clear_environment:bool) -> Result<(ProcessGuard, BoundedRead<PipeReader>, PipeWriter), String> {
+async fn start_stdio_prepared(
+    executable: PathBuf,
+    arguments: &[String],
+    cwd: PathBuf,
+    environment: Option<&std::collections::BTreeMap<String, String>>,
+    gate: Option<Box<dyn FnOnce() -> Result<(), String> + Send>>,
+    clear_environment: bool,
+) -> Result<(ProcessGuard, BoundedRead<PipeReader>, PipeWriter), String> {
+    let (process, stdout, stdin, _) = start_process_pipes(
+        executable,
+        arguments,
+        cwd,
+        environment,
+        gate,
+        clear_environment,
+        false,
+    )
+    .await?;
+    let bounded = BoundedRead {
+        inner: stdout,
+        process: process.state.clone(),
+        line: 0,
+        total: 0,
+        lines: 0,
+    };
+    Ok((process, bounded, stdin))
+}
+// Transport-neutral pipe ownership. Agent commands retain stderr as content;
+// MCP and external JSON-lines clients retain their original discard/limit path.
+async fn start_process_pipes(
+    executable: PathBuf,
+    arguments: &[String],
+    cwd: PathBuf,
+    environment: Option<&std::collections::BTreeMap<String, String>>,
+    gate: Option<Box<dyn FnOnce() -> Result<(), String> + Send>>,
+    clear_environment: bool,
+    capture_stderr: bool,
+) -> Result<(ProcessGuard, PipeReader, PipeWriter, Option<PipeReader>), String> {
     let epoch = registry()
         .lock()
         .map_err(|_| "MCP 状态不可用")?
         .admission_epoch()?;
-    let slot = process_slots()
-        .clone()
-        .acquire_owned()
-        .await
-        .map_err(|_| "MCP 已停止")?;
+    let slot = (if capture_stderr {
+        command_slots()
+    } else {
+        process_slots()
+    })
+    .clone()
+    .acquire_owned()
+    .await
+    .map_err(|_| "MCP 已停止")?;
     let mut command = Command::new(&executable);
     command.args(arguments).current_dir(cwd);
     // External program permission grants a normal local CLI invocation,
     // including its configured login/runtime environment. MCP keeps its
     // original reduced environment and fixed descendant PATH policy.
     if environment.is_none() {
-    command.env_clear();
-    for name in [
-        "SystemRoot",
-        "WINDIR",
-        "TEMP",
-        "TMP",
-        "HOME",
-        "USERPROFILE",
-        "LANG",
-        "LC_ALL",
-    ] {
-        if let Some(value) = std::env::var_os(name) {
-            command.env(name, value);
+        command.env_clear();
+        for name in [
+            "SystemRoot",
+            "WINDIR",
+            "TEMP",
+            "TMP",
+            "HOME",
+            "USERPROFILE",
+            "LANG",
+            "LC_ALL",
+        ] {
+            if let Some(value) = std::env::var_os(name) {
+                command.env(name, value);
+            }
         }
-    }
-    // Fixed program resolution never uses PATH. Descendants receive only the
-    // runtime directory and OS binary directories, not the host's custom PATH.
-    let mut paths = vec![executable.parent().ok_or("MCP 程序目录无效")?.to_path_buf()];
-    #[cfg(windows)]
-    if let Some(root) = std::env::var_os("SystemRoot") {
-        paths.push(PathBuf::from(root).join("System32"));
-    }
-    #[cfg(unix)]
-    paths.extend([PathBuf::from("/usr/bin"), PathBuf::from("/bin")]);
-    command.env(
-        "PATH",
-        std::env::join_paths(paths).map_err(|_| "MCP 程序目录无效")?,
-    );
+        // Fixed program resolution never uses PATH. Descendants receive only the
+        // runtime directory and OS binary directories, not the host's custom PATH.
+        let mut paths = vec![executable.parent().ok_or("MCP 程序目录无效")?.to_path_buf()];
+        #[cfg(windows)]
+        if let Some(root) = std::env::var_os("SystemRoot") {
+            paths.push(PathBuf::from(root).join("System32"));
+        }
+        #[cfg(unix)]
+        paths.extend([PathBuf::from("/usr/bin"), PathBuf::from("/bin")]);
+        command.env(
+            "PATH",
+            std::env::join_paths(paths).map_err(|_| "MCP 程序目录无效")?,
+        );
     } else {
-        if clear_environment { command.env_clear(); }
+        if clear_environment {
+            command.env_clear();
+        }
         #[cfg(target_os = "linux")]
         if !clear_environment {
             let clean = crate::external_process_env::inherited();
-            for (name, value) in std::env::vars_os().filter_map(|(name,value)|Some((name.into_string().ok()?,value.into_string().ok()?))) {
+            for (name, value) in std::env::vars_os().filter_map(|(name, value)| {
+                Some((name.into_string().ok()?, value.into_string().ok()?))
+            }) {
                 match clean.get(&name) {
-                    None => { command.env_remove(name); },
-                    Some(clean) if clean != &value => { command.env(name, clean); },
-                    _ => {},
+                    None => {
+                        command.env_remove(name);
+                    }
+                    Some(clean) if clean != &value => {
+                        command.env(name, clean);
+                    }
+                    _ => {}
                 }
             }
         }
@@ -954,7 +1012,9 @@ async fn start_stdio_prepared(executable:PathBuf, arguments:&[String], cwd:PathB
         }
         registry.children.retain(|entry| entry.strong_count() > 0);
         registry.children.push(Arc::downgrade(&state));
-        if let Some(gate)=gate { gate()?; }
+        if let Some(gate) = gate {
+            gate()?;
+        }
         let child = command
             .spawn()
             .map_err(|_| "无法启动 MCP 程序，请检查路径和运行权限")?;
@@ -976,17 +1036,209 @@ async fn start_stdio_prepared(executable:PathBuf, arguments:&[String], cwd:PathB
     let stderr = native_stderr(stderr).map_err(|_| "无法连接 MCP 错误输出")?;
     let stdin = pipe_writer(stdin, &state).map_err(|_| "无法连接 MCP 输入")?;
     let stdout = pipe_reader(stdout, &state).map_err(|_| "无法连接 MCP 输出")?;
-    pipe_stderr(stderr, &state).map_err(|_| "无法连接 MCP 错误输出")?;
+    let stderr = if capture_stderr {
+        Some(pipe_reader(stderr, &state).map_err(|_| "无法连接命令错误输出")?)
+    } else {
+        pipe_stderr(stderr, &state).map_err(|_| "无法连接 MCP 错误输出")?;
+        None
+    };
     state.setup_done.store(true, Ordering::Release);
     state.check()?;
-    let bounded = BoundedRead {
-        inner: stdout,
-        process: state.clone(),
-        line: 0,
-        total: 0,
-        lines: 0,
+    Ok((process, stdout, stdin, stderr))
+}
+
+/// Native agent commands share the existing owned Job/process-group and reaper.
+/// Command source goes only to the selected shell; no shell parsing or command
+/// allowlist lives in Mewu. Dropping this future revokes its process tree.
+pub(crate) async fn run_agent_command(
+    config: McpCommand,
+    input: Option<Vec<u8>>,
+    timeout: Option<Duration>,
+    log_path: PathBuf,
+    active: Arc<dyn Fn() -> Result<(), String> + Send + Sync>,
+    on_output: impl Fn(&str, &str),
+) -> Result<Value, String> {
+    use tokio::io::AsyncReadExt;
+    let (executable, cwd) = match validate_user_command(&config) {
+        Ok(v) => v,
+        Err(error) => return Ok(json!({"isError":true,"executed":false,"error":error})),
     };
-    Ok((process, bounded, stdin))
+    let mut environment: std::collections::BTreeMap<_, _> =
+        crate::external_process_env::inherited()
+            .into_iter()
+            .filter(|(name, _)| {
+                let n = name.to_ascii_uppercase();
+                !n.starts_with("TAURI_SIGNING_") && !n.starts_with("MEWU_TEST_")
+            })
+            .collect();
+    environment.insert("MEWU_CWD".into(), cwd.to_string_lossy().into_owned());
+    let parent = log_path.parent().ok_or("命令日志目录无效")?;
+    std::fs::create_dir_all(parent).map_err(|_| "无法创建命令输出目录")?;
+    let mut log = std::fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&log_path)
+        .map_err(|_| "无法创建命令输出文件")?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        log.set_permissions(std::fs::Permissions::from_mode(0o600))
+            .map_err(|_| "无法保护命令输出")?;
+    }
+    let gate = active.clone();
+    let start = start_process_pipes(
+        executable,
+        &config.args,
+        cwd.clone(),
+        Some(&environment),
+        Some(Box::new(move || gate())),
+        true,
+        true,
+    );
+    tokio::pin!(start);
+    let mut admission = tokio::time::interval(Duration::from_millis(20));
+    let (process, mut stdout, mut stdin, stderr) = loop {
+        tokio::select! {
+            value=&mut start=>break match value{Ok(v)=>v,Err(error)=>return Ok(json!({"isError":true,"executed":null,"outcome":"unknown","error":error,"correction":"Startup did not yield an owned result; inspect state before retrying."}))},
+            _=admission.tick()=>active()?,
+        }
+    };
+    let state = process.state.clone();
+    let mut stderr = stderr.ok_or("命令错误输出未连接")?;
+    let began = tokio::time::Instant::now();
+    let mut tail = Vec::new();
+    let mut total = 0usize;
+    let mut retained = 0usize;
+    let mut encoding_errors = false;
+    let mut exit = None;
+    let mut error = None;
+    let mut out_eof = false;
+    let mut err_eof = false;
+    let mut ob = [0u8; 8192];
+    let mut eb = [0u8; 8192];
+    let mut out_decoder = encoding_rs::UTF_8.new_decoder_without_bom_handling();
+    let mut err_decoder = encoding_rs::UTF_8.new_decoder_without_bom_handling();
+    let mut tick = tokio::time::interval(Duration::from_millis(20));
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut exited_at = None;
+    let writer = async move {
+        if let Some(input) = input {
+            stdin
+                .write_all(&input)
+                .await
+                .map_err(|_| "无法传递命令脚本")?;
+            stdin.flush().await.map_err(|_| "无法传递命令脚本")?;
+        }
+        drop(stdin);
+        Ok::<_, String>(())
+    };
+    tokio::pin!(writer);
+    let mut written = false;
+    loop {
+        if out_eof && err_eof && exit.is_some() {
+            break;
+        }
+        if timeout.is_some_and(|limit| began.elapsed() >= limit) {
+            error=Some("Command timed out; it may have performed partial work. Inspect state before retrying.".to_string());
+            break;
+        }
+        let event = tokio::select! {
+            value=&mut writer,if !written=>{written=true;if let Err(e)=value{error=Some(e);break;}None},
+            value=stdout.read(&mut ob),if !out_eof=>Some(("stdout",value,&ob[..])),
+            value=stderr.read(&mut eb),if !err_eof=>Some(("stderr",value,&eb[..])),
+            _=tick.tick()=>{
+                if let Err(reason)=active(){error=Some(format!("Command canceled: {reason}. Partial effects must be inspected before retrying."));break;}
+                let status=state.child.lock().map_err(|_|"命令状态不可用")?.as_mut().ok_or("命令已停止")?.try_wait().map_err(|_|"无法读取命令退出状态")?;
+                if let Some(status)=status{
+                    exit=Some(status);let finished=exited_at.get_or_insert_with(tokio::time::Instant::now);
+                    if out_eof&&err_eof{break;}
+                    // A detached descendant must not keep an invocation's pipes
+                    // forever. It belongs to this command's process tree.
+                    if finished.elapsed()>=Duration::from_secs(2){error=Some("Shell exited while a child still owned its output pipes; the owned process tree was stopped. Background services require a managed runtime.".into());break;}
+                }
+                None
+            }
+        };
+        if let Some((stream, value, buffer)) = event {
+            match value {
+                Ok(count) => {
+                    let eof = count == 0;
+                    if eof {
+                        if stream == "stdout" {
+                            out_eof = true
+                        } else {
+                            err_eof = true
+                        }
+                    }
+                    total = total.saturating_add(count);
+                    if total > mewu_agent_tools::MAX_FILE as usize {
+                        error=Some("Command output reached the 32 MiB retained-output limit; process stopped. Existing output is retained.".into());
+                        break;
+                    }
+                    let decoder = if stream == "stdout" {
+                        &mut out_decoder
+                    } else {
+                        &mut err_decoder
+                    };
+                    let mut text = String::with_capacity(count.saturating_mul(3) + 16);
+                    let (_, read, invalid) =
+                        decoder.decode_to_string(&buffer[..count], &mut text, eof);
+                    encoding_errors |= invalid;
+                    if read != count {
+                        return Err("命令输出解码预算异常，操作结果需要核对".into());
+                    }
+                    if retained.saturating_add(text.len()) > mewu_agent_tools::MAX_FILE as usize {
+                        error=Some("Decoded command output reached the 32 MiB retained-output limit; process stopped.".into());
+                        break;
+                    }
+                    log.write_all(text.as_bytes())
+                        .map_err(|_| "无法保存命令输出；执行结果需要核对")?;
+                    retained += text.len();
+                    tail.extend_from_slice(text.as_bytes());
+                    if tail.len() > mewu_agent_tools::MAX_OUTPUT {
+                        let mut start = tail.len() - mewu_agent_tools::MAX_OUTPUT;
+                        while start < tail.len() && (tail[start] & 0xc0) == 0x80 {
+                            start += 1;
+                        }
+                        tail.drain(..start);
+                    }
+                    if !text.is_empty() {
+                        on_output(stream, &text);
+                    }
+                }
+                Err(e) => {
+                    error = Some(format!("Cannot read {stream}: {e}"));
+                    break;
+                }
+            }
+        }
+    }
+    log.flush()
+        .map_err(|_| "无法提交命令输出；执行结果需要核对")?;
+    // Normal completion is invocation-owned too: no untracked descendant may
+    // keep the application's pipe/reaper capacity forever after shell exit.
+    state.kill();
+    drop(stdout);
+    drop(stderr);
+    drop(process);
+    let drained = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            if state.slot.lock().is_ok_and(|s| s.is_none()) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .is_ok();
+    if !drained {
+        return Err("命令进程树仍在清理，结果不确定；禁止自动重放".into());
+    }
+    let output = String::from_utf8_lossy(&tail);
+    let lines = output.lines().count();
+    Ok(
+        json!({"executed":true,"cwd":cwd,"output":output,"exitCode":exit.as_ref().and_then(|s|s.code()),"isError":error.is_some()||!exit.as_ref().is_some_and(|s|s.success()),"error":error,"truncated":retained>tail.len(),"fullOutputPath":log_path,"fullOutputComplete":error.is_none(),"outputBytes":total,"retainedBytes":retained,"encodingHadErrors":encoding_errors,"retainedLines":lines,"wallTimeSeconds":began.elapsed().as_secs_f64()}),
+    )
 }
 
 /// Starts only the exact local executable selected by the host. Acquisition,
@@ -1021,47 +1273,140 @@ pub async fn connect(config: &McpCommand) -> Result<McpSession, String> {
 /// bounded pipes and reaper as external protocol clients. Event JSON is stdin;
 /// it is never expanded into a shell source or argv. No stdout/stderr is logged.
 pub(crate) async fn run_user_command(
-    config:&McpCommand, input:Vec<u8>, cancel:Arc<AtomicBool>, timeout:Duration,
-    extra_env:std::collections::BTreeMap<String,String>,
-    gate:Box<dyn FnOnce()->Result<(),String>+Send>,
-)->Result<(),String>{
-    if input.len()>256*1024 || timeout.is_zero(){return Err("命令输入或时间限制无效".into())}
-    if extra_env.len()>16||extra_env.iter().any(|(k,v)|k.is_empty()||!k.bytes().all(|b|b.is_ascii_alphanumeric()||b==b'_')||v.len()>16384||v.contains('\0')){return Err("命令环境参数无效".into())}
-    let mut environment:std::collections::BTreeMap<_,_>=crate::external_process_env::inherited().into_iter().filter(|(name,_)|{let name=name.to_ascii_uppercase();!name.starts_with("TAURI_SIGNING_")&&!name.starts_with("MEWU_TEST_")}).collect();
+    config: &McpCommand,
+    input: Vec<u8>,
+    cancel: Arc<AtomicBool>,
+    timeout: Duration,
+    extra_env: std::collections::BTreeMap<String, String>,
+    gate: Box<dyn FnOnce() -> Result<(), String> + Send>,
+) -> Result<(), String> {
+    if input.len() > 256 * 1024 || timeout.is_zero() {
+        return Err("命令输入或时间限制无效".into());
+    }
+    if extra_env.len() > 16
+        || extra_env.iter().any(|(k, v)| {
+            k.is_empty()
+                || !k.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+                || v.len() > 16384
+                || v.contains('\0')
+        })
+    {
+        return Err("命令环境参数无效".into());
+    }
+    let mut environment: std::collections::BTreeMap<_, _> =
+        crate::external_process_env::inherited()
+            .into_iter()
+            .filter(|(name, _)| {
+                let name = name.to_ascii_uppercase();
+                !name.starts_with("TAURI_SIGNING_") && !name.starts_with("MEWU_TEST_")
+            })
+            .collect();
     environment.extend(extra_env);
-    let until=tokio::time::Instant::now()+timeout;
-    let started=async {
-        if cancel.load(Ordering::Acquire){return Err("命令已停止".to_string())}
-        let (executable,cwd)=validate_user_command(config)?;
-        start_stdio_prepared(executable,&config.args,cwd,Some(&environment),Some(gate),true).await
+    let until = tokio::time::Instant::now() + timeout;
+    let started = async {
+        if cancel.load(Ordering::Acquire) {
+            return Err("命令已停止".to_string());
+        }
+        let (executable, cwd) = validate_user_command(config)?;
+        start_stdio_prepared(
+            executable,
+            &config.args,
+            cwd,
+            Some(&environment),
+            Some(gate),
+            true,
+        )
+        .await
     };
-    let (process,mut output,mut stdin)=tokio::time::timeout_at(until,started).await.map_err(|_|"命令启动超时")??;
-    let state=process.state.clone();
-    let command=async {
+    let (process, mut output, mut stdin) = tokio::time::timeout_at(until, started)
+        .await
+        .map_err(|_| "命令启动超时")??;
+    let state = process.state.clone();
+    let command = async {
         use tokio::io::AsyncWriteExt;
-        let write=async{
-            let result=async{stdin.write_all(&input).await?;stdin.flush().await}.await;
+        let write = async {
+            let result = async {
+                stdin.write_all(&input).await?;
+                stdin.flush().await
+            }
+            .await;
             drop(stdin);
             // Commands may intentionally ignore stdin. An early closed input
             // is harmless only alongside the independent successful exit check.
-            match result { Ok(())=>Ok(()), Err(e) if matches!(e.kind(),std::io::ErrorKind::BrokenPipe|std::io::ErrorKind::ConnectionReset)=>Ok(()),Err(_)=>Err("无法传递事件数据".to_string()) }
+            match result {
+                Ok(()) => Ok(()),
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        std::io::ErrorKind::BrokenPipe | std::io::ErrorKind::ConnectionReset
+                    ) =>
+                {
+                    Ok(())
+                }
+                Err(_) => Err("无法传递事件数据".to_string()),
+            }
         };
-        let drain=async {tokio::io::copy(&mut output,&mut tokio::io::sink()).await.map_err(|_|"命令输出超过限制或已停止".to_string())};
-        let wait=async {loop{
-            state.check()?;
-            let exited=state.child.lock().map_err(|_|"命令状态不可用")?.as_mut().ok_or("命令已停止")?.try_wait().map_err(|_|"无法读取命令退出状态")?;
-            if let Some(status)=exited{return if status.success(){Ok(())}else{Err(format!("命令退出失败（{}）",status.code().map(|n|n.to_string()).unwrap_or_else(||"signal".into())))}};
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }};
-        tokio::try_join!(write,drain,wait).map(|_|())
+        let drain = async {
+            tokio::io::copy(&mut output, &mut tokio::io::sink())
+                .await
+                .map_err(|_| "命令输出超过限制或已停止".to_string())
+        };
+        let wait = async {
+            loop {
+                state.check()?;
+                let exited = state
+                    .child
+                    .lock()
+                    .map_err(|_| "命令状态不可用")?
+                    .as_mut()
+                    .ok_or("命令已停止")?
+                    .try_wait()
+                    .map_err(|_| "无法读取命令退出状态")?;
+                if let Some(status) = exited {
+                    return if status.success() {
+                        Ok(())
+                    } else {
+                        Err(format!(
+                            "命令退出失败（{}）",
+                            status
+                                .code()
+                                .map(|n| n.to_string())
+                                .unwrap_or_else(|| "signal".into())
+                        ))
+                    };
+                };
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        };
+        tokio::try_join!(write, drain, wait).map(|_| ())
     };
-    let stopped=async{loop{if cancel.load(Ordering::Acquire){break;}tokio::time::sleep(Duration::from_millis(20)).await;}};
-    let result=tokio::select!{r=tokio::time::timeout_at(until,command)=>r.unwrap_or_else(|_|Err("命令执行超时，未自动重试".into())),_=stopped=>Err("命令已停止，未自动重试".into())};
-    state.kill();drop(process);
+    let stopped = async {
+        loop {
+            if cancel.load(Ordering::Acquire) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    };
+    let result = tokio::select! {r=tokio::time::timeout_at(until,command)=>r.unwrap_or_else(|_|Err("命令执行超时，未自动重试".into())),_=stopped=>Err("命令已停止，未自动重试".into())};
+    state.kill();
+    drop(process);
     // The existing reaper alone releases this slot after real process-tree and
     // pipe drain. Do not infer that a canceled future means its child exited.
-    let drained=tokio::time::timeout(Duration::from_secs(10),async{loop{if state.slot.lock().is_ok_and(|slot|slot.is_none()){break;}tokio::time::sleep(Duration::from_millis(20)).await;}}).await.is_ok();
-    if !drained{return Err("命令正在清理，执行结果不确定，未自动重试".into())}result
+    let drained = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            if state.slot.lock().is_ok_and(|slot| slot.is_none()) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .is_ok();
+    if !drained {
+        return Err("命令正在清理，执行结果不确定，未自动重试".into());
+    }
+    result
 }
 
 /// Invocation-owned JSON lines for independently implemented protocols. Uses
@@ -1073,32 +1418,58 @@ pub(crate) struct JsonLinesProcess {
     partial: Vec<u8>,
 }
 impl JsonLinesProcess {
-    pub(crate) async fn open(config: &McpCommand,env:&std::collections::BTreeMap<String,String>) -> Result<Self,String> {
-        let (process, output, input)=tokio::time::timeout(START_TIMEOUT,start_stdio(config,Some(env))).await
-            .map_err(|_|"外部程序启动超时")??;
-        Ok(Self{process,input,output:BufReader::new(output),partial:Vec::new()})
+    pub(crate) async fn open(
+        config: &McpCommand,
+        env: &std::collections::BTreeMap<String, String>,
+    ) -> Result<Self, String> {
+        let (process, output, input) =
+            tokio::time::timeout(START_TIMEOUT, start_stdio(config, Some(env)))
+                .await
+                .map_err(|_| "外部程序启动超时")??;
+        Ok(Self {
+            process,
+            input,
+            output: BufReader::new(output),
+            partial: Vec::new(),
+        })
     }
-    pub(crate) async fn write(&mut self, value: Value) -> Result<(),String> {
+    pub(crate) async fn write(&mut self, value: Value) -> Result<(), String> {
         self.process.state.check()?;
-        if !value.is_object(){return Err("进程消息必须是JSON对象".into());}
-        let mut bytes=serde_json::to_vec(&value).map_err(|_|"进程消息无效")?;
-        if bytes.len()>12*1024*1024{return Err("进程消息过大".into());}bytes.push(b'\n');
-        tokio::time::timeout(Duration::from_secs(5),async {
-            self.input.write_all(&bytes).await?;self.input.flush().await
-        }).await.map_err(|_|"进程写入超时")?.map_err(|_|"进程输入已关闭".to_string())
+        if !value.is_object() {
+            return Err("进程消息必须是JSON对象".into());
+        }
+        let mut bytes = serde_json::to_vec(&value).map_err(|_| "进程消息无效")?;
+        if bytes.len() > 12 * 1024 * 1024 {
+            return Err("进程消息过大".into());
+        }
+        bytes.push(b'\n');
+        tokio::time::timeout(Duration::from_secs(5), async {
+            self.input.write_all(&bytes).await?;
+            self.input.flush().await
+        })
+        .await
+        .map_err(|_| "进程写入超时")?
+        .map_err(|_| "进程输入已关闭".to_string())
     }
-    pub(crate) async fn read(&mut self, timeout_ms:u64) -> Result<Value,String> {
+    pub(crate) async fn read(&mut self, timeout_ms: u64) -> Result<Value, String> {
         // read_until is cancellation safe; retain partial bytes across polls.
-        let result=tokio::time::timeout(Duration::from_millis(timeout_ms.clamp(1,250)),
-            self.output.read_until(b'\n', &mut self.partial)).await;
+        let result = tokio::time::timeout(
+            Duration::from_millis(timeout_ms.clamp(1, 250)),
+            self.output.read_until(b'\n', &mut self.partial),
+        )
+        .await;
         match result {
-            Err(_)=>Ok(Value::Null),
-            Ok(Err(_))=>Err("进程输出已关闭或超过限制".into()),
-            Ok(Ok(0))=>Err("外部程序已结束".into()),
-            Ok(Ok(_))=>{
-                let value=serde_json::from_slice(&self.partial).map_err(|_|"进程返回了无效JSON");
-                self.partial.clear();let value:Value=value?;
-                if !value.is_object(){return Err("进程返回格式无效".into());}Ok(value)
+            Err(_) => Ok(Value::Null),
+            Ok(Err(_)) => Err("进程输出已关闭或超过限制".into()),
+            Ok(Ok(0)) => Err("外部程序已结束".into()),
+            Ok(Ok(_)) => {
+                let value = serde_json::from_slice(&self.partial).map_err(|_| "进程返回了无效JSON");
+                self.partial.clear();
+                let value: Value = value?;
+                if !value.is_object() {
+                    return Err("进程返回格式无效".into());
+                }
+                Ok(value)
             }
         }
     }
@@ -1423,7 +1794,10 @@ pub(crate) fn validate_command(config: &McpCommand) -> Result<(PathBuf, PathBuf)
     }
     validate_mcp_program_kind(&executable)?;
     #[cfg(windows)]
-    if !executable.extension().is_some_and(|x| x.eq_ignore_ascii_case("exe")) {
+    if !executable
+        .extension()
+        .is_some_and(|x| x.eq_ignore_ascii_case("exe"))
+    {
         return Err("请选择本机 exe 运行程序".into());
     }
     let cwd = if let Some(cwd) = &config.cwd {
@@ -1484,16 +1858,45 @@ fn validate_mcp_program_kind(program: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn validate_user_command(config:&McpCommand)->Result<(PathBuf,PathBuf),String>{
+fn validate_user_command(config: &McpCommand) -> Result<(PathBuf, PathBuf), String> {
     // Distinct from MCP admission: only a locally saved Hooks rule reaches this
     // native function. The MCP validator above still refuses all shell hosts.
-    if config.executable.len()>4096||config.executable.chars().any(char::is_control)||config.args.len()>128||config.args.iter().any(|s|s.contains('\0'))||config.args.iter().map(String::len).sum::<usize>()>128*1024{return Err("命令参数无效或过长".into())}
-    let requested=Path::new(&config.executable);if !requested.is_absolute()||!local_path(requested){return Err("程序须使用本机绝对路径".into())}
-    let executable=requested.canonicalize().map_err(|_|"程序路径不存在")?;if !executable.is_file()||!local_path(&executable){return Err("程序路径无效".into())}
+    if config.executable.len() > 4096
+        || config.executable.chars().any(char::is_control)
+        || config.args.len() > 128
+        || config.args.iter().any(|s| s.contains('\0'))
+        || config.args.iter().map(String::len).sum::<usize>() > 128 * 1024
+    {
+        return Err("命令参数无效或过长".into());
+    }
+    let requested = Path::new(&config.executable);
+    if !requested.is_absolute() || !local_path(requested) {
+        return Err("程序须使用本机绝对路径".into());
+    }
+    let executable = requested.canonicalize().map_err(|_| "程序路径不存在")?;
+    if !executable.is_file() || !local_path(&executable) {
+        return Err("程序路径无效".into());
+    }
     #[cfg(windows)]
-    if !executable.extension().is_some_and(|x|x.eq_ignore_ascii_case("exe")){return Err("请选择 exe 程序；脚本请使用命令动作".into())}
-    let cwd=if let Some(cwd)=&config.cwd{let p=Path::new(cwd);if !p.is_absolute()||!local_path(p){return Err("工作目录须使用本机绝对路径".into())}p.canonicalize().map_err(|_|"工作目录不存在")?}else{executable.parent().ok_or("程序目录无效")?.to_path_buf()};
-    if !cwd.is_dir()||!local_path(&cwd){return Err("工作目录无效".into())}Ok((executable,cwd))
+    if !executable
+        .extension()
+        .is_some_and(|x| x.eq_ignore_ascii_case("exe"))
+    {
+        return Err("请选择 exe 程序；脚本请使用命令动作".into());
+    }
+    let cwd = if let Some(cwd) = &config.cwd {
+        let p = Path::new(cwd);
+        if !p.is_absolute() || !local_path(p) {
+            return Err("工作目录须使用本机绝对路径".into());
+        }
+        p.canonicalize().map_err(|_| "工作目录不存在")?
+    } else {
+        executable.parent().ok_or("程序目录无效")?.to_path_buf()
+    };
+    if !cwd.is_dir() || !local_path(&cwd) {
+        return Err("工作目录无效".into());
+    }
+    Ok((executable, cwd))
 }
 fn local_path(path: &Path) -> bool {
     #[cfg(windows)]
@@ -1581,24 +1984,200 @@ mod tests {
     static FIXTURE_TESTS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
     #[tokio::test]
-    async fn json_lines_transport_owns_real_child_and_preserves_partial_utf8_across_timeout(){
-        let _serial=FIXTURE_TESTS.lock().await;
-        let mut fixture=Fixture::new("raw");
-        fixture.command.args[0]=PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/agent_json_lines.cjs").to_string_lossy().into_owned();
-        let mut peer=JsonLinesProcess::open(&fixture.command,&Default::default()).await.unwrap();
-        let started=fixture.started().await;
-        #[cfg(windows)]let proof=ProcessProof::open(started["pid"].as_u64().unwrap() as u32);
-        #[cfg(not(windows))]let _=started;
-        peer.write(json!({"id":1,"method":"partial","params":{}})).await.unwrap();
-        assert_eq!(peer.read(1).await.unwrap(),Value::Null);
-        let until=tokio::time::Instant::now()+Duration::from_secs(3);
-        let response=loop{let value=peer.read(250).await.unwrap();if !value.is_null(){break value;}assert!(tokio::time::Instant::now()<until);};
-        assert_eq!(response,json!({"id":1,"result":{"text":"中文🙂"}}));
-        peer.write(json!({"id":2,"method":"echo","params":{"text":"second"}})).await.unwrap();
-        let value=peer.read(250).await.unwrap();assert_eq!(value["result"]["text"],"second");
-        assert!(peer.write(Value::String("not a wire object".into())).await.is_err());
+    async fn native_shell_reports_real_utf8_exit_errors_overflow_and_timeout_without_orphans() {
+        let _serial = FIXTURE_TESTS.lock().await;
+        let root = tempfile::tempdir().unwrap();
+        #[cfg(windows)]
+        let name = "powershell";
+        #[cfg(not(windows))]
+        let name = "bash";
+        #[cfg(windows)]
+        let commands = [
+            "[Console]::Out.Write('中文🙂'); [Console]::Error.Write('错误'); exit 7",
+            "[Console]::Out.Write(('中文🙂' * 20000))",
+            "Start-Sleep -Seconds 20",
+        ];
+        #[cfg(not(windows))]
+        let commands = [
+            "printf '中文🙂'; printf '错误' >&2; exit 7",
+            "for ((n=0;n<20000;n++)); do printf '中文🙂'; done",
+            "sleep 20",
+        ];
+        for (i, command) in commands.iter().enumerate() {
+            let call = mewu_agent_tools::ShellCall {
+                command: (*command).into(),
+                cwd: None,
+                timeout: None,
+            };
+            let (spec, input) = mewu_agent_tools::shell::prepare(name, &call).unwrap();
+            let config = McpCommand {
+                executable: spec.executable.to_string_lossy().into_owned(),
+                args: spec.args,
+                cwd: Some(root.path().to_string_lossy().into_owned()),
+            };
+            let path = root.path().join(format!("{i}.log"));
+            let result = run_agent_command(
+                config,
+                input,
+                Some(Duration::from_secs(if i == 2 { 1 } else { 15 })),
+                path.clone(),
+                Arc::new(|| Ok(())),
+                |_, _| {},
+            )
+            .await
+            .unwrap();
+            assert_eq!(result["executed"], true);
+            if i == 0 {
+                assert_eq!(result["exitCode"], 7);
+                assert_eq!(result["isError"], true);
+                let out = result["output"].as_str().unwrap();
+                assert!(out.contains("中文🙂"));
+                assert!(out.contains("错误"));
+            }
+            if i == 1 {
+                assert_eq!(result["isError"], false, "{result}");
+                assert_eq!(result["truncated"], true);
+                let full = std::fs::read_to_string(path).unwrap();
+                assert_eq!(full, "中文🙂".repeat(20000));
+                assert!(!result["output"].as_str().unwrap().contains('\u{fffd}'));
+            }
+            if i == 2 {
+                assert_eq!(result["isError"], true);
+                assert!(result["error"].as_str().unwrap().contains("timed out"));
+            }
+            assert!(wait_until_idle(Duration::from_secs(3)).await);
+        }
+    }
+    #[tokio::test]
+    async fn native_command_cancellation_is_polled_and_mcp_connections_cannot_starve_shell() {
+        let _serial = FIXTURE_TESTS.lock().await;
+        let fixtures: Vec<_> = (0..4).map(|_| Fixture::new("modern")).collect();
+        let mut peers = Vec::new();
+        for fixture in &fixtures {
+            peers.push(connect(&fixture.command).await.unwrap());
+        }
+        let root = tempfile::tempdir().unwrap();
+        #[cfg(windows)]
+        let (name, command, slow) = (
+            "powershell",
+            "[Console]::Out.Write('command-slot')",
+            "Start-Sleep -Seconds 20",
+        );
+        #[cfg(not(windows))]
+        let (name, command, slow) = ("bash", "printf 'command-slot'", "sleep 20");
+        let build = |source: &str| {
+            let (spec, input) = mewu_agent_tools::shell::prepare(
+                name,
+                &mewu_agent_tools::ShellCall {
+                    command: source.into(),
+                    cwd: None,
+                    timeout: None,
+                },
+            )
+            .unwrap();
+            (
+                McpCommand {
+                    executable: spec.executable.to_string_lossy().into_owned(),
+                    args: spec.args,
+                    cwd: Some(root.path().to_string_lossy().into_owned()),
+                },
+                input,
+            )
+        };
+        let (config, input) = build(command);
+        let output = tokio::time::timeout(
+            Duration::from_secs(8),
+            run_agent_command(
+                config,
+                input,
+                None,
+                root.path().join("first.log"),
+                Arc::new(|| Ok(())),
+                |_, _| {},
+            ),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(output["output"], "command-slot");
+        assert_eq!(output["isError"], false);
+        for peer in peers {
+            peer.close().await;
+        }
+        let revoked = Arc::new(AtomicBool::new(false));
+        let revoke = revoked.clone();
+        let revoke_task = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(800)).await;
+            revoke.store(true, Ordering::Release);
+        });
+        let (config, input) = build(slow);
+        let result = tokio::time::timeout(
+            Duration::from_secs(5),
+            run_agent_command(
+                config,
+                input,
+                None,
+                root.path().join("canceled.log"),
+                Arc::new(move || {
+                    if revoked.load(Ordering::Acquire) {
+                        Err("stopped by user".into())
+                    } else {
+                        Ok(())
+                    }
+                }),
+                |_, _| {},
+            ),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        revoke_task.await.unwrap();
+        assert_eq!(result["isError"], true);
+        assert!(result["error"].as_str().unwrap().contains("canceled"));
+        assert!(wait_until_idle(Duration::from_secs(3)).await);
+    }
+
+    #[tokio::test]
+    async fn json_lines_transport_owns_real_child_and_preserves_partial_utf8_across_timeout() {
+        let _serial = FIXTURE_TESTS.lock().await;
+        let mut fixture = Fixture::new("raw");
+        fixture.command.args[0] = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/agent_json_lines.cjs")
+            .to_string_lossy()
+            .into_owned();
+        let mut peer = JsonLinesProcess::open(&fixture.command, &Default::default())
+            .await
+            .unwrap();
+        let started = fixture.started().await;
+        #[cfg(windows)]
+        let proof = ProcessProof::open(started["pid"].as_u64().unwrap() as u32);
+        #[cfg(not(windows))]
+        let _ = started;
+        peer.write(json!({"id":1,"method":"partial","params":{}}))
+            .await
+            .unwrap();
+        assert_eq!(peer.read(1).await.unwrap(), Value::Null);
+        let until = tokio::time::Instant::now() + Duration::from_secs(3);
+        let response = loop {
+            let value = peer.read(250).await.unwrap();
+            if !value.is_null() {
+                break value;
+            }
+            assert!(tokio::time::Instant::now() < until);
+        };
+        assert_eq!(response, json!({"id":1,"result":{"text":"中文🙂"}}));
+        peer.write(json!({"id":2,"method":"echo","params":{"text":"second"}}))
+            .await
+            .unwrap();
+        let value = peer.read(250).await.unwrap();
+        assert_eq!(value["result"]["text"], "second");
+        assert!(peer
+            .write(Value::String("not a wire object".into()))
+            .await
+            .is_err());
         drop(peer);
-        #[cfg(windows)]proof.assert_exited().await;
+        #[cfg(windows)]
+        proof.assert_exited().await;
         assert!(wait_until_idle(Duration::from_secs(3)).await);
     }
 

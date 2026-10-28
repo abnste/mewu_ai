@@ -13,12 +13,12 @@ export function observeVideoPlacementTransitions(node: Element, place: () => voi
   return () => { node.removeEventListener('transitionend', settled); node.removeEventListener('transitioncancel', settled); };
 }
 
-/** Composer is a direct child of .app and can mount after this media owner. */
+/** The active input surface can mount after this media owner. */
 export function observeVideoComposer(root: Element, place: () => void) {
   let composer: Element | null = null, stopCurrent: (() => void) | undefined, disposed = false;
   const rebind = () => {
     if (disposed) return;
-    const next = root.querySelector(':scope > .composer');
+    const next = root.querySelector(':scope > .composer, :scope > .quick-voice');
     if (next === composer) return;
     stopCurrent?.(); stopCurrent = undefined; composer = next;
     if (next) {
