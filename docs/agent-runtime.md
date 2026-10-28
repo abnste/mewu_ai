@@ -7,6 +7,11 @@ particularly its [compaction](https://github.com/earendil-works/pi/blob/v1.4.0/p
 and [agent loop](https://github.com/earendil-works/pi/blob/v1.4.0/packages/agent/src/agent-loop.ts).
 It is an independent implementation, not a bundled Pi engine.
 
+This is a partial context/runtime implementation, not Pi capability parity. The
+native Agent currently lacks general shell/file tools and complete cross-run
+tool-context reconstruction. See the [source-based capability audit](agent-capability-audit.md)
+for the verified gaps and the required behavioral acceptance gates.
+
 ## Ownership
 
 | Layer | Responsibility |
