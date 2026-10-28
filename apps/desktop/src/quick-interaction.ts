@@ -13,13 +13,10 @@ export async function subscribeQuickInteraction(accept:(view:QuickInteraction)=>
 export function touchQuickInteraction(generation:number){return isTauri()?invoke<void>('quick_interaction_touch',{generation}):Promise.resolve();}
 export function openQuickInteraction(proof?:{id:string;nonce:string}){if(!isTauri())return Promise.reject(Error('请在桌面版使用快速交互'));return invoke<QuickInteraction>('quick_interaction_open',{operationId:proof?.id,operationNonce:proof?.nonce});}
 export async function recognizeQuickInteraction(generation:number,current:()=>boolean){
-  try{return await invoke<OcrDocument>('quick_interaction_recognize',{generation});}
-  catch(error){
-    // Native OCR only reads owned pixels; the first worker has actually ended.
-    // Retry once while the same scene/provider still owns the request. This
-    // policy must never be used for commands, input or clipboard publication.
-    if(!current())throw error;
-    return invoke<OcrDocument>('quick_interaction_recognize',{generation});
-  }
+  if(!current())throw Error('快速交互已切换');
+  // Recovery belongs to the native recognizer, where worker completion,
+  // cancellation and the original deadline are known. Do not reset that
+  // deadline by redispatching an entire renderer request after any error.
+  return invoke<OcrDocument>('quick_interaction_recognize',{generation});
 }
 export function quickImageRegions(generation:number){return invoke<SnapBounds[]>('quick_interaction_images',{generation});}

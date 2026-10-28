@@ -47,8 +47,8 @@ fn native_timeout(compatibility: bool, model_ready: bool) -> Duration {
     }
 }
 
-// Only fixed stage/reason labels and process-local counters are recorded. Do
-// not add NSError descriptions, image geometry, text, paths or caller IDs.
+// Fixed stages/reasons, process-local counters and bounded system error domain
+// identifiers only. Never NSError descriptions, pixels, text, paths or caller IDs.
 #[derive(Clone, Copy)]
 struct OcrDiagnostics {
     id: Option<usize>,
@@ -95,6 +95,62 @@ fn diagnostic_error_domain(domain: &str) -> &'static str {
         "com.apple.CoreML" | "com.apple.CoreML.ErrorDomain" => "core_ml",
         _ => "other",
     }
+}
+
+fn diagnostic_system_domain(domain: &str) -> &str {
+    // Only system namespace identifiers, never descriptions, paths or input.
+    if domain.len() <= 96
+        && domain
+            .bytes()
+            .all(|value| value.is_ascii_alphanumeric() || value == b'.')
+        && (domain.starts_with("com.apple.")
+            || (domain.starts_with("NS") && domain.ends_with("ErrorDomain")))
+    {
+        domain
+    } else {
+        "redacted"
+    }
+}
+
+enum ReadAttemptError {
+    Local(String),
+    Native(String),
+}
+impl From<String> for ReadAttemptError {
+    fn from(value: String) -> Self {
+        Self::Local(value)
+    }
+}
+impl From<&str> for ReadAttemptError {
+    fn from(value: &str) -> Self {
+        Self::Local(value.into())
+    }
+}
+
+/// Recover only a completed native inference failure. Both attempts read the
+/// same owned pixels under one permit and one deadline; source cancellation,
+/// validation, capacity and malformed output are never retried here.
+fn native_read_with_fallback<T>(
+    cancel: &AtomicBool,
+    started: Instant,
+    timeout: Duration,
+    diagnostics: OcrDiagnostics,
+    mut attempt: impl FnMut(bool) -> Result<T, ReadAttemptError>,
+) -> Result<T, String> {
+    check_interest_diagnosed(cancel, started, timeout, diagnostics, "interest.attempt")?;
+    let result = match attempt(false) {
+        Ok(value) => Ok(value),
+        Err(ReadAttemptError::Local(error)) => Err(error),
+        Err(ReadAttemptError::Native(_)) => {
+            check_interest_diagnosed(cancel, started, timeout, diagnostics, "interest.fallback")?;
+            diagnostics.event("perform.fallback", "cpu", None, None);
+            attempt(true).map_err(|error| match error {
+                ReadAttemptError::Local(error) | ReadAttemptError::Native(error) => error,
+            })
+        }
+    };
+    check_interest_diagnosed(cancel, started, timeout, diagnostics, "interest.completed")?;
+    result
 }
 
 fn check_interest_diagnosed(
@@ -441,205 +497,234 @@ fn recognize_diagnosed(
         diagnostics,
         "interest.pre_native",
     )?;
-    autoreleasepool(move |_| {
-        diagnostics.event("native.data.begin", "none", None, None);
-        let data = NSData::with_bytes(&png);
-        drop(png);
-        diagnostics.event("native.request.begin", "none", None, None);
-        let request = VNRecognizeTextRequest::new();
-        diagnostics.event("native.request.created", "none", None, None);
-        let language = configure_languages(&request, diagnostics)?;
-        let timeout = native_timeout(
+    let timeout = autoreleasepool(|_| {
+        native_timeout(
             NSProcessInfo::processInfo()
                 .operatingSystemVersion()
                 .majorVersion
                 == 27,
             COMPAT_MODEL_READY.load(Ordering::Acquire),
-        );
-        let stop = cancel.clone();
-        let cancel_sent = Arc::new(AtomicBool::new(false));
-        let sent = cancel_sent.clone();
-        let progress_count = Arc::new(AtomicUsize::new(0));
-        let progress_observed = progress_count.clone();
-        // Vision can call progress on a different queue. Only thread-safe Rust
-        // state is captured: no Retained native object crosses a Rust thread.
-        // The callback uses the valid request pointer supplied by Vision, never
-        // a saved/raw pointer shared with an unrelated watchdog.
-        let progress = RcBlock::new(
-            move |native: NonNull<VNRequest>, _fraction: f64, error: *mut NSError| {
-                on_progress();
-                if diagnostics.enabled() {
-                    let count = progress_observed.fetch_add(1, Ordering::Relaxed) + 1;
-                    // Vision owns this optional error for the callback's
-                    // duration. Read only its numeric code on this queue.
-                    let code = unsafe { error.as_ref() }.map(NSError::code);
-                    if count <= 64 {
-                        diagnostics.event("perform.progress", "none", code, Some(count));
-                    } else if count == 65 {
-                        diagnostics.event("perform.progress", "log_limit", code, Some(count));
+        )
+    });
+    let on_progress = Arc::new(on_progress);
+    native_read_with_fallback(&cancel, started, timeout, diagnostics, |cpu_only| {
+        autoreleasepool(|_| {
+            diagnostics.event("native.data.begin", "none", None, None);
+            let data = NSData::with_bytes(&png);
+            diagnostics.event("native.request.begin", "none", None, None);
+            let request = VNRecognizeTextRequest::new();
+            // Revision 2 is also supported on older macOS versions, whose Vision
+            // API exposes this documented CPU backend rather than compute stages.
+            unsafe {
+                request.setUsesCPUOnly(cpu_only);
+            }
+            diagnostics.event("native.request.created", "none", None, None);
+            let language = configure_languages(&request, diagnostics)?;
+            let stop = cancel.clone();
+            let cancel_sent = Arc::new(AtomicBool::new(false));
+            let sent = cancel_sent.clone();
+            let progress_count = Arc::new(AtomicUsize::new(0));
+            let progress_observed = progress_count.clone();
+            let on_progress = on_progress.clone();
+            // Vision can call progress on a different queue. Only thread-safe Rust
+            // state is captured: no Retained native object crosses a Rust thread.
+            // The callback uses the valid request pointer supplied by Vision, never
+            // a saved/raw pointer shared with an unrelated watchdog.
+            let progress = RcBlock::new(
+                move |native: NonNull<VNRequest>, _fraction: f64, error: *mut NSError| {
+                    on_progress();
+                    if diagnostics.enabled() {
+                        let count = progress_observed.fetch_add(1, Ordering::Relaxed) + 1;
+                        // Vision owns this optional error for the callback's
+                        // duration. Read only its numeric code on this queue.
+                        let code = unsafe { error.as_ref() }.map(NSError::code);
+                        if count <= 64 {
+                            diagnostics.event("perform.progress", "none", code, Some(count));
+                        } else if count == 65 {
+                            diagnostics.event("perform.progress", "log_limit", code, Some(count));
+                        }
                     }
+                    let externally_canceled = stop.load(Ordering::Acquire);
+                    let deadline_expired = started.elapsed() >= timeout;
+                    if (externally_canceled || deadline_expired)
+                        && !sent.swap(true, Ordering::AcqRel)
+                    {
+                        let reason = match (externally_canceled, deadline_expired) {
+                            (true, true) => "cancel_flag_and_deadline",
+                            (true, false) => "cancel_flag",
+                            _ => "deadline",
+                        };
+                        diagnostics.event("perform.cancel.request", reason, None, None);
+                        // The request is alive for this Vision-owned invocation.
+                        // Cancellation is only a request; it is not proof of exit.
+                        unsafe { native.as_ref().cancel() };
+                        diagnostics.event("perform.cancel.return", reason, None, None);
+                    }
+                },
+            );
+            unsafe { request.setProgressHandler(RcBlock::as_ptr(&progress)) };
+            let native_request: &VNRequest = &request;
+            let requests = NSArray::from_slice(&[native_request]);
+            diagnostics.event("handler.begin", "none", None, None);
+            let handler = VNImageRequestHandler::initWithData_options(
+                VNImageRequestHandler::alloc(),
+                &data,
+                &NSDictionary::new(),
+            );
+            diagnostics.event("handler.created", "none", None, None);
+            check_interest_diagnosed(
+                &cancel,
+                started,
+                timeout,
+                diagnostics,
+                "interest.pre_perform",
+            )?;
+            // This synchronous call owns all request/input/block allocations until
+            // it returns. Do not race it with an async timeout that drops this
+            // stack. A stuck call keeps the native and caller-owned host permits.
+            diagnostics.event("perform.begin", "none", None, None);
+            let performed = handler.performRequests_error(&requests);
+            if diagnostics.enabled() {
+                if let Err(error) = &performed {
+                    let domain = error.domain().to_string();
+                    if let Some(id) = diagnostics.id {
+                        eprintln!("[mewu.mac.ocr] id={id} stage=perform.error.domain identifier={} native_code={}", diagnostic_system_domain(&domain), error.code());
+                    }
+                    diagnostics.event(
+                        "perform.error",
+                        diagnostic_error_domain(&error.domain().to_string()),
+                        Some(error.code()),
+                        None,
+                    );
                 }
-                let externally_canceled = stop.load(Ordering::Acquire);
-                let deadline_expired = started.elapsed() >= timeout;
-                if (externally_canceled || deadline_expired) && !sent.swap(true, Ordering::AcqRel) {
-                    let reason = match (externally_canceled, deadline_expired) {
-                        (true, true) => "cancel_flag_and_deadline",
-                        (true, false) => "cancel_flag",
-                        _ => "deadline",
-                    };
-                    diagnostics.event("perform.cancel.request", reason, None, None);
-                    // The request is alive for this Vision-owned invocation.
-                    // Cancellation is only a request; it is not proof of exit.
-                    unsafe { native.as_ref().cancel() };
-                    diagnostics.event("perform.cancel.return", reason, None, None);
-                }
-            },
-        );
-        unsafe { request.setProgressHandler(RcBlock::as_ptr(&progress)) };
-        let native_request: &VNRequest = &request;
-        let requests = NSArray::from_slice(&[native_request]);
-        diagnostics.event("handler.begin", "none", None, None);
-        let handler = VNImageRequestHandler::initWithData_options(
-            VNImageRequestHandler::alloc(),
-            &data,
-            &NSDictionary::new(),
-        );
-        diagnostics.event("handler.created", "none", None, None);
-        check_interest_diagnosed(
-            &cancel,
-            started,
-            timeout,
-            diagnostics,
-            "interest.pre_perform",
-        )?;
-        // This synchronous call owns all request/input/block allocations until
-        // it returns. Do not race it with an async timeout that drops this
-        // stack. A stuck call keeps the native and caller-owned host permits.
-        diagnostics.event("perform.begin", "none", None, None);
-        let performed = handler.performRequests_error(&requests);
-        if diagnostics.enabled() {
-            if let Err(error) = &performed {
+                // The synchronous call has actually returned. Counts may describe
+                // partial results; they never bypass the interest/result checks.
                 diagnostics.event(
-                    "perform.error",
-                    diagnostic_error_domain(&error.domain().to_string()),
-                    Some(error.code()),
+                    "perform.return",
+                    if performed.is_ok() {
+                        "success"
+                    } else {
+                        "native"
+                    },
+                    performed.as_ref().err().map(|error| error.code()),
+                    request.results().map(|results| results.len()),
+                );
+                diagnostics.event(
+                    "perform.progress.total",
+                    if cancel_sent.load(Ordering::Acquire) {
+                        "cancel_sent"
+                    } else {
+                        "none"
+                    },
                     None,
+                    Some(progress_count.load(Ordering::Relaxed)),
                 );
             }
-            // The synchronous call has actually returned. Counts may describe
-            // partial results; they never bypass the interest/result checks.
-            diagnostics.event(
-                "perform.return",
-                if performed.is_ok() {
-                    "success"
-                } else {
-                    "native"
-                },
-                performed.as_ref().err().map(|error| error.code()),
-                request.results().map(|results| results.len()),
-            );
-            diagnostics.event(
-                "perform.progress.total",
-                if cancel_sent.load(Ordering::Acquire) {
-                    "cancel_sent"
-                } else {
-                    "none"
-                },
-                None,
-                Some(progress_count.load(Ordering::Relaxed)),
-            );
-        }
-        check_interest_diagnosed(
-            &cancel,
-            started,
-            timeout,
-            diagnostics,
-            "interest.post_perform",
-        )?;
-        performed.map_err(|error| native_error("文字识别", &error))?;
-        let observations = request.results().ok_or_else(|| {
-            diagnostics.event("results.nil", "native", None, None);
-            "本机文字识别没有返回有效结果".to_string()
-        })?;
-        diagnostics.event("results.begin", "none", None, Some(observations.len()));
-        if observations.len() > MAX_LINES {
-            return Err("识别行数超过限制，请缩小选区".into());
-        }
-        let mut lines = Vec::with_capacity(observations.len());
-        let mut word_count = 0;
-        let mut text_bytes = 0usize;
-        for index in 0..observations.len() {
-            check_interest_diagnosed(&cancel, started, timeout, diagnostics, "interest.results")?;
-            let observation = observations.objectAtIndex(index);
-            let candidates = observation.topCandidates(1);
-            if candidates.is_empty() {
-                continue;
+            check_interest_diagnosed(
+                &cancel,
+                started,
+                timeout,
+                diagnostics,
+                "interest.post_perform",
+            )?;
+            performed
+                .map_err(|error| ReadAttemptError::Native(native_error("文字识别", &error)))?;
+            let observations = request.results().ok_or_else(|| {
+                diagnostics.event("results.nil", "native", None, None);
+                "本机文字识别没有返回有效结果".to_string()
+            })?;
+            diagnostics.event("results.begin", "none", None, Some(observations.len()));
+            if observations.len() > MAX_LINES {
+                return Err("识别行数超过限制，请缩小选区".into());
             }
-            let candidate = candidates.objectAtIndex(0);
-            let text = checked_text(&candidate.string(), MAX_LINE_CHARS)?;
-            if text.trim().is_empty() {
-                continue;
-            }
-            text_bytes = text_bytes.saturating_add(text.len());
-            if text_bytes > MAX_TEXT {
-                return Err("识别文字超过长度限制，请缩小选区".into());
-            }
-            let mut located = Vec::new();
-            for span in text_spans(&text) {
+            let mut lines = Vec::with_capacity(observations.len());
+            let mut word_count = 0;
+            let mut text_bytes = 0usize;
+            for index in 0..observations.len() {
                 check_interest_diagnosed(
                     &cancel,
                     started,
                     timeout,
                     diagnostics,
-                    "interest.word_boxes",
+                    "interest.results",
                 )?;
-                let rectangle = unsafe { candidate.boundingBoxForRange_error(span.range) }
-                    .map_err(|error| {
-                        diagnostics.event("word_boxes.error", "native", Some(error.code()), None);
-                        native_error("读取文字位置", &error)
-                    })?;
-                let rect = unsafe { rectangle.boundingBox() };
-                located.push(LocatedSpan {
-                    start: span.start,
-                    end: span.end,
-                    rect: original_rect(
-                        geometry,
-                        rect.origin.x,
-                        rect.origin.y,
-                        rect.size.width,
-                        rect.size.height,
-                    )?,
-                });
+                let observation = observations.objectAtIndex(index);
+                let candidates = observation.topCandidates(1);
+                if candidates.is_empty() {
+                    continue;
+                }
+                let candidate = candidates.objectAtIndex(0);
+                let text = checked_text(&candidate.string(), MAX_LINE_CHARS)?;
+                if text.trim().is_empty() {
+                    continue;
+                }
+                text_bytes = text_bytes.saturating_add(text.len());
+                if text_bytes > MAX_TEXT {
+                    return Err("识别文字超过长度限制，请缩小选区".into());
+                }
+                let mut located = Vec::new();
+                for span in text_spans(&text) {
+                    check_interest_diagnosed(
+                        &cancel,
+                        started,
+                        timeout,
+                        diagnostics,
+                        "interest.word_boxes",
+                    )?;
+                    let rectangle = unsafe { candidate.boundingBoxForRange_error(span.range) }
+                        .map_err(|error| {
+                            diagnostics.event(
+                                "word_boxes.error",
+                                "native",
+                                Some(error.code()),
+                                None,
+                            );
+                            native_error("读取文字位置", &error)
+                        })?;
+                    let rect = unsafe { rectangle.boundingBox() };
+                    located.push(LocatedSpan {
+                        start: span.start,
+                        end: span.end,
+                        rect: original_rect(
+                            geometry,
+                            rect.origin.x,
+                            rect.origin.y,
+                            rect.size.width,
+                            rect.size.height,
+                        )?,
+                    });
+                }
+                // Accurate recognition supplies word boxes; repeated subranges of
+                // a word can have the same box. Keep one contiguous word span. The
+                // UI's existing equal-width grapheme layout remains an approximation.
+                let words = words_from_spans(&text, located)?;
+                word_count += words.len();
+                text_bytes =
+                    text_bytes.saturating_add(words.iter().map(|word| word.text.len()).sum());
+                if word_count > MAX_WORDS || text_bytes > MAX_TEXT {
+                    return Err("识别词数或文字长度超过限制，请缩小选区".into());
+                }
+                lines.push(OcrLine { text, words });
             }
-            // Accurate recognition supplies word boxes; repeated subranges of
-            // a word can have the same box. Keep one contiguous word span. The
-            // UI's existing equal-width grapheme layout remains an approximation.
-            let words = words_from_spans(&text, located)?;
-            word_count += words.len();
-            text_bytes = text_bytes.saturating_add(words.iter().map(|word| word.text.len()).sum());
-            if word_count > MAX_WORDS || text_bytes > MAX_TEXT {
-                return Err("识别词数或文字长度超过限制，请缩小选区".into());
-            }
-            lines.push(OcrLine { text, words });
-        }
-        // Preserve the recognizer's observation order; no geometric heuristic
-        // invents a column/paragraph order. Multiline fixtures must verify it.
-        let document = OcrDocument {
-            engine: "apple.vision".into(),
-            language,
-            width: geometry.source_width,
-            height: geometry.source_height,
-            text_angle: None,
-            lines,
-        };
-        diagnostics.event("results.parsed", "none", None, Some(document.lines.len()));
-        diagnostics.event("results.words", "none", None, Some(word_count));
-        diagnostics.event("validation.begin", "none", None, None);
-        validate_ocr_document(&document)
-            .map_err(|_| "本机识别结果格式或大小无效，请缩小选区后重试".to_string())?;
-        diagnostics.event("validation.return", "success", None, None);
-        check_interest_diagnosed(&cancel, started, timeout, diagnostics, "interest.return")?;
-        Ok(document)
+            // Preserve the recognizer's observation order; no geometric heuristic
+            // invents a column/paragraph order. Multiline fixtures must verify it.
+            let document = OcrDocument {
+                engine: "apple.vision".into(),
+                language,
+                width: geometry.source_width,
+                height: geometry.source_height,
+                text_angle: None,
+                lines,
+            };
+            diagnostics.event("results.parsed", "none", None, Some(document.lines.len()));
+            diagnostics.event("results.words", "none", None, Some(word_count));
+            diagnostics.event("validation.begin", "none", None, None);
+            validate_ocr_document(&document)
+                .map_err(|_| "本机识别结果格式或大小无效，请缩小选区后重试".to_string())?;
+            diagnostics.event("validation.return", "success", None, None);
+            check_interest_diagnosed(&cancel, started, timeout, diagnostics, "interest.return")?;
+            Ok(document)
+        })
     })
 }
 
@@ -650,6 +735,71 @@ mod tests {
     use mewu_core::{Drawing, DrawingKind, DrawingPoint, Region};
 
     #[test]
+    fn completed_native_inference_can_use_one_fresh_cpu_attempt_with_the_same_budget() {
+        let cancel = AtomicBool::new(false);
+        let started = Instant::now();
+        let diagnostics = OcrDiagnostics::new(started);
+        let mut calls = Vec::new();
+        let value = native_read_with_fallback(&cancel, started, TIMEOUT, diagnostics, |cpu| {
+            calls.push(cpu);
+            if cpu {
+                Ok("owned pixels")
+            } else {
+                Err(ReadAttemptError::Native("framework failure".into()))
+            }
+        })
+        .unwrap();
+        assert_eq!(value, "owned pixels");
+        assert_eq!(calls, vec![false, true]);
+        let mut calls = 0;
+        let result =
+            native_read_with_fallback::<()>(&cancel, started, TIMEOUT, diagnostics, |_| {
+                calls += 1;
+                Err(ReadAttemptError::Native("still unavailable".into()))
+            });
+        assert_eq!(result.unwrap_err(), "still unavailable");
+        assert_eq!(calls, 2);
+    }
+
+    #[test]
+    fn cancellation_validation_and_deadline_never_start_a_cpu_replacement() {
+        for mode in ["local", "cancel", "deadline"] {
+            let cancel = AtomicBool::new(false);
+            let started = Instant::now();
+            let diagnostics = OcrDiagnostics::new(started);
+            let mut calls = 0;
+            let limit = if mode == "deadline" {
+                Duration::from_millis(250)
+            } else {
+                TIMEOUT
+            };
+            let result =
+                native_read_with_fallback::<()>(&cancel, started, limit, diagnostics, |_| {
+                    calls += 1;
+                    if mode == "local" {
+                        return Err(ReadAttemptError::Local("invalid output".into()));
+                    }
+                    if mode == "cancel" {
+                        cancel.store(true, Ordering::Release);
+                    }
+                    if mode == "deadline" {
+                        std::thread::sleep(Duration::from_millis(300));
+                    }
+                    Err(ReadAttemptError::Native("native failure".into()))
+                });
+            assert_eq!(calls, 1, "{mode}");
+            assert_eq!(
+                result.unwrap_err(),
+                match mode {
+                    "cancel" => CANCEL_ERROR,
+                    "deadline" => TIMEOUT_ERROR,
+                    _ => "invalid output",
+                }
+            );
+        }
+    }
+
+    #[test]
     fn error_diagnostics_classify_only_fixed_domains_without_echoing_unknown_values() {
         // The exported symbol's name is not its NSString value. Verify against
         // the framework so diagnostics cannot silently classify Vision as other.
@@ -657,10 +807,29 @@ mod tests {
         assert_eq!(diagnostic_error_domain(&native.to_string()), "vision");
         assert_eq!(diagnostic_error_domain("VNErrorDomain"), "other");
         assert_eq!(diagnostic_error_domain("NSCocoaErrorDomain"), "cocoa");
-        assert_eq!(diagnostic_error_domain("NSOSStatusErrorDomain"), "os_status");
+        assert_eq!(
+            diagnostic_error_domain("NSOSStatusErrorDomain"),
+            "os_status"
+        );
         assert_eq!(diagnostic_error_domain("NSPOSIXErrorDomain"), "posix");
         assert_eq!(diagnostic_error_domain("com.apple.CoreML"), "core_ml");
         assert_eq!(diagnostic_error_domain("private-path-or-input"), "other");
+        assert_eq!(
+            diagnostic_system_domain("com.apple.Vision"),
+            "com.apple.Vision"
+        );
+        assert_eq!(
+            diagnostic_system_domain("com.apple.Espresso.Error"),
+            "com.apple.Espresso.Error"
+        );
+        for private in [
+            "private-path-or-input",
+            "/Users/mini/secret",
+            "com.apple.image\nprivate",
+            "NSsecret/keyErrorDomain",
+        ] {
+            assert_eq!(diagnostic_system_domain(private), "redacted");
+        }
     }
 
     #[test]
@@ -1108,9 +1277,7 @@ mod tests {
                 .iter()
                 .flat_map(|line| &line.words)
                 .any(|word| {
-                    !word.text.is_empty()
-                        && word.x < 550.
-                        && word.x + word.width > 450.
+                    !word.text.is_empty() && word.x < 550. && word.x + word.width > 450.
                 }),
             "the observed token for the non-BMP ink must keep its real position: {text}"
         );
