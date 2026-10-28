@@ -51,38 +51,21 @@ fn native_timeout(compatibility: bool, model_ready: bool) -> Duration {
 // not add NSError descriptions, image geometry, text, paths or caller IDs.
 #[derive(Clone, Copy)]
 struct OcrDiagnostics {
-    #[cfg(debug_assertions)]
     id: Option<usize>,
-    #[cfg(debug_assertions)]
     started: Instant,
 }
 impl OcrDiagnostics {
     fn new(started: Instant) -> Self {
-        #[cfg(debug_assertions)]
-        {
-            static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
-            let enabled =
-                std::env::var_os("MEWU_MAC_OCR_DIAGNOSTICS").is_some_and(|value| value == "1");
-            Self {
-                id: enabled.then(|| NEXT_ID.fetch_add(1, Ordering::Relaxed)),
-                started,
-            }
-        }
-        #[cfg(not(debug_assertions))]
-        {
-            let _ = started;
-            Self {}
+        static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
+        let enabled =
+            std::env::var_os("MEWU_MAC_OCR_DIAGNOSTICS").is_some_and(|value| value == "1");
+        Self {
+            id: enabled.then(|| NEXT_ID.fetch_add(1, Ordering::Relaxed)),
+            started,
         }
     }
     fn enabled(self) -> bool {
-        #[cfg(debug_assertions)]
-        {
-            self.id.is_some()
-        }
-        #[cfg(not(debug_assertions))]
-        {
-            false
-        }
+        self.id.is_some()
     }
     fn event(
         self,
@@ -91,7 +74,6 @@ impl OcrDiagnostics {
         native_code: Option<isize>,
         count: Option<usize>,
     ) {
-        #[cfg(debug_assertions)]
         if let Some(id) = self.id {
             eprintln!(
                 "[mewu.mac.ocr] id={id} stage={stage} elapsed_ms={} thread={:?} reason={reason} native_code={native_code:?} count={count:?} active_workers={}",
@@ -100,8 +82,16 @@ impl OcrDiagnostics {
                 ACTIVE_WORKERS.load(Ordering::Acquire),
             );
         }
-        #[cfg(not(debug_assertions))]
-        let _ = (self, stage, reason, native_code, count);
+    }
+}
+
+fn diagnostic_error_domain(domain: &str) -> &'static str {
+    match domain {
+        "VNErrorDomain" => "vision",
+        "NSCocoaErrorDomain" => "cocoa",
+        "NSOSStatusErrorDomain" => "os_status",
+        "com.apple.CoreML" | "com.apple.CoreML.ErrorDomain" => "core_ml",
+        _ => "other",
     }
 }
 
@@ -526,6 +516,14 @@ fn recognize_diagnosed(
         diagnostics.event("perform.begin", "none", None, None);
         let performed = handler.performRequests_error(&requests);
         if diagnostics.enabled() {
+            if let Err(error) = &performed {
+                diagnostics.event(
+                    "perform.error",
+                    diagnostic_error_domain(&error.domain().to_string()),
+                    Some(error.code()),
+                    None,
+                );
+            }
             // The synchronous call has actually returned. Counts may describe
             // partial results; they never bypass the interest/result checks.
             diagnostics.event(
@@ -648,6 +646,15 @@ mod tests {
     use super::*;
     use image::{DynamicImage, Rgba};
     use mewu_core::{Drawing, DrawingKind, DrawingPoint, Region};
+
+    #[test]
+    fn error_diagnostics_classify_only_fixed_domains_without_echoing_unknown_values() {
+        assert_eq!(diagnostic_error_domain("VNErrorDomain"), "vision");
+        assert_eq!(diagnostic_error_domain("NSCocoaErrorDomain"), "cocoa");
+        assert_eq!(diagnostic_error_domain("NSOSStatusErrorDomain"), "os_status");
+        assert_eq!(diagnostic_error_domain("com.apple.CoreML"), "core_ml");
+        assert_eq!(diagnostic_error_domain("private-path-or-input"), "other");
+    }
 
     #[test]
     fn only_compatibility_model_startup_gets_extra_time_and_cancel_still_wins() {
