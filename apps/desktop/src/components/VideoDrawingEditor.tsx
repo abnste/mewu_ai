@@ -45,6 +45,7 @@ export default function VideoDrawingEditor(props:VideoDrawingEditorProps) {
   const bounds=(id:string):EditorBox=>{const p=object(id)?.primitive;if(!p)throw Error('视频绘制对象已变化');return p.kind==='rect'?{...p.bounds}:{...p.topLeft,width:p.layout.width,height:p.layout.height};};
   const projected=(id:string):Drawing|undefined=>{
     cacheVersion();const p=object(id)?.primitive;
+    if(p?.kind==='rect')return{id,kind:'rect',points:[{x:p.bounds.x,y:p.bounds.y},{x:p.bounds.x+p.bounds.width,y:p.bounds.y+p.bounds.height}],color:p.style.color,strokeWidth:p.style.strokeWidth};
     if(p?.kind==='vector'){const reply=descriptor(id);return reply&&localVectorDrawing(reply,p.topLeft);}
     if(p?.kind==='text'){const reply=texts.get(id);if(reply&&sameVideoDrawingValue(reply.reference,p.layout))return{id,kind:'text',points:[{x:p.topLeft.x+4,y:p.topLeft.y+4},...(reply.content.textBox?[{x:p.topLeft.x+4+reply.content.textBox.width,y:p.topLeft.y+4+reply.content.textBox.height}]:[])],color:reply.content.color,strokeWidth:1,fontSize:reply.content.fontSize,text:reply.content.text,...(reply.content.textStyle===undefined?{}:{textStyle:structuredClone(reply.content.textStyle)})};}
   };
@@ -78,7 +79,9 @@ export default function VideoDrawingEditor(props:VideoDrawingEditorProps) {
     if(!ready()||action.expectedRevision!==(doc()?.revision??0))throw Error('视频绘制对象已变化');
     props.onPause();const before=structuredClone(props.item),requestTarget=target(),grant=props.grant&&structuredClone(props.grant),sceneId=props.sceneId,source=sourceKey(),info=structuredClone(props.info);
     let receipt:Snapshot;
-    if(action.type==='move_stored'){
+    if(action.type==='duplicate_drawings'){
+      receipt=await props.onDocument(requestTarget,{type:'duplicate',annotationIds:action.drawingIds,offset:action.offset});
+    }else if(action.type==='move_stored'){
       const actual=bounds(action.drawingId);if(!sameVideoDrawingValue(actual,action.from)||action.to.width!==actual.width||action.to.height!==actual.height)throw Error('视频绘制对象已变化');
       receipt=await props.onDocument(requestTarget,{type:'move',annotationId:action.drawingId,fromTopLeft:{x:action.from.x,y:action.from.y},toTopLeft:{x:action.to.x,y:action.to.y}});
     }else if(action.type==='remove_drawing')receipt=await props.onDocument(requestTarget,{type:'remove',annotationId:action.drawingId});

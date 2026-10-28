@@ -16,6 +16,7 @@ export function hasDrawingDocument(region: Region | undefined): boolean {
   return Boolean(region && (region.drawings?.some(value => value.kind === 'rich') || region.drawingHistory?.undo.length || region.drawingHistory?.redo.length));
 }
 export function usesDrawingDocument(region: Region, command: DrawingCommand): boolean {
+  if(command.type==='duplicate_drawings')return true;
   if(command.type==='update_drawings')return command.drawings.length>0;
   if (command.type === 'remove_drawings') return command.drawingIds.some(id => region.drawings?.some(value => value.id === id && value.kind === 'rich'));
   if (command.type === 'update_drawing') return command.drawing.kind === 'rich' && region.drawings?.some(value => value.id === command.drawing.id && value.kind === 'rich') === true;

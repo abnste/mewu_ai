@@ -325,7 +325,7 @@ export async function subscribeRecording(onStatus: (status: RecordingStatus | nu
       if (current.hud && current.phase === 'countdown' && next.phase === 'starting' && next.hud?.stage === 'layout') return;
       if (current.phase === 'stopping' && next.phase !== 'stopping') return;
       if (current.phase !== 'countdown' && next.phase === 'countdown' && !(!countdownSeen && current.phase === 'starting' && current.countdown === 0 && current.elapsedMs === 0 && next.countdown > 0 &&
-        ((!current.hud && !next.hud) || (current.hud?.stage === 'layout' && next.hud?.stage === 'layout')))) return;
+        ((!current.hud && !next.hud) || (current.hud?.stage === 'layout' && next.hud?.stage === 'layout') || next.hud?.stage === 'live'))) return;
       if (['recording', 'paused', 'stopping'].includes(current.phase) && next.phase === 'starting') return;
       if (next.elapsedMs < current.elapsedMs) return;
       if (current.phase === 'countdown' && next.phase === 'countdown' && next.countdown > current.countdown) return;
@@ -640,6 +640,11 @@ export async function previewDrawingCommand(command:DrawingCommand):Promise<Snap
     for(const id of selected){const drawing=drawings.find(d=>d.id===id);if(!drawing)throw Error('绘制对象已不存在');if(drawing.rich?.kind==='repair')throw Error('背景修补只能随历史撤销');}
     const batch:DrawingEdit[]=drawings.flatMap((drawing,index)=>selected.has(drawing.id)||Boolean(drawing.rich?.parentId&&selected.has(drawing.rich.parentId))?[{index,before:structuredClone(drawing),after:null}]:[]).reverse();
     for(const edit of batch)apply(edit,true);history.undo.push({batch});history.redo=[];if(history.undo.length>128)history.undo.shift();
+  }else if(command.type==='duplicate_drawings'){
+    if(!command.drawingIds.length||command.drawingIds.length>48||new Set(command.drawingIds).size!==command.drawingIds.length||![command.offset.x,command.offset.y].every(Number.isFinite))throw Error('复制批次无效');
+    const copies=command.drawingIds.map(id=>{const old=drawings.find(d=>d.id===id);if(!old||old.rich?.kind==='repair'||old.rich?.parentId)throw Error('复制来源无效');return {...structuredClone(old),id:crypto.randomUUID(),points:old.points.map(p=>({x:p.x+command.offset.x,y:p.y+command.offset.y}))};});
+    const batch:DrawingEdit[]=copies.map((copy,i)=>({index:drawings.length+i,before:null,after:copy}));
+    for(const edit of batch)apply(edit,true);history.undo.push({batch});history.redo=[];
   }else if(command.type==='update_drawings'){
     const batch=command.drawings.map(drawing=>{const index=drawings.findIndex(d=>d.id===drawing.id);if(index<0)throw Error('绘制对象不存在');return {index,before:structuredClone(drawings[index]),after:structuredClone(drawing)};});
     for(const edit of batch)apply(edit,true);history.undo.push({batch});history.redo=[];

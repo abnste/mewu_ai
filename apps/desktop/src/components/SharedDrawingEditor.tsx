@@ -23,6 +23,7 @@ import DrawingWidthSlider from './DrawingWidthSlider';
 import InlineDrawingText from './InlineDrawingText';
 import DrawingTextStylePicker from './DrawingTextStylePicker';
 import ImageExportButton from './ImageExportButton';
+import { boardDockAt, dockBoardToolbar, type BoardToolbarPosition } from '../board-toolbar-dock';
 import { initialDrawingColor } from '../drawing-colors';
 import { DrawingInputPhase, recordDrawingInput, type DrawingInputPhaseValue } from '../drawing-diagnostics';
 import {selectionBox,marqueeDrawings,movedDrawings,linkedRepairPreview,selectionRemovals} from './drawing-selection';
@@ -70,6 +71,7 @@ export default function SharedDrawingEditor(props: Props) {
   const [selectedIds,setSelectedIds]=createSignal<string[]>([]),[marquee,setMarquee]=createSignal<import('../drawing-editor-port').EditorBox>(),[groupDraft,setGroupDraft]=createSignal<Drawing[]>([]);
   createEffect(on(selected,id=>{if(!id)setSelectedIds([]);else if(!selectedIds().includes(id))setSelectedIds([id]);}));
   const [storedDraft,setStoredDraft]=createSignal<{id:string;bounds:{x:number;y:number;width:number;height:number}}>();
+  const [storedCopy,setStoredCopy]=createSignal<{id:string;dx:number;dy:number}>();
   let selectionSerial=0; const [selectionReading,setSelectionReading]=createSignal(false);
   const [pending, setPending] = createSignal(false), [edit, setEdit] = createSignal<DrawingPropertyDraft>();
   const [queuedDrawings, setQueuedDrawings] = createSignal<Drawing[]>([]);
@@ -85,6 +87,37 @@ export default function SharedDrawingEditor(props: Props) {
   const [viewport, setViewport] = createSignal({ width: innerWidth, height: innerHeight });
   const [toolbarSize, setToolbarSize] = createSignal({ width: 680, height: 118 });
   const [toolbarEdge,setToolbarEdge]=createSignal<ToolbarEdge>('bottom');
+  const [boardDock,setBoardDock]=createSignal<BoardToolbarPosition>({edge:'bottom',x:innerWidth/2-340,y:0});
+  const [boardMoved,setBoardMoved]=createSignal(false);
+  const [toolbarDragging,setToolbarDragging]=createSignal(false),[propertyMenu,setPropertyMenu]=createSignal(false);
+  let cancelToolbarDrag:(()=>void)|undefined;
+  onCleanup(()=>cancelToolbarDrag?.());
+  const [propertyAnchor,setPropertyAnchor]=createSignal({x:0,y:0});
+  const boardVertical=()=>props.blackboard&&['left','right'].includes(boardDock().edge);
+  function dragToolbar(event:PointerEvent) {
+    if(!props.blackboard||event.button!==0||cancelGesture||toolbarDragging())return;
+    event.preventDefault();event.stopPropagation();setPropertyMenu(false);
+    const handle=event.currentTarget as HTMLElement,rect=toolbar.getBoundingClientRect(),id=event.pointerId;
+    const offset={x:event.clientX-rect.left,y:event.clientY-rect.top};let ended=false;
+    try{handle.setPointerCapture(id);}catch{return;}
+    setBoardMoved(true);setToolbarDragging(true);
+    const move=(next:PointerEvent)=>{if(next.pointerId!==id||ended)return;setBoardDock({edge:'free',x:next.clientX-offset.x,y:next.clientY-offset.y});};
+    const finish=(next:PointerEvent,cancel=false)=>{if(next.pointerId!==id||ended)return;ended=true;handle.removeEventListener('pointermove',move);handle.removeEventListener('pointerup',up);handle.removeEventListener('pointercancel',canceled);handle.removeEventListener('lostpointercapture',canceled);if(handle.hasPointerCapture(id))handle.releasePointerCapture(id);setToolbarDragging(false);if(!cancel)setBoardDock({edge:boardDockAt({x:next.clientX,y:next.clientY},viewport()),x:next.clientX-offset.x,y:next.clientY-offset.y});};
+    const up=(next:PointerEvent)=>finish(next),canceled=(next:PointerEvent)=>finish(next,true);
+    handle.addEventListener('pointermove',move);handle.addEventListener('pointerup',up);handle.addEventListener('pointercancel',canceled);handle.addEventListener('lostpointercapture',canceled);
+    cancelToolbarDrag=()=>{if(!ended)canceled(event);};
+  }
+  const propertyPosition=()=>{
+    const a=propertyAnchor(),size=toolbarSize(),vertical=boardVertical(),edge=boardDock().edge;
+    return vertical?{left:edge==='right'?'auto':`${size.width+8}px`,right:edge==='right'?`${size.width+8}px`:'auto',top:`${Math.max(0,Math.min(a.y,viewport().height-220-parseFloat(position().top)))}px`}
+      :{left:`${Math.max(0,Math.min(a.x,viewport().width-330-parseFloat(position().left)))}px`,top:edge==='top'?`${size.height+8}px`:'auto',bottom:edge==='top'?'auto':`${size.height+8}px`};
+  };
+  const boardToolClick=(event:MouseEvent)=>{
+    if(!props.blackboard)return;const button=(event.target as Element).closest<HTMLButtonElement>('[data-drawing-tool]');
+    if(!button)return;const r=button.getBoundingClientRect(),bar=toolbar.getBoundingClientRect();
+    setPropertyAnchor({x:r.left-bar.left,y:r.top-bar.top});setPropertyMenu(!['select','extract','mosaic'].includes(button.dataset.drawingTool!)&&(button.getAttribute('aria-expanded')!=='true'));
+  };
+  onMount(()=>{const close=(event:PointerEvent)=>{if(props.blackboard&&propertyMenu()&&event.target instanceof Node&&!toolbar.contains(event.target))setPropertyMenu(false);};document.addEventListener('pointerdown',close,true);onCleanup(()=>document.removeEventListener('pointerdown',close,true));});
   const [toolsWidth, setToolsWidth] = createSignal(680);
   // Dock from the stable tool bubble, not the changing property bubble.
   const rightDocked = () => !props.blackboard && props.box.x + toolsWidth() + 6 > viewport().width;
@@ -134,7 +167,7 @@ export default function SharedDrawingEditor(props: Props) {
     const ordered = drawingOrder(visibleDrawings().flatMap(value=>pixelDraft()?.get(value.id)??[value])).filter(value => !storedIndex().has(value.id));
     const ids = [...storedIndex().keys(), ...ordered.map(value => value.id)];
     const addedId = addedPreviewId();
-    for (const value of [...recoveredDrawings(), ...(historyPreview() === undefined ? queuedDrawings() : [])]) if (!ids.includes(value.id)) ids.push(value.id);
+    for (const value of [...groupDraft(), ...recoveredDrawings(), ...(historyPreview() === undefined ? queuedDrawings() : [])]) if (!ids.includes(value.id)) ids.push(value.id);
     if (addedId) {
       if (addedPreviewMosaic()) ids.splice(storedIndex().size + ordered.filter(value => value.kind === 'mosaic').length, 0, addedId); else ids.push(addedId);
     }
@@ -155,7 +188,7 @@ export default function SharedDrawingEditor(props: Props) {
   const toolbarPlacement=createMemo(()=>placeDrawingToolbar(props.box,toolbarSize(),viewport(),rightDocked(),toolbarEdge()));
   const position = createMemo(() => {
     const size = toolbarSize(), box = props.box, vp = viewport();
-    if (props.blackboard) return { left: `${Math.max(6, (vp.width - size.width) / 2)}px`, top: `${Math.max(6, vp.height - size.height - 16)}px` };
+    if (props.blackboard) {const placed=dockBoardToolbar(boardMoved()?boardDock():{...boardDock(),x:(vp.width-size.width)/2},size,vp);return {left:`${placed.x}px`,top:`${placed.y}px`};}
     const placed=toolbarPlacement();
     return { left: `${placed.x}px`, top: `${placed.y}px` };
   });
@@ -441,15 +474,15 @@ export default function SharedDrawingEditor(props: Props) {
     window.addEventListener('pointermove', moved); window.addEventListener('pointerup', released); window.addEventListener('pointercancel', canceled); svg.addEventListener('lostpointercapture', canceled);
     try { svg.setPointerCapture(pointerId); } catch { finish(false); }
   }
-  function beginStored(event:PointerEvent,id:string) {
+  function beginStored(event:PointerEvent,id:string,duplicate=false) {
     const original=props.port.stored?.().find(value=>value.id===id);
     if(!original||!props.port.storedMove||disabled()||edit()||cancelGesture)return;
     const revision=props.port.revision(),origin=gestureIdentity(),pointerId=event.pointerId,start=point(event),initial=svg.getBoundingClientRect();
     let value=original.bounds,changed=false,ended=false,started=false;
     const current=()=>!disposed&&origin===gestureIdentity()&&!disabled()&&!edit()&&tool()==='select'&&selected()===id&&(()=>{const box=svg.getBoundingClientRect();return box.left===initial.left&&box.top===initial.top&&box.width===initial.width&&box.height===initial.height;})();
     const cleanup=()=>{window.removeEventListener('pointermove',moved);window.removeEventListener('pointerup',released);window.removeEventListener('pointercancel',canceled);svg.removeEventListener('lostpointercapture',canceled);cancelGesture=undefined;if(svg.hasPointerCapture(pointerId))svg.releasePointerCapture(pointerId);};
-    const finish=(save:boolean)=>{if(ended)return;const valid=current();ended=true;cleanup();setStoredDraft(undefined);if(save&&valid&&changed)void commit({type:'move_stored',expectedRevision:revision,drawingId:id,from:original.bounds,to:value});};
-    const moved=(next:PointerEvent)=>{if(next.pointerId!==pointerId)return;if(!current()){finish(false);return;}if(next.type==='pointermove'&&!(next.buttons&1)){finish(event.pointerType==='mouse'&&event.buttons===1&&next.pointerType==='mouse'&&next.buttons===0);return;}if(!started&&Math.hypot(next.clientX-event.clientX,next.clientY-event.clientY)<=4)return;started=true;next.preventDefault();const end=point(next,false);try{value=props.port.storedMove!(id,original.bounds,{x:end.x-start.x,y:end.y-start.y});changed=value.x!==original.bounds.x||value.y!==original.bounds.y;setStoredDraft(changed?{id,bounds:value}:undefined);}catch(error){finish(false);report(error);}};
+    const finish=(save:boolean)=>{if(ended)return;const valid=current();ended=true;cleanup();setStoredDraft(undefined);setStoredCopy(undefined);if(save&&valid&&(changed||duplicate))void commit(duplicate?{type:'duplicate_drawings',expectedRevision:revision,drawingIds:[id],offset:{x:value.x-original.bounds.x,y:value.y-original.bounds.y}}:{type:'move_stored',expectedRevision:revision,drawingId:id,from:original.bounds,to:value});};
+    const moved=(next:PointerEvent)=>{if(next.pointerId!==pointerId)return;if(!current()){finish(false);return;}if(next.type==='pointermove'&&!(next.buttons&1)){finish(event.pointerType==='mouse'&&event.buttons===1&&next.pointerType==='mouse'&&next.buttons===0);return;}if(!started&&Math.hypot(next.clientX-event.clientX,next.clientY-event.clientY)<=4)return;started=true;next.preventDefault();const end=point(next,false);try{value=props.port.storedMove!(id,original.bounds,{x:end.x-start.x,y:end.y-start.y});changed=value.x!==original.bounds.x||value.y!==original.bounds.y;if(duplicate)setStoredCopy({id,dx:value.x-original.bounds.x,dy:value.y-original.bounds.y});else setStoredDraft(changed?{id,bounds:value}:undefined);}catch(error){finish(false);report(error);}};
     const released=(next:PointerEvent)=>{if(next.pointerId===pointerId){moved(next);finish(true);}},canceled=(next:PointerEvent)=>{if(next.pointerId===pointerId)finish(false);};
     cancelGesture=()=>finish(false);window.addEventListener('pointermove',moved);window.addEventListener('pointerup',released);window.addEventListener('pointercancel',canceled);svg.addEventListener('lostpointercapture',canceled);
     try{svg.setPointerCapture(pointerId);}catch{finish(false);}
@@ -478,6 +511,14 @@ export default function SharedDrawingEditor(props: Props) {
       setMarquee(undefined);if(!save)return;
       const ids=box.width+box.height<2?previous:[...new Set([...previous,...marqueeDrawings(drawings(),box,d=>props.port.canSelect(d))])];
       setSelected(ids[0]??'');setSelectedIds(ids);
+    });
+  }
+  function beginDuplicate(event:PointerEvent, originals:Drawing[]) {
+    if(!originals.length||!props.port.allows({...target(),type:'duplicate_drawings',drawingIds:originals.map(d=>d.id),offset:{x:0,y:0}}))return;
+    const start=point(event,false),revision=props.port.revision(),copies:Drawing[]=originals.map(d=>({...d,id:crypto.randomUUID()}));let values=copies,offset={x:0,y:0};
+    selectionGesture(event,end=>{values=movedDrawings(copies,end.x-start.x,end.y-start.y,props.port.frame(),props.port.sourceSize());offset={x:values[0].points[0].x-copies[0].points[0].x,y:values[0].points[0].y-copies[0].points[0].y};setGroupDraft(values);},save=>{
+      if(!save){setGroupDraft([]);return;}
+      void commit({...target(revision),type:'duplicate_drawings',drawingIds:originals.map(d=>d.id),offset}).finally(()=>{if(!disposed)setGroupDraft([]);});
     });
   }
   function beginGroup(event:PointerEvent){
@@ -562,7 +603,7 @@ export default function SharedDrawingEditor(props: Props) {
     if (kind === 'mosaic' && !mosaicReady()) return;
     if (['highlighter', 'mark'].includes(kind) && props.port.highlight && !highlightReady()) return;
     const stored=props.port.stored?.().find(value=>value.id===hitId);
-    if(kind==='select'&&stored){setSelected(stored.id);void ensureSelection(stored.id);beginStored(event,stored.id);return;}
+    if(kind==='select'&&stored){setSelected(stored.id);if(!(event.ctrlKey||event.metaKey))void ensureSelection(stored.id);beginStored(event,stored.id,event.ctrlKey||event.metaKey);return;}
     if(kind==='text'&&stored?.kind==='text'){setSelected(stored.id);void ensureSelection(stored.id).then(value=>{if(value)openText(value,true);});return;}
     if (kind === 'text') {
       if (hit?.kind === 'text') openText(hit, true);
@@ -583,6 +624,10 @@ export default function SharedDrawingEditor(props: Props) {
       }); return;
     }
     const original = kind === 'select' ? hit : undefined;
+    if(original&&(event.ctrlKey||event.metaKey)&&!forcedImage){
+      const originals=selectedIds().includes(original.id)?drawings().filter(d=>selectedIds().includes(d.id)&&props.port.canSelect(d)):[original];
+      beginDuplicate(event,originals);return;
+    }
     let collection:ObjectDrag|undefined;let collectionPoint={x:event.clientX,y:event.clientY};
     const objectMove=Boolean(props.blackboard&&original&&blackboardImage(original));
     if(kind==='select'&&!original){beginMarquee(event);return;}
@@ -899,6 +944,7 @@ export default function SharedDrawingEditor(props: Props) {
       return;
     }
     if (event.target instanceof Element && event.target.closest('input,textarea,select,[contenteditable="true"]')) return;
+    if(props.blackboard&&propertyMenu()&&event.key==='Escape'){event.preventDefault();event.stopImmediatePropagation();setPropertyMenu(false);svg.focus({preventScroll:true});return;}
     if ((event.ctrlKey || event.metaKey) && ['z', 'y'].includes(event.key.toLowerCase())) { event.preventDefault(); event.stopImmediatePropagation(); void history(event.shiftKey || event.key.toLowerCase() === 'y'); return; }
     if (event.repeat) return;
     if (event.key.toLowerCase() === 'p' && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && props.onPin) { event.preventDefault(); event.stopImmediatePropagation(); void pin(); return; }
@@ -993,26 +1039,28 @@ export default function SharedDrawingEditor(props: Props) {
     <Show when={props.blackboard&&tool()==='select'}><div class="drawing-selection-background" style={{left:`${props.box.x}px`,top:`${props.box.y}px`,width:`${props.box.width}px`,height:`${props.box.height}px`}} onPointerDown={pointerBegin} onMouseDown={mouseBegin} onPointerMove={event => drawingInput.observe(event)}/></Show>
     <svg ref={svg} tabindex={0} class="drawing-edit-surface" classList={{ 'drawing-select-mode': tool() === 'select', 'drawing-text-mode': tool() === 'text', 'drawing-eraser-mode': tool() === 'eraser'||erasing() }} style={{ left: `${props.box.x}px`, top: `${props.box.y}px`, width: `${props.box.width}px`, height: `${props.box.height}px`,'pointer-events':props.blackboard&&tool()==='select'?'none':undefined,cursor:tool()==='eraser'||erasing()?eraseCursor():undefined }} viewBox={`${props.port.frame().x} ${props.port.frame().y} ${props.port.frame().width} ${props.port.frame().height}`} preserveAspectRatio="none" onPointerDown={pointerBegin} onMouseDown={mouseBegin} onPointerMove={event => drawingInput.observe(event)} onContextMenu={event=>event.preventDefault()} onDblClick={doubleClick} aria-label={t("绘制区域")}>
       <For each={drawingIds()}>{id => <DrawingItem id={id} />}</For>
+      <Show when={storedCopy()}>{copy=><g pointer-events="none" opacity=".7" transform={`translate(${copy().dx} ${copy().dy})`}>{props.port.renderStored?.(copy().id,false,false)}</g>}</Show>
       <Show when={textEditor()}>{value => <InlineDrawingText drawing={value().drawing} disabled={pending() || !!props.inputLocked} ref={element => {textarea=element;}} onInput={setText} onConfirm={confirmText} onBlur={textBlur}/>}</Show>
       <Show when={marquee()}>{box=><rect class="drawing-marquee" {...box()} fill="#348bf1" fill-opacity=".07" stroke="#348bf1" stroke-width="1" vector-effect="non-scaling-stroke" pointer-events="none"/>}</Show>
       <Show when={rasterPreview()}>{value=> <Show when={value().mode==='extract'} fallback={<polyline points={value().points.map(p=>`${p.x},${p.y}`).join(' ')} fill="none" stroke="#428fff" stroke-opacity=".38" stroke-width={value().width} stroke-linecap="round" stroke-linejoin="round" pointer-events="none" />}><rect x={Math.min(value().points[0].x,value().points.at(-1)!.x)} y={Math.min(value().points[0].y,value().points.at(-1)!.y)} width={Math.abs(value().points.at(-1)!.x-value().points[0].x)} height={Math.abs(value().points.at(-1)!.y-value().points[0].y)} fill="none" stroke="#428fff" stroke-width="1" vector-effect="non-scaling-stroke" pointer-events="none" /></Show>}</Show>
       <For each={resizeHandles()}>{(point, index) => <ellipse class="drawing-resize-handle" cx={point.x} cy={point.y} rx={handleSize().x / 2} ry={handleSize().y / 2} vector-effect="non-scaling-stroke" style={{ cursor: resizeDrawing()?.kind === 'text' ? ['ew-resize', 'ns-resize', 'nwse-resize'][index()] : resizeDrawing()?.kind === 'line' || resizeDrawing()?.kind === 'arrow' ? 'move' : index() % 2 ? 'nesw-resize' : 'nwse-resize' }} aria-label={resizeDrawing()?.kind === 'line' || resizeDrawing()?.kind === 'arrow' ? t('调整端点') : t('缩放图形')} onPointerDown={event => beginResize(event, index())} />}</For>
     </svg>
-    <div ref={toolbar} class="drawing-toolbar" data-controls-locked={controlsLocked()} classList={{ 'drawing-dock-right': rightDocked() }} role="toolbar" aria-label={t("绘制工具")} style={position()}>
+    <div ref={toolbar} class="drawing-toolbar" data-controls-locked={controlsLocked()} classList={{ 'drawing-dock-right': rightDocked(), 'board-toolbar-vertical':boardVertical(),'board-toolbar-dragging':toolbarDragging() }} data-board-edge={props.blackboard?boardDock().edge:undefined} onClick={boardToolClick} role="toolbar" aria-label={t("绘制工具")} style={position()}>
+      <Show when={props.blackboard}><div class="board-toolbar-grip" role="button" tabindex="0" aria-label={t('移动绘制工具条')} title={t('拖动工具条，靠近边缘吸附')} onPointerDown={dragToolbar} onKeyDown={event=>{if(!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key))return;event.preventDefault();setPropertyMenu(false);setBoardMoved(true);const p=dockBoardToolbar(boardDock(),toolbarSize(),viewport());setBoardDock({edge:event.shiftKey?({ArrowLeft:'left',ArrowRight:'right',ArrowUp:'top',ArrowDown:'bottom'} as const)[event.key as 'ArrowLeft']:'free',x:p.x+(event.key==='ArrowLeft'?-20:event.key==='ArrowRight'?20:0),y:p.y+(event.key==='ArrowUp'?-20:event.key==='ArrowDown'?20:0)});}}><span/></div></Show>
       <div ref={toolsRow} class="drawing-tools-row">
-      <button data-caption={t("选择")} title={t("选择并移动")} aria-label={t("选择并移动绘制对象")} classList={{ selected: tool() === 'select' }} data-unavailable={controlsLocked()} disabled={disabled()} onClick={() => choose('select')}><MousePointer2 size={17} /></button>
-      <button data-caption={t("橡皮")} title={t("橡皮")} aria-label={t("橡皮")} classList={{ selected: tool() === 'eraser' }} data-unavailable={controlsLocked()} disabled={disabled()} onClick={() => choose('eraser')}><Eraser size={17} /></button>
-      <For each={props.tools}>{kind => { const Icon = icons[kind]; return <button data-caption={t(labels[kind])} title={t(labels[kind])} aria-label={t(labels[kind])} classList={{ selected: tool() === kind }} data-unavailable={controlsLocked()} disabled={disabled()} onClick={() => choose(kind)}><Icon size={18} /></button>; }}</For>
-      <Show when={props.port.raster}><span class="drawing-divider" /><button data-caption={t("无痕提取")} title={t("无痕提取")} aria-label={t("无痕提取")} classList={{selected:tool()==='extract'}} disabled={disabled()} onClick={()=>choose('extract')}><Scissors size={18}/></button><button data-caption={t("涂抹消除")} title={t("涂抹消除")} aria-label={t("涂抹消除")} classList={{selected:tool()==='heal'}} disabled={disabled()} onClick={()=>choose('heal')}><BrushCleaning size={18}/></button></Show>
+      <button data-drawing-tool="select" data-caption={t("选择")} title={t("选择并移动")} aria-label={t("选择并移动绘制对象")} classList={{ selected: tool() === 'select' }} data-unavailable={controlsLocked()} disabled={disabled()} onClick={() => choose('select')}><MousePointer2 size={17} /></button>
+      <button data-drawing-tool="eraser" aria-expanded={props.blackboard&&tool()==='eraser'&&propertyMenu()} data-caption={t("橡皮")} title={t("橡皮")} aria-label={t("橡皮")} classList={{ selected: tool() === 'eraser' }} data-unavailable={controlsLocked()} disabled={disabled()} onClick={() => choose('eraser')}><Eraser size={17} /></button>
+      <For each={props.tools}>{kind => { const Icon = icons[kind]; return <button data-drawing-tool={kind} aria-expanded={props.blackboard&&tool()===kind&&propertyMenu()} data-caption={t(labels[kind])} title={t(labels[kind])} aria-label={t(labels[kind])} classList={{ selected: tool() === kind }} data-unavailable={controlsLocked()} disabled={disabled()} onClick={() => choose(kind)}><Icon size={18} /></button>; }}</For>
+      <Show when={props.port.raster}><span class="drawing-divider" /><button data-drawing-tool="extract" data-caption={t("无痕提取")} title={t("无痕提取")} aria-label={t("无痕提取")} classList={{selected:tool()==='extract'}} disabled={disabled()} onClick={()=>choose('extract')}><Scissors size={18}/></button><button data-drawing-tool="heal" aria-expanded={props.blackboard&&tool()==='heal'&&propertyMenu()} data-caption={t("涂抹消除")} title={t("涂抹消除")} aria-label={t("涂抹消除")} classList={{selected:tool()==='heal'}} disabled={disabled()} onClick={()=>choose('heal')}><BrushCleaning size={18}/></button></Show>
       <Show when={selectionReading()}><LoaderCircle size={15} class="spin" /></Show>
       {props.extraTools?.()}
       </div>
       <div class="drawing-properties-row">
+      <div class="drawing-property-controls" classList={{'board-property-menu':props.blackboard}} hidden={props.blackboard&&!propertyMenu()} style={props.blackboard?propertyPosition():undefined} role={props.blackboard?'group':undefined} aria-label={props.blackboard?t('绘制参数'):undefined}>
       <Show when={tool()==='eraser'&&props.port.pixelEraser}>
         <button data-caption={t('像素橡皮')} title={t('局部擦除画笔、直线和荧光笔')} aria-label={t('像素橡皮')} aria-pressed={eraserMode()==='pixel'} classList={{selected:eraserMode()==='pixel'}} disabled={disabled()} onClick={()=>{cancelGesture?.();setEraserMode('pixel');}}><Eraser size={20}/></button>
         <button data-caption={t('对象橡皮')} title={t('整项擦除绘制对象')} aria-label={t('对象橡皮')} aria-pressed={eraserMode()==='object'} classList={{selected:eraserMode()==='object'}} disabled={disabled()} onClick={()=>{cancelGesture?.();setEraserMode('object');}}><Square size={20}/></button>
       </Show>
-      <div class="drawing-property-controls">
       <Show when={!['mosaic', 'eraser', 'select', 'rich','extract','heal'].includes(propertyKind())}><DrawingColorPicker value={propertyColor()} disabled={disabled()} onChange={(color,submit)=>changeStyle({color},submit)}/></Show>
       <Show when={tool()==='heal'}><DrawingWidthSlider label={t('画笔大小')} value={healWidth()} min={1} max={64} disabled={disabled()} onChange={value=>{if(!disabled())setHealWidth(value);}}/></Show>
       <Show when={strokeKinds.includes(propertyKind() as DrawingKind)||tool()==='eraser'}><DrawingWidthSlider label={t('线宽')} value={propertyWidth()} min={1} max={64} disabled={disabled()} onChange={(value,submit)=>changeStyle({strokeWidth:value},submit)}/></Show>

@@ -21,7 +21,7 @@ const declaration = name => { const node = body.find(value => value.type === 'Fu
 const queueSourceEffect=body.find(node=>node.type==='ExpressionStatement'&&node.expression.type==='CallExpression'&&node.expression.callee.name==='createEffect'&&node.expression.arguments[0]?.type==='CallExpression'&&node.expression.arguments[0].arguments[0]?.name==='queueSource').expression.arguments[0].arguments[1];
 const gestureSourceEffect=body.find(node=>node.type==='ExpressionStatement'&&node.expression.type==='CallExpression'&&node.expression.callee.name==='createEffect'&&node.expression.arguments[0]?.type==='CallExpression'&&node.expression.arguments[0].arguments[0]?.name==='gestureSource');
 assert.ok(gestureSourceEffect,'actual production gestureSource effect');
-const actual = ['drawingInput', 'pointerBegin', 'mouseBegin', 'diagnoseInput', 'cacheKey', 'strokeSource', 'continuousStrokes', 'gestureIdentity', 'point', 'target', 'editableIds', 'cachedStrokes', 'restoreStrokeDraft', 'newStrokeQueue', 'strokeCacheKey', 'releaseFailedStrokes', 'storeEdit', 'cancelEdit', 'commit', 'saveText', 'loadLatest', 'confirmText', 'begin', 'beginStored', 'selectionGesture', 'beginMarquee', 'beginGroup', 'readHistory', 'historyAcknowledged', 'createHistoryLane', 'drainHistory', 'history', 'historyAvailable', 'choose', 'closeEditor', 'removeAction', 'remove', 'keyboard', 'blur', 'resize'].map(declaration).join('\n');
+const actual = ['drawingInput', 'pointerBegin', 'mouseBegin', 'diagnoseInput', 'cacheKey', 'strokeSource', 'continuousStrokes', 'gestureIdentity', 'point', 'target', 'editableIds', 'cachedStrokes', 'restoreStrokeDraft', 'newStrokeQueue', 'strokeCacheKey', 'releaseFailedStrokes', 'storeEdit', 'cancelEdit', 'commit', 'saveText', 'loadLatest', 'confirmText', 'begin', 'beginStored', 'selectionGesture', 'beginMarquee', 'beginGroup', 'beginDuplicate', 'readHistory', 'historyAcknowledged', 'createHistoryLane', 'drainHistory', 'history', 'historyAvailable', 'choose', 'closeEditor', 'removeAction', 'remove', 'keyboard', 'blur', 'resize'].map(declaration).join('\n');
 const module = new SourceTextModule(transform(`
 import { DrawingMouseInput,recordDrawingInput,DrawingInputPhase,untrack,DrawingHistoryLane,projectDrawingHistory,DrawingAddQueue,drawingFrame,drawingPointerSamples,settleDrawingEdit,drawingMoveDelta,drawingBounds,constrainedEnd,validNextNumber,t,blackboardImage,propertyDraft,drawingDrafts,strokeKinds,selectionBox,marqueeDrawings,movedDrawings,selectionRemovals,batch,createSignal,createMemo,createEffect,on,nativeSelectOwnsEscape } from 'deps';
 export class Element { closest() { return {getAttribute:()=>this.id}; } }
@@ -29,7 +29,7 @@ export function fixture(props,svg,window) {
  let disposed=false,serial=0,flight,cancelGesture,refreshConstraint,toolValue='pen',selectedId='',draftValue,pendingValue=false,strokeQueue,editCacheKey,editValue,finishingValue=false;
  let historyLane,historyPreparation,historyIntents=[],preparingHistory,historyView,historyBusy=false;const historyPreview=()=>historyView,setHistoryPreview=value=>{historyView=value;props.onHistoryPreview?.(value);},historyPending=()=>historyBusy,setHistoryPending=value=>historyBusy=value;
  let queued=[],recovered=[];const queuedDrawings=()=>queued,setQueuedDrawings=value=>queued=value,setRecoveredDrawings=value=>recovered=value,[strokeVersion,setStrokeVersion]=props.reactive?createSignal(0):[()=>0,()=>{}]; let eraseSource;
- let marqueeValue,groupDraftValue;const setMarquee=value=>marqueeValue=value,setGroupDraft=value=>groupDraftValue=value;let selectedMany=[];const selectedIds=()=>selectedMany,setSelectedIds=value=>selectedMany=value;
+ const propertyMenu=()=>false,setPropertyMenu=()=>{}; let marqueeValue,groupDraftValue;const setMarquee=value=>marqueeValue=value,setGroupDraft=value=>groupDraftValue=value;let selectedMany=[];const selectedIds=()=>selectedMany,setSelectedIds=value=>selectedMany=value;
  const publications=[],tool=()=>toolValue,setTool=value=>toolValue=value,selected=()=>selectedId,setSelected=value=>selectedId=value;
  const draft=()=>draftValue,setDraft=value=>{draftValue=value;if(value)publications.push(JSON.parse(JSON.stringify(value)));},pending=()=>pendingValue,setPending=value=>pendingValue=value;
  const edit=()=>editValue,setEdit=value=>editValue=value,textEditor=()=>undefined,finishing=()=>finishingValue,setFinishing=value=>finishingValue=value,historyDisabled=()=>pending()||finishing()||props.busy||props.inputLocked,disabled=()=>historyDisabled()||historyPending();
@@ -37,7 +37,7 @@ export function fixture(props,svg,window) {
  const trash={begin(){},move(){},cancel(){}},trashOver=()=>props.trashOver??false;
  const color=()=>'#ee4848',width=()=>4,highlightWidth=()=>18,mosaicReady=()=>true,blockSize=()=>8,fontSize=()=>20,textStyle=()=>props.textStyleValue??{};
  const report=error=>props.onError(error.message),clamp=(v,low,high)=>Math.max(low,Math.min(high,v));
- let openedText;const openText=value=>openedText=value,ensureSelection=async()=>{},beginErase=()=>{}; let storedDraftValue;const setStoredDraft=value=>storedDraftValue=value;
+ let openedText;const openText=value=>openedText=value,ensureSelection=async()=>{},beginErase=()=>{}; let storedDraftValue;const setStoredDraft=value=>storedDraftValue=value,setStoredCopy=()=>{};
  const nextNumber=()=>'1',numberDiameter=()=>28,numberChanges=new Map(),numberPreference=0,setNextNumber=()=>{};
  const setWideBrush=()=>{},mosaicFailed=()=>false,setMosaicRetry=()=>{},highlightFailed=()=>false,setHighlightRetry=()=>{};
  const setViewport=()=>{},innerWidth=1200,innerHeight=800;
@@ -1416,6 +1416,20 @@ function selectThreeFixture(history){
  const values=[10,40,70].map((y,i)=>({id:'s'+i,kind:'pen',color:'#123456',strokeWidth:4,points:[{x:10,y},{x:50,y:y+4}]})),f=ordinaryMoveFixture(values,history);return{...f,values};
 }
 function selectThree(f){f.begin(mouse('pointerdown',0,0));f.window.emit(mouse('pointermove',60,90));f.window.emit(mouse('pointermove',900,950,{buttons:0}));}
+test('Ctrl drag duplicates the exact selected group once without moving originals; cancellation writes nothing',async()=>{
+ const clock=frames();try{
+  for(const cancel of [false,true]){
+   const f=selectThreeFixture(),old=plain(f.values);selectThree(f);const target=new module.namespace.Element();target.id='s0';
+   f.begin(mouse('pointerdown',10,10,{target,ctrlKey:true}));f.window.emit(mouse('pointermove',30,40));
+   assert.equal(f.groupDraft().length,3);assert.ok(f.groupDraft().every(d=>!old.some(o=>o.id===d.id)));
+   assert.deepEqual(f.values,old,'copies never mutate their sources');
+   if(cancel)f.cancel();else f.window.emit(mouse('pointerup',30,40));await tick();
+   assert.equal(f.commands.length,cancel?0:1);
+   if(!cancel)assert.deepEqual(f.commands[0],{expectedRevision:5,type:'duplicate_drawings',drawingIds:['s0','s1','s2'],offset:{x:20,y:30}});
+   assert.equal(f.groupDraft().length,0);assert.equal(f.window.count(),0);f.dispose();
+  }
+ }finally{clock.restore();}
+});
 function selectionDeleteFixture(history = {undo:[],redo:[]}) {
  const f=selectThreeFixture(history),previous=f.props.onCommand;
  f.props.onCommand=async action=>{

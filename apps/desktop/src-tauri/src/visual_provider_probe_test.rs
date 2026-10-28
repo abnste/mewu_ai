@@ -395,7 +395,10 @@ fn fixture_with_thinking(
         .messages;
     let scope = Arc::new(RunScope::new(scene_id, grant, input)?.for_connection(selected));
     let tools = mcp_host::RunTools::with_visual(&context, Some(scope.clone()))?;
-    let definitions = tools.definitions();
+    // This probe intentionally exercises a single visual tool. Production now
+    // constructs its native tools before budget validation; scope the probe's
+    // advertised list explicitly rather than requiring an incomplete catalog.
+    let definitions = tools.definitions().into_iter().filter(|d|d.pointer("/function/name").and_then(Value::as_str)==Some(VISUAL_ANNOTATION_TOOL)).collect::<Vec<_>>();
     require(
         definitions.len() == 1 && definitions[0] == scope.definition(),
         "请求并非仅包含产品视觉工具",

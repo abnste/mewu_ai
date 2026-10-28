@@ -954,6 +954,9 @@ impl Store {
                     return Ok(self.snapshot());
                 }
             }
+            SceneCommand::DuplicateDrawings {scene_id,region_id,background_id,expected_revision,drawing_ids,offset} => {
+                edit_drawing(&mut next,&scene_id,&region_id,&background_id,expected_revision,crate::drawing::Mutation::Duplicate(drawing_ids,offset))?;
+            }
             SceneCommand::UndoDrawing {
                 scene_id,
                 region_id,

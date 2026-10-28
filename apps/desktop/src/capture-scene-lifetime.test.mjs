@@ -143,7 +143,7 @@ test('recording preparation countdown live capture and stop retain the same prod
     f.setRecording({...recordingStatus('starting'),hud:{rect:null,stage:'layout'}});
     assert.equal(wrapper.props.style.display,'contents');assert.equal(f.one('recording-live-mask'),undefined);
     f.setRecording({...recordingStatus('countdown',3),hud:{rect:null,stage:'layout'}});
-    assert.equal(wrapper.props.style.display,'contents');assert.equal(wrapper.props.classList['capture-background-only'],true);assert.ok(f.one('recording-live-mask'));assert.ok(f.one('recording-countdown'));
+    assert.equal(wrapper.props.style.display,'none');assert.equal(wrapper.props.classList['capture-background-only'],false);assert.ok(f.one('recording-live-mask'));assert.ok(f.one('recording-countdown'));
     assert.ok(f.one('recording-countdown').children.some(node=>node.text==='3'));
     const mask=f.one('recording-live-mask');
     f.setRecording({...recordingStatus('starting'),hud:{rect:null,stage:'mask'}});
@@ -205,12 +205,12 @@ test('native-aperture long capture keeps the same decoded background with one ma
   }finally{f.dispose();}
 });
 
-test('prepared compact recording keeps the original countdown image then one main live mask without a compound overlay', async () => {
+test('prepared compact recording hides the frozen image throughout countdown and keeps its scene mounted', async () => {
   const f=await fixture();try{
     const wrapper=f.one('capture-scene-surface'),image=f.one('qa-background');
     f.setRecording(recordingStatus('starting'));assert.equal(wrapper.props.style.display,'contents');
     f.setRecording(recordingStatus('countdown',3));
-    assert.equal(wrapper.props.style.display,'contents');assert.equal(wrapper.props.classList['capture-background-only'],true);
+    assert.equal(wrapper.props.style.display,'none');assert.equal(wrapper.props.classList['capture-background-only'],false);
     assert.ok(f.one('recording-countdown'));assert.equal(f.one('qa-background'),image);
     const mask=f.one('recording-live-mask');
     for(const phase of ['starting','recording','paused','stopping']){

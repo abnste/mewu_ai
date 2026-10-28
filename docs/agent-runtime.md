@@ -81,6 +81,18 @@ use their existing bounded tools and permission checks.
 
 ## Memory and failures
 
+`system_info` reads the actual host OS version and architecture. Windows uses
+the native version registry (including the build revision), macOS uses Apple's
+SystemVersion plist, and Linux returns bounded os-release data without executing
+it. This is a read-only native tool; it does not create a plugin or infer the OS
+from browser identity. It is available independently of long-term memory.
+Plugin authoring is for explicitly requested plugin work, not a workaround for
+ordinary questions or unavailable host permissions.
+
+Native, visual, extension and MCP tools share the same model catalog limits.
+Native definitions are included before preflight validates the catalog, rather
+than appended after a conversation has already begun.
+
 Long-term memory, context summaries and conversation history are separate stores.
 Compression never creates or deletes a memory. Existing memory providers and
 source-quote/revision rules remain authoritative. An unavailable optional memory

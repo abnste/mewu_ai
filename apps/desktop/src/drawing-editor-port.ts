@@ -9,6 +9,7 @@ export interface EditorBox { x:number;y:number;width:number;height:number }
 export type EditorDrawingAction = {expectedRevision:number} & (
   | {type:'add_drawing'|'update_drawing';drawing:Drawing}
   | {type:'update_drawings';drawings:Drawing[]}
+  | {type:'duplicate_drawings';drawingIds:string[];offset:DrawingPoint}
   | {type:'erase_drawing_strokes';erasures:DrawingStrokeErase[]}
   | {type:'remove_drawing';drawingId:string}
   | {type:'remove_drawings';drawingIds:string[]}

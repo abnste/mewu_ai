@@ -284,6 +284,18 @@ pub fn mutate_document(
             }
             next.objects.extend(objects);
         }
+        VideoAnnotationMutation::Duplicate {ids,offset} => {
+            if ids.is_empty() || ids.len()>48 || !offset.x.is_finite() || !offset.y.is_finite() || ids.iter().collect::<std::collections::HashSet<_>>().len()!=ids.len(){return Err(bad("视频复制来源或位移无效"));}
+            for id in ids {
+                let mut copy=doc.objects.iter().find(|o|o.id==id).ok_or_else(||bad("视频复制来源不存在"))?.clone();
+                copy.id=::uuid::Uuid::new_v4().to_string();copy.origin=None;
+                match &mut copy.primitive {
+                    VideoAnnotationPrimitive::Rect {bounds,..}=>{bounds.x+=offset.x;bounds.y+=offset.y;},
+                    VideoAnnotationPrimitive::Text {top_left,..}|VideoAnnotationPrimitive::Vector {top_left,..}=>{top_left.x+=offset.x;top_left.y+=offset.y;},
+                }
+                next.objects.push(copy);
+            }
+        }
         VideoAnnotationMutation::Update { id, replacement } => {
             let object = next
                 .objects

@@ -62,6 +62,7 @@ pub struct Preview {
     deny_unknown_fields
 )]
 pub enum DocumentAction {
+    Duplicate { annotation_ids: Vec<String>, offset: VideoPixelPoint },
     Move {
         annotation_id: String,
         from_top_left: VideoPixelPoint,
@@ -701,6 +702,10 @@ pub async fn apply_video_annotation_document(
     .map_err(|_| "视频批注保存中断".to_string())?
 }
 
+fn duplicate_mutation(doc:&VideoAnnotationDocument,annotation_ids:Vec<String>,offset:VideoPixelPoint)->Result<VideoAnnotationMutation,String>{
+    if annotation_ids.is_empty() || annotation_ids.len()>48 || annotation_ids.iter().collect::<std::collections::HashSet<_>>().len()!=annotation_ids.len() || !offset.x.is_finite() || !offset.y.is_finite() || annotation_ids.iter().any(|id|!doc.objects.iter().any(|o|&o.id==id)){return Err("复制视频批注来源或位移无效".into());}
+    Ok(VideoAnnotationMutation::Duplicate{ids:annotation_ids,offset})
+}
 fn apply_video_annotation_document_blocking(
     app: AppHandle,
     window: WebviewWindow,
@@ -716,6 +721,10 @@ fn apply_video_annotation_document_blocking(
     crate::recording::ensure_idle(&app)?;
     crate::video_host::atomic_gate(&host, handle, exit_flush)?;
     let mutation = match action {
+        DocumentAction::Duplicate {annotation_ids,offset} => {
+            let origin=checked_origin(&engine.store,&target,true)?;
+            duplicate_mutation(origin.source.annotations.as_ref().ok_or("视频尚无批注")?,annotation_ids,offset)?
+        }
         DocumentAction::Move {
             annotation_id,
             from_top_left,
@@ -974,6 +983,25 @@ mod manual_edit_tests {
                 db,
             }
         }
+    }
+
+    #[test]
+    fn duplicate_reuses_registered_layouts_and_persists_one_undo_step() {
+        let mut f=Fixture::new();let before=f.doc();
+        let ids=before.objects.iter().map(|o|o.id.clone()).collect::<Vec<_>>();
+        let mutation=duplicate_mutation(&before,ids.clone(),p(10.,10.)).unwrap();
+        f.store.edit_video_annotation_with_layouts(&f.target(),mutation,vec![]).unwrap();
+        let after=f.doc();assert_eq!(after.objects.len(),before.objects.len()*2);
+        assert_eq!(&after.objects[..before.objects.len()],before.objects);
+        for (old,copy) in before.objects.iter().zip(&after.objects[before.objects.len()..]) {assert_ne!(copy.id,old.id);assert_eq!(copy.interval,old.interval);assert!(copy.origin.is_none());}
+        let undo_id=after.undo.last().unwrap().id.clone();
+        f.store.edit_video_annotation_with_layouts(&f.target(),VideoAnnotationMutation::Undo{expected_operation_id:undo_id},vec![]).unwrap();
+        assert_eq!(f.doc().objects,before.objects);
+        f=f.reopen();assert_eq!(f.doc().objects,before.objects);
+        let unchanged=f.store.snapshot();
+        assert!(duplicate_mutation(&f.doc(),vec![ids[0].clone(),ids[0].clone()],p(0.,0.)).is_err());
+        let outside=duplicate_mutation(&f.doc(),ids,p(10000.,0.)).unwrap();
+        assert!(f.store.edit_video_annotation_with_layouts(&f.target(),outside,vec![]).is_err());assert_eq!(f.store.snapshot(),unchanged);
     }
 
     #[test]

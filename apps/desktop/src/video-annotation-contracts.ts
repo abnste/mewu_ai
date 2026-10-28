@@ -25,7 +25,7 @@ export interface VideoAnnotationPlan {
 }
 export interface VideoAnnotationPreviewTarget { target: VideoAnnotationTarget; documentSha256: string; annotationId: string; reference: VideoAnnotationRasterRef }
 export interface VideoAnnotationPreview extends VideoAnnotationPreviewTarget { dataUrl: string }
-export type VideoAnnotationAction = { type: 'remove'; annotationId: string } | { type: 'undo' | 'redo'; operationId: string } | { type: 'move'; annotationId: string; fromTopLeft: VideoPixelPoint; toTopLeft: VideoPixelPoint };
+export type VideoAnnotationAction = { type: 'duplicate'; annotationIds: string[]; offset: VideoPixelPoint } | { type: 'remove'; annotationId: string } | { type: 'undo' | 'redo'; operationId: string } | { type: 'move'; annotationId: string; fromTopLeft: VideoPixelPoint; toTopLeft: VideoPixelPoint };
 export interface VideoTextContent { version: 1; text: string; color: string; fontSize: number; textStyle?: DrawingTextStyle; textBox?: { width: number; height: number } }
 export interface VideoTextRead { requestId: string; target: VideoAnnotationTarget; annotationId: string; reference: VideoTextLayoutRef; content: VideoTextContent }
 export interface VideoAnswerAction { target: VideoAnnotationTarget; annotationId: string; runId: string; toolEventId: string; interval: VideoRange }

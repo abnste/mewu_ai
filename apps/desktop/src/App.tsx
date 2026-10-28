@@ -167,15 +167,14 @@ export default function App() {
   });
   let stopRecordingAudio: (() => void) | undefined, audioRead: Promise<void> | undefined;
   const [scroll, setScroll] = createSignal<scrollBridge.ScrollStatus | null>(null);
-  // Keep the original decoded image during countdown and, when the native
-  // window has a real capture aperture, throughout long capture.
+  // Recording uses the live desktop during countdown; only scrolling may keep
+  // the source image outside its native capture aperture.
   const capturePresentationLive = () => Boolean(
     (recording() && (recording()!.phase !== 'starting' || recording()!.retainMain === true ||
       recording()!.hud?.stage === 'mask' || recording()!.hud?.stage === 'live')) ||
     (scroll() && (scroll()!.phase !== 'starting' || scroll()!.hud?.live === true))
   );
   const captureSceneBackgroundOnly = () => Boolean(
-    recording()?.phase === 'countdown' ||
     (scroll()?.hud?.live && scroll()?.hud?.retainMain === true)
   );
   const captureSceneHidden = () => capturePresentationLive() && !captureSceneBackgroundOnly();
@@ -721,11 +720,18 @@ export default function App() {
       if (action.type === 'move') {
         const object = doc.objects.find(value => value.id === action.annotationId), bounds = object && videoAnnotationBounds(object);
         if (!bounds || bounds.x !== action.fromTopLeft.x || bounds.y !== action.fromTopLeft.y || ![action.toTopLeft.x, action.toTopLeft.y].every(Number.isFinite)) throw new Error('视频标注位置已变化');
+      } else if(action.type==='duplicate') {
+        if(!action.annotationIds.length||new Set(action.annotationIds).size!==action.annotationIds.length||!action.annotationIds.every(id=>doc.objects.some(o=>o.id===id))||![action.offset.x,action.offset.y].every(Number.isFinite))throw Error('视频复制来源已变化');
       } else if (action.type === 'remove' ? !doc.objects.some(value => value.id === action.annotationId) : doc[action.type].at(-1)?.id !== action.operationId) throw new Error('视频标注历史已变化');
       const returned = await videoAnnotationBridge.applyVideoAnnotationDocument(target, action);
       const result = returned.scenes.find(value => value.id === target.sceneId)?.items.find(value => value.id === target.itemId);
       if (!result?.videoAnnotations || result.videoAnnotations.revision !== target.expectedAnnotationRevision + 1 || JSON.stringify(result.asset) !== JSON.stringify(item.asset) || JSON.stringify(result.videoEdit) !== JSON.stringify(item.videoEdit)) throw new Error('视频标注回执不一致');
       if (action.type === 'move' && JSON.stringify(result.videoAnnotations.objects) !== JSON.stringify(doc.objects.map(value => value.id === action.annotationId ? movedVideoObject(value, action.toTopLeft) : value))) throw new Error('视频移动回执不一致');
+      if(action.type==='duplicate'){
+        const objects=result.videoAnnotations.objects,copies=objects.slice(doc.objects.length);
+        if(JSON.stringify(objects.slice(0,doc.objects.length))!==JSON.stringify(doc.objects)||copies.length!==action.annotationIds.length||new Set(objects.map(o=>o.id)).size!==objects.length)throw Error('视频复制回执不一致');
+        for(let i=0;i<copies.length;i++){const original=doc.objects.find(o=>o.id===action.annotationIds[i])!,bounds=videoAnnotationBounds(original),expected=movedVideoObject(original,{x:bounds.x+action.offset.x,y:bounds.y+action.offset.y});if(JSON.stringify(copies[i].primitive)!==JSON.stringify(expected.primitive)||JSON.stringify(copies[i].interval)!==JSON.stringify(original.interval))throw Error('视频复制内容不一致');}
+      }
       accept(returned); receive?.(returned); return result;
     });
     commands = next.then(() => {}, error => { if (exitPreparing()) exitFailure ??= error; });

@@ -11,6 +11,7 @@ mod control_run_stream;
 mod control_cli;
 mod agent_tools;
 mod agent_development;
+mod agent_system;
 mod toolbar_catalog;
 mod ai;
 mod inline_reasoning;
@@ -550,6 +551,7 @@ async fn apply_scene_command(
         SceneCommand::AddDrawing { .. }
         | SceneCommand::UpdateDrawing { .. }
         | SceneCommand::UpdateDrawings { .. }
+        | SceneCommand::DuplicateDrawings { .. }
         | SceneCommand::EraseDrawingStrokes { .. }
         | SceneCommand::RemoveDrawing { .. }
         | SceneCommand::RemoveDrawings { .. }
@@ -2412,7 +2414,7 @@ fn start_run_with_extensions(
     let title_transport = transport.clone();
     let run_tools =
         match mcp_host::RunTools::with_extensions(&context, visual.clone(), video.clone(), extension_catalog, chat_region.clone()) {
-            Ok(tools) => Arc::new(tools.with_development().with_model_key(&context, key.clone())),
+            Ok(tools) => Arc::new(tools.with_model_key(&context, key.clone())),
             Err(error) => {
                 engine.plugin_runs.remove(&context.run_id);
                 engine.agent_runs.remove(&context.run_id);

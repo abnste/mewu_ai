@@ -1269,5 +1269,9 @@
   "检查未通过": "Checks failed",
   "检查记录不可用": "Check record unavailable",
   "尚未验证": "Not verified",
-  "上下文窗口（tokens）": "Context window (tokens)"
+  "上下文窗口（tokens）": "Context window (tokens)",
+  "移动绘制工具条": "Move drawing toolbar",
+  "拖动工具条，靠近边缘吸附": "Drag toolbar to dock at an edge",
+  "绘制参数": "Drawing options",
+  "读取系统信息": "Read system information"
 }

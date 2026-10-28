@@ -381,7 +381,7 @@ pub(super) async fn prepare(
 
 /// The worker is already prepared but cannot encode until the original message
 /// thread has removed every owned HWND pixel from the ROI and flushed it.
-pub(super) fn finish_countdown(app: &AppHandle, id: &str, config: &backend::Config) -> Result<bool, String> {
+pub(super) fn prepare_live_desktop(app: &AppHandle, id: &str, config: &backend::Config) -> Result<bool, String> {
     let target = app.clone(); let operation = id.to_owned(); let config = config.clone();
     let transitioned = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let completed = transitioned.clone();

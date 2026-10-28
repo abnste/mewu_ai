@@ -993,6 +993,14 @@ pub enum SceneCommand {
         expected_revision: u64,
         drawings: Vec<Drawing>,
     },
+    DuplicateDrawings {
+        scene_id: String,
+        region_id: String,
+        background_id: String,
+        expected_revision: u64,
+        drawing_ids: Vec<String>,
+        offset: DrawingPoint,
+    },
     EraseDrawingStrokes {
         scene_id: String,
         region_id: String,

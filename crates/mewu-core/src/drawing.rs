@@ -20,6 +20,7 @@ const MAX_HISTORY_BYTES: usize = 4 * 1024 * 1024;
 pub(crate) enum Mutation {
     Add(Drawing),
     AppendBatch(Vec<Drawing>),
+    Duplicate(Vec<String>, crate::DrawingPoint),
     Update(Drawing),
     UpdateBatch(Vec<Drawing>),
     EraseStrokes(Vec<crate::DrawingStrokeErase>),
@@ -339,6 +340,20 @@ fn trim_history(history: &mut DrawingHistory) -> Result<()> {
 }
 
 pub(crate) fn apply(region: &mut Region, background: &Asset, mutation: Mutation) -> Result<bool> {
+    if let Mutation::Duplicate(ids,offset)=mutation {
+        if ids.is_empty() || ids.len()>48 || !offset.x.is_finite() || !offset.y.is_finite() || ids.iter().collect::<HashSet<_>>().len()!=ids.len() {return Err(invalid("复制对象或位移无效"));}
+        let mut copies=Vec::new();
+        for id in ids {
+            let original=region.drawings.iter().find(|d|d.id==id).ok_or_else(||invalid("复制来源不存在"))?;
+            if original.rich.as_ref().is_some_and(|r|r.kind==crate::RichKind::Repair || r.parent_id.is_some()) {return Err(invalid("修补图层跟随原对象，不能单独复制"));}
+            let mut copy=original.clone();copy.id=uuid::Uuid::new_v4().to_string();
+            for point in &mut copy.points {point.x+=offset.x;point.y+=offset.y;}
+            copies.push(copy);
+        }
+        // Reuse registered immutable layouts; the caller cannot supply a forged
+        // reference or origin. AppendBatch validates and records one undo step.
+        return apply(region,background,Mutation::AppendBatch(copies));
+    }
     if let Mutation::RemoveBatch(ids) = mutation {
         return remove_batch(region, background, ids);
     }
@@ -489,7 +504,7 @@ pub(crate) fn apply(region: &mut Region, background: &Asset, mutation: Mutation)
             validate(region, Some(background))?;
             return Ok(true);
         }
-        Mutation::AppendBatch(_) | Mutation::UpdateBatch(_) | Mutation::EraseStrokes(_) | Mutation::RemoveBatch(_) => {
+        Mutation::Duplicate(..) | Mutation::AppendBatch(_) | Mutation::UpdateBatch(_) | Mutation::EraseStrokes(_) | Mutation::RemoveBatch(_) => {
             unreachable!("handled above")
         }
     };
@@ -722,6 +737,22 @@ fn update_batch(
 #[cfg(test)]
 mod history_replay_tests {
     use super::*;
+
+    #[test]
+    fn duplicate_preserves_originals_and_undoes_the_entire_selection_once() {
+        let background=Asset{id:uuid::Uuid::new_v4().to_string(),name:"test.png".into(),kind:crate::AssetKind::Image,path:"test.png".into(),width:Some(640),height:Some(480),origin_x:None,origin_y:None,scale_factor:None,capture_coordinates:None};
+        let mut region=Region::default();let first=pen();let second=pen();
+        apply(&mut region,&background,Mutation::Add(first.clone())).unwrap();
+        apply(&mut region,&background,Mutation::Add(second.clone())).unwrap();
+        let before=region.drawings.clone();let history=region.drawing_history.undo.len();
+        apply(&mut region,&background,Mutation::Duplicate(vec![first.id.clone(),second.id.clone()],crate::DrawingPoint{x:30.,y:40.})).unwrap();
+        assert_eq!(&region.drawings[..2],before);assert_eq!(region.drawings.len(),4);
+        assert_ne!(region.drawings[2].id,first.id);assert_eq!(region.drawings[2].points[0],crate::DrawingPoint{x:31.,y:42.});
+        assert_eq!(region.drawing_history.undo.len(),history+1);
+        let copies=region.drawings.clone();apply(&mut region,&background,Mutation::Undo).unwrap();assert_eq!(region.drawings,before);
+        apply(&mut region,&background,Mutation::Redo).unwrap();assert_eq!(region.drawings,copies);
+        let unchanged=region.clone();assert!(apply(&mut region,&background,Mutation::Duplicate(vec![first.id.clone(),first.id],crate::DrawingPoint{x:0.,y:0.})).is_err());assert_eq!(region,unchanged);
+    }
 
     fn pen() -> Drawing {
         Drawing {

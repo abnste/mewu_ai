@@ -231,7 +231,7 @@ const normalize = value => JSON.parse(JSON.stringify(value));
   const dialog = await raw('./components/SettingsDialog.tsx'), capture = await raw('./components/CaptureSettings.tsx'), facts = await raw('./components/SettingsFacts.tsx');
   const parsed = parse(dialog, { sourceType: 'module', plugins: ['typescript', 'jsx'] });
   const labels = []; function visit(value) { if (!value || typeof value !== 'object') return; if (value.type === 'ObjectExpression') { const id = value.properties.find(p => p.key?.name === 'id')?.value; const label = value.properties.find(p => p.key?.name === 'label')?.value; const literal = label?.type === 'CallExpression' && label.callee?.name === 't' ? label.arguments[0] : label; if (literal?.type === 'StringLiteral' && id) labels.push(literal.value); } for (const child of Object.values(value)) { if (Array.isArray(child)) child.forEach(visit); else if (child && typeof child === 'object') visit(child); } } visit(parsed);
-  assert.deepEqual(labels, ['通用', '截图与录屏', 'Agent 与连接', 'Hooks', '插件', '数据']);
+  assert.deepEqual(labels, ['通用', '截图与录屏', 'Agent 与连接', '事件触发器', '插件', '数据']);
   assert.ok(dialog.includes('class="settings-nav-about"'));
   assert.ok(dialog.includes("onClick={() => setTab('about')}"));
   assert.ok(dialog.includes("t('检测到新版本')"));

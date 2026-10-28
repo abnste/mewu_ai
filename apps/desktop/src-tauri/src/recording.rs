@@ -1082,7 +1082,7 @@ fn recording_countdown(
         #[cfg(windows)]
         if let Some(hud) = &mut s.hud {
             s.phase = "starting"; s.countdown = 0;
-            hud.stage = "mask"; hud.ready = false;
+            hud.stage = "live";
         }
         // Compact capture retains the last numeral until the real native
         // aperture and retainMain proof are published together. An unproven
@@ -1133,8 +1133,11 @@ fn supervise(
     {
         let prepare_config = config.clone();
         crate::recording_worker::run_prepared(config, poll, || {
+            // Release the frozen capture and its input ownership BEFORE the
+            // countdown. The prepared encoder still cannot record until the
+            // countdown completes and the compositor epoch is captured below.
+            if !controls_windows::prepare_live_desktop(app, id, &prepare_config)? { return Ok(None); }
             if !recording_countdown(app, id, &commands, &escape)? { return Ok(None); }
-            if !controls_windows::finish_countdown(app, id, &prepare_config)? { return Ok(None); }
             if commands.terminal_pending()? { return Ok(None); }
             verify_capture(app, id)?;
             // main.prepare has flushed native composition. The child must use

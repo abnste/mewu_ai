@@ -91,4 +91,18 @@
 .drawing-blackboard .drawing-property-controls>*{flex-shrink:0}
 .drawing-blackboard .drawing-history-actions{display:flex;align-items:center;gap:var(--toolbar-button-gap);flex:0 0 auto}
 
+/* Blackboard has one movable tool palette; parameters belong to its tool. */
+.drawing-blackboard .drawing-toolbar{max-width:calc(100vw - 16px);max-height:calc(100vh - 16px)}
+.board-toolbar-grip{display:grid;place-items:center;align-self:stretch;min-width:16px;cursor:grab;touch-action:none;border-radius:7px}
+.board-toolbar-grip>span{width:4px;height:24px;border-radius:4px;background:var(--muted,#8290a3);opacity:.5}
+.board-toolbar-grip:hover{background:var(--accent-soft,#eaf1fa)}
+.board-toolbar-dragging .board-toolbar-grip{cursor:grabbing}
+.drawing-blackboard .drawing-property-controls.board-property-menu{position:absolute;display:flex;flex-wrap:wrap;overflow:visible;align-items:center;gap:6px;width:max-content;min-width:0;max-width:min(330px,calc(100vw - 28px));padding:8px;border-radius:12px;background:var(--surface,#fafcff);box-shadow:0 6px 24px #3347623d,0 1px 4px #3347621a;z-index:10}
+.drawing-blackboard .board-property-menu[hidden]{display:none!important}
+.board-property-menu>.drawing-divider{display:none}
+.drawing-blackboard .board-toolbar-vertical{flex-direction:column;max-width:72px;max-height:calc(100vh - 16px)}
+.drawing-blackboard .board-toolbar-vertical .drawing-tools-row{flex-direction:column;overflow-y:auto;overflow-x:hidden;min-height:48px;max-height:calc(100vh - 260px);width:48px;min-width:48px}
+.drawing-blackboard .board-toolbar-vertical .drawing-history-actions{flex-direction:column;max-height:230px;overflow-y:auto;scrollbar-width:none}
+.board-toolbar-vertical .board-toolbar-grip{min-height:16px;min-width:48px}
+.board-toolbar-vertical .board-toolbar-grip>span{width:24px;height:4px}
 .drawing-selection-background{position:absolute;z-index:-1;pointer-events:auto;background:transparent}

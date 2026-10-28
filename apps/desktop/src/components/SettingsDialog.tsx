@@ -102,7 +102,7 @@ export default function SettingsDialog(props: Props) {
     { id: 'general' as const, label: '通用', icon: Settings2 },
     { id: 'capture' as const, label: '截图与录屏', icon: ScanLine },
     { id: 'agent' as const, label: 'Agent 与连接', icon: UserRound },
-    { id: 'hooks' as const, label: 'Hooks', icon: Wrench },
+    { id: 'hooks' as const, label: '事件触发器', icon: Wrench },
     { id: 'plugins' as const, label: '插件', icon: Puzzle },
     { id: 'data' as const, label: '数据', icon: Database },
   ];

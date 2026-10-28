@@ -266,7 +266,8 @@ fn apply_plugin_drawing_blocking(
                 K::Rich => return Err("富图层只能从文档入口编辑".into()),
             })
         }
-        SceneCommand::RemoveDrawing { .. }
+        SceneCommand::DuplicateDrawings { .. }
+        | SceneCommand::RemoveDrawing { .. }
         | SceneCommand::RemoveDrawings { .. }
         | SceneCommand::EraseDrawingStrokes { .. }
         | SceneCommand::UndoDrawing { .. }

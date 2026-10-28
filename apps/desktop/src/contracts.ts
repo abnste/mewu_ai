@@ -33,6 +33,7 @@ interface DrawingTarget { sceneId: string; regionId: string; backgroundId: strin
 export type DrawingCommand = DrawingTarget & (
   | { type: 'add_drawing' | 'update_drawing'; drawing: Drawing }
   | {type:'update_drawings';drawings:Drawing[]}
+  | {type:'duplicate_drawings';drawingIds:string[];offset:DrawingPoint}
   | {type:'erase_drawing_strokes';erasures:DrawingStrokeErase[]}
   | { type: 'remove_drawing'; drawingId: string }
   | { type: 'remove_drawings'; drawingIds: string[] }
@@ -117,6 +118,7 @@ export type SceneCommand =
 export type ImageAnnotationEdit =
   | { type: 'add_drawing' | 'update_drawing'; drawing: Drawing }
   | { type: 'update_drawings'; drawings: Drawing[] }
+  | {type:'duplicate_drawings';drawingIds:string[];offset:DrawingPoint}
   | { type: 'erase_drawing_strokes'; erasures: DrawingStrokeErase[] }
   | { type: 'remove_drawing'; drawingId: string }
   | { type: 'remove_drawings'; drawingIds: string[] }

@@ -380,7 +380,7 @@ fn apply_drawing_document_blocking(
             // Core validates every ID and performs the entire mixed batch,
             // including linked repairs, as one revision and one undo step.
         }
-        SceneCommand::UpdateDrawings { .. } => { /* Core validates the entire geometry-only batch and immutable references. */
+        SceneCommand::UpdateDrawings { .. } | SceneCommand::DuplicateDrawings { .. } => { /* Core validates the entire geometry-only batch and immutable references. */
         }
         SceneCommand::UpdateDrawing {
             scene_id,

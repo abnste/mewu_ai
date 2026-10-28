@@ -288,6 +288,7 @@ pub struct ValidatedVideoAppendBatch {
 #[derive(Debug, Clone, PartialEq)]
 pub enum VideoAnnotationMutation {
     Append(Vec<TimedVideoAnnotation>), // Core stamps IDs+origin before this call.
+    Duplicate { ids: Vec<String>, offset: VideoPixelPoint },
     Update {
         id: String,
         replacement: VideoAnnotationDraft,

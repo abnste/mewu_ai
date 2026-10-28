@@ -1068,6 +1068,7 @@ fn tool_label(binding: &ToolBinding) -> String {
                 "skill_read" => "读取技能",
                 "plugin_project" => "制作插件",
                 "session_read" => "读取会话",
+                "system_info" => "读取系统信息",
                 _ => name,
             }
         }

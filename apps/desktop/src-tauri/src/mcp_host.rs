@@ -107,6 +107,10 @@ fn build_catalog(
     visual: Option<&crate::visual_annotation_host::RunScope>,
     video: Option<&crate::video_annotation_tool::RunScope>,
 ) -> Result<Catalog, String> {
+    // Native tools are part of the same advertised catalog and budget as MCP.
+    // Appending them after preflight used to turn a valid 64-tool selection
+    // into an invalid model request after consuming the user's draft.
+    definitions.extend(crate::agent_development::definitions());
     if visual.is_some() && video.is_some() {
         return Err("原位作答来源类型冲突".into());
     }
@@ -290,11 +294,6 @@ impl RunTools {
 
     pub fn definitions(&self) -> Vec<Value> {
         self.definitions.clone()
-    }
-
-    pub(crate) fn with_development(mut self) -> Self {
-        self.definitions.extend(crate::agent_development::definitions());
-        self
     }
 
     pub fn journal_binding(&self, alias: &str) -> Option<ToolBinding> {
@@ -718,15 +717,15 @@ mod tests {
         let id = uuid::Uuid::parse_str(&server.id).unwrap();
         context.mcp_servers.push(server.clone());
         let tools = RunTools::new(&context).unwrap();
-        assert_eq!(tools.definitions().len(), 5);
+        assert_eq!(tools.definitions().len(), 5 + crate::agent_development::definitions().len());
         assert_eq!(tools.bindings.len(), 1);
         let alias = format!("mcp_{}_0", id.simple());
         assert!(ai::valid_tool_name(&alias));
         assert_eq!(tools.bindings[&alias].tool_name, "read");
         context.mcp_servers[0].enabled = false;
-        assert_eq!(RunTools::new(&context).unwrap().definitions().len(), 4);
+        assert_eq!(RunTools::new(&context).unwrap().definitions().len(), 4 + crate::agent_development::definitions().len());
         context.agent.memory_enabled = false;
-        assert!(RunTools::new(&context).unwrap().definitions().is_empty());
+        assert_eq!(RunTools::new(&context).unwrap().definitions().len(),crate::agent_development::definitions().len());
     }
     #[test]
     fn duplicate_namespaces_and_over_budget_definitions_fail_before_model_requests() {
@@ -829,7 +828,7 @@ mod tests {
                 draft: "保留这份视频问题".into(),
             })
             .unwrap();
-        let server = granted_server(&agent.id, 59);
+        let server = granted_server(&agent.id, 64 - 4 - 1 - crate::agent_development::definitions().len());
         let snapshot = store
             .upsert_mcp_server(None, None, server.label, server.command, server.tools)
             .unwrap();
@@ -853,7 +852,7 @@ mod tests {
             Some(&scope),
         )
         .unwrap();
-        assert_eq!(catalog.definitions.len(), 64); // 4 memory + video + 59 MCP.
+        assert_eq!(catalog.definitions.len(), 64); // 4 memory + 5 native + video + 54 MCP.
         let mut over = before.clone();
         over.mcp_servers[0].tools.push(tool("sixtieth"));
         over.mcp_servers[0].grants[0]
@@ -938,7 +937,7 @@ mod tests {
         let scope = video_scope(&scene);
         snapshot.agents[0].memory_enabled = true;
         snapshot.agents[0].memory_provider.binding_id = Some(uuid::Uuid::new_v4().to_string());
-        snapshot.mcp_servers = vec![granted_server(&snapshot.agents[0].id, 63)];
+        snapshot.mcp_servers = vec![granted_server(&snapshot.agents[0].id, 63 - crate::agent_development::definitions().len())];
         preflight_video_catalog(&snapshot, &scene, scope.clone(), false).unwrap();
         assert!(preflight_video_catalog(&snapshot, &scene, scope.clone(), true).is_err());
         snapshot.agents[0].memory_enabled = false;
