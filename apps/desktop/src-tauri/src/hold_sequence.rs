@@ -38,12 +38,16 @@ impl Sequence {
             self.other.insert(key);
         }
     }
-    /// Our own state-only releases are filtered by the transport's exact tag.
-    /// A different input producer's actual key-up must finish this gesture too;
-    /// otherwise its later Esc/letter could replay a Win-down after release.
+    /// A foreign synthetic release is not proof that our physical key was
+    /// released. Keep an owned gesture through such events and auto-repeat;
+    /// otherwise the next repeat can start a second tap and reopen the shell.
     pub fn observed_release(&mut self, key: u32) -> bool {
+        if self.suppressed_wins.contains(&key)
+            || (!self.forwarded && self.held.is_some_and(|(held, _)| held == key))
+        {
+            return false;
+        }
         self.other.remove(&key);
-        self.suppressed_wins.remove(&key);
         if self.held.is_some_and(|(held, _)| held == key) {
             self.held = None;
             self.forwarded = false;
@@ -191,13 +195,17 @@ mod tests {
         }
     }
     #[test]
-    fn external_key_up_can_finish_the_owned_gesture_without_replaying_a_tap() {
+    fn foreign_key_up_cannot_split_an_owned_physical_hold_into_another_tap() {
         let mut sequence = Sequence::default();
         sequence.key(0x5b, true, 0, 400);
-        assert!(sequence.observed_release(0x5b));
-        assert!(sequence.held.is_none());
+        assert!(!sequence.observed_release(0x5b));
+        let repeated = sequence.key(0x5b, true, 600, 400);
+        assert!(repeated.consume && !repeated.pressed && repeated.replay.is_empty());
         assert!(sequence.key(0x1b, true, 700, 400).replay.is_empty());
         sequence.key(0x1b, false, 710, 400);
+        let physical_up = sequence.key(0x5b, false, 750, 400);
+        assert!(physical_up.consume && physical_up.released && physical_up.replay.is_empty());
+        assert!(sequence.held.is_none());
         assert!(sequence.key(0x5b, true, 800, 400).pressed);
     }
     #[test]

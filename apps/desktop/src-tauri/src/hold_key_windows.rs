@@ -27,9 +27,9 @@ const RELEASE: u32 = WM_APP + 0x502;
 const STOP: u32 = WM_APP + 0x503;
 const TAG: usize = 0x4d455755;
 const STATE_TAG: usize = 0x4d455756;
-// Unassigned, non-character key used by PowerToys to mask lone Win releases.
+// Unassigned, non-character menu mask documented by AutoHotkey.
 // Never use Ctrl/Alt/Shift as a mask: that would change the user's real chord.
-const MENU_MASK_KEY: u16 = 0xff;
+const MENU_MASK_KEY: u16 = 0xe8;
 static ENABLED: AtomicBool = AtomicBool::new(false);
 static THREAD: AtomicU32 = AtomicU32::new(0);
 static THRESHOLD: AtomicU32 = AtomicU32::new(400);
@@ -146,25 +146,43 @@ unsafe fn release_os_modifier(key: u32) -> bool {
         std::mem::size_of::<INPUT>() as i32,
     ) == inputs.len() as u32
 }
+#[derive(Debug, PartialEq)]
+enum TaggedRoute {
+    Forward,
+    Suppress,
+}
+fn tagged_route(event: &KBDLLHOOKSTRUCT) -> Option<TaggedRoute> {
+    if event.dwExtraInfo == STATE_TAG {
+        // This key-up MUST reach Windows' input queue. Consuming it in our own
+        // hook leaves the system modifier down, so Win+click can still activate
+        // the shell even though Mewu consumed the physical keyboard message.
+        return Some(
+            if matches!(event.vkCode, 0x5b | 0x5c)
+                && event.flags & (LLKHF_UP | LLKHF_EXTENDED) == (LLKHF_UP | LLKHF_EXTENDED)
+            {
+                TaggedRoute::Forward
+            } else {
+                TaggedRoute::Suppress
+            },
+        );
+    }
+    (event.dwExtraInfo == TAG).then_some(TaggedRoute::Forward)
+}
 unsafe extern "system" fn keyboard(code: i32, w: WPARAM, l: LPARAM) -> LRESULT {
     if code < 0 || l == 0 {
         return CallNextHookEx(null_mut(), code, w, l);
     }
     let event = &*(l as *const KBDLLHOOKSTRUCT);
-    // Like PowerToys' modifier remapping, retire Windows' asynchronous modifier
-    // state as well as suppressing the original message. Otherwise Win+click
-    // can still open the system capture UI while Mewu owns this hold. This
-    // tagged key-up updates OS state without becoming an application shortcut.
-    if event.dwExtraInfo == STATE_TAG {
-        return 1;
+    if let Some(route) = tagged_route(event) {
+        return match route {
+            TaggedRoute::Forward => CallNextHookEx(null_mut(), code, w, l),
+            TaggedRoute::Suppress => 1,
+        };
     }
     if !ENABLED.load(Ordering::Acquire) {
         return CallNextHookEx(null_mut(), code, w, l);
     }
     if EDITING.load(Ordering::Acquire) && KEYS.with(|keys| keys.borrow().held.is_none()) {
-        return CallNextHookEx(null_mut(), code, w, l);
-    }
-    if event.dwExtraInfo == TAG {
         return CallNextHookEx(null_mut(), code, w, l);
     }
     let down = matches!(w as u32, WM_KEYDOWN | WM_SYSKEYDOWN);
@@ -211,7 +229,12 @@ unsafe extern "system" fn keyboard(code: i32, w: WPARAM, l: LPARAM) -> LRESULT {
                             ki: KEYBDINPUT {
                                 wVk: *key as u16,
                                 wScan: 0,
-                                dwFlags: if *up { KEYEVENTF_KEYUP } else { 0 },
+                                dwFlags: (if *up { KEYEVENTF_KEYUP } else { 0 })
+                                    | (if matches!(*key, 0x5b | 0x5c) {
+                                        KEYEVENTF_EXTENDEDKEY
+                                    } else {
+                                        0
+                                    }),
                                 time: 0,
                                 dwExtraInfo: TAG,
                             },
@@ -426,6 +449,33 @@ pub fn disable() {
 #[cfg(test)]
 mod modifier_tests {
     use super::*;
+    #[test]
+    fn logical_win_release_reaches_the_os_without_becoming_a_physical_release() {
+        for key in [0x5b, 0x5c] {
+            let mut event = KBDLLHOOKSTRUCT {
+                vkCode: key,
+                scanCode: 0,
+                flags: LLKHF_INJECTED | LLKHF_UP | LLKHF_EXTENDED,
+                time: 0,
+                dwExtraInfo: STATE_TAG,
+            };
+            assert_eq!(tagged_route(&event), Some(TaggedRoute::Forward));
+            let mut sequence = crate::hold_sequence::Sequence::default();
+            sequence.key(key, true, 0, 400);
+            // The transport forwards this tagged event before its physical-key
+            // state machine, preserving ownership through the shell reset.
+            assert_eq!(sequence.owned_modifier(), Some(key));
+            event.flags &= !LLKHF_UP;
+            assert_eq!(tagged_route(&event), Some(TaggedRoute::Suppress));
+            event.vkCode = 0x43;
+            event.flags |= LLKHF_UP;
+            assert_eq!(tagged_route(&event), Some(TaggedRoute::Suppress));
+            event.dwExtraInfo = TAG;
+            assert_eq!(tagged_route(&event), Some(TaggedRoute::Forward));
+            event.dwExtraInfo = 0;
+            assert_eq!(tagged_route(&event), None);
+        }
+    }
     #[test]
     fn menu_mask_is_balanced_and_os_visible_before_each_owned_win_release() {
         for key in [0x5b, 0x5c] {
