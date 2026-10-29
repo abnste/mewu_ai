@@ -795,6 +795,7 @@ mod tests {
                 width: 1400.,
                 height: 240.,
                 drawings: vec![Drawing {
+                    text_runs: None,
                     id: "known-english".into(),
                     kind: DrawingKind::Text,
                     color: "#000000".into(),
