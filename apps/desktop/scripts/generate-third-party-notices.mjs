@@ -7,6 +7,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { cargoLegalSource } from './third-party-source.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
@@ -48,7 +49,7 @@ const packages = metadata.packages.filter(pkg => !workspace.has(pkg.id)).map(pkg
   ecosystem: 'Cargo', name: pkg.name, version: pkg.version, license: pkg.license ?? 'UNDECLARED',
   scope: directRust.has(pkg.id) ? `direct (${[...directRust.get(pkg.id)].sort().join(', ')})` : 'transitive',
   root: dirname(pkg.manifest_path), licenseFile: pkg.license_file, windows: windowsPackages.has(pkg.id),
-  source: pkg.source?.startsWith('git+') ? pkg.source.slice(4) : `https://crates.io/crates/${pkg.name}/${pkg.version}`,
+  ...cargoLegalSource(root, pkg),
   gitSource: pkg.source,
 }));
 for (const [location, pkg] of Object.entries(npmLock.packages)) {
@@ -179,6 +180,12 @@ const supplements = JSON.parse(readFileSync(resolve(root, 'apps/desktop/licenses
 for (const supplement of supplements) {
   const pkg = packages.find(pkg => pkg.ecosystem === 'Cargo' && pkg.name === supplement.name && pkg.version === supplement.version);
   if (!pkg) continue;
+  // A local patch is no longer the pinned Git/registry source. Its own copied
+  // legal text is authoritative; do not label it with an unrelated revision.
+  if (pkg.localSource) {
+    if (!pkg.evidence.length) throw new Error(`${pkg.name} local source has no collected legal text`);
+    continue;
+  }
   const revision = supplement.git ? pkg.gitSource?.split('#').at(-1)
     : JSON.parse(readFileSync(resolve(pkg.root, '.cargo_vcs_info.json'), 'utf8')).git.sha1;
   if (revision !== supplement.commit) throw new Error(`${pkg.name} legal-source revision changed`);
