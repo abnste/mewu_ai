@@ -469,13 +469,16 @@ mod tests {
             WORKFLOW_SKILLS.len()
         );
         assert!(listed["invalidSkills"].as_array().unwrap().is_empty());
-        for (name, content) in WORKFLOW_SKILLS {
-            let read = perform(&ws, &call("skill_read", json!({"name":name}))).unwrap();
-            assert_eq!(read["content"], *content);
-            assert_eq!(read["availableFiles"], json!(["SKILL.md"]));
+        for (name, files) in WORKFLOW_SKILLS {
+            let expected_files = files.iter().map(|(file, _)| *file).collect::<Vec<_>>();
+            for (file, content) in *files {
+                let read = perform(&ws, &call("skill_read", json!({"name":name,"file":file}))).unwrap();
+                assert_eq!(read["content"], *content);
+                assert_eq!(read["availableFiles"], json!(expected_files));
+            }
         }
         let path = root.path().join("skills/mewu-image-annotation/SKILL.md");
-        let edited = format!("{}\n用户自定义：保持我的配色。", WORKFLOW_SKILLS[0].1);
+        let edited = format!("{}\n用户自定义：保持我的配色。", WORKFLOW_SKILLS[0].1[0].1);
         std::fs::write(&path, &edited).unwrap();
         let reopened = Workspace::open(root.path()).unwrap();
         seed_workflows(&reopened).unwrap();
