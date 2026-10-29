@@ -19,24 +19,46 @@ const SDK: &str = include_str!("../../../../packages/sdk/index.d.ts");
 const CLIENT: &str = include_str!("../../../../packages/sdk/client.d.ts");
 const LAYOUT: &str = include_str!("../../../../docs/plugin-toolbar-layout.md");
 static WORKSPACE_GATE: std::sync::Mutex<()> = std::sync::Mutex::new(());
-const WORKFLOW_SKILLS: &[(&str, &str)] = &[
+const WORKFLOW_SKILLS: &[(&str, &[(&str, &str)])] = &[
     (
         "mewu-image-annotation",
-        include_str!("../../../../skills/mewu-image-annotation/SKILL.md"),
+        &[(
+            "SKILL.md",
+            include_str!("../../../../skills/mewu-image-annotation/SKILL.md"),
+        )],
     ),
     (
         "mewu-video-annotation",
-        include_str!("../../../../skills/mewu-video-annotation/SKILL.md"),
+        &[(
+            "SKILL.md",
+            include_str!("../../../../skills/mewu-video-annotation/SKILL.md"),
+        )],
     ),
     (
         "mewu-task-verification",
-        include_str!("../../../../skills/mewu-task-verification/SKILL.md"),
+        &[(
+            "SKILL.md",
+            include_str!("../../../../skills/mewu-task-verification/SKILL.md"),
+        )],
+    ),
+    (
+        "mewu-interactive-objects",
+        &[
+            (
+                "SKILL.md",
+                include_str!("../../../../skills/mewu-interactive-objects/SKILL.md"),
+            ),
+            (
+                "references/runtime.md",
+                include_str!("../../../../docs/document-runtime.md"),
+            ),
+        ],
     ),
 ];
 
 fn seed_workflows(ws: &Workspace) -> Result<(), String> {
-    for (name, content) in WORKFLOW_SKILLS {
-        ws.seed_skill(name, &[("SKILL.md", content)])?;
+    for (name, files) in WORKFLOW_SKILLS {
+        ws.seed_skill(name, files)?;
     }
     Ok(())
 }
@@ -334,6 +356,55 @@ mod tests {
             name: name.into(),
             arguments: value.to_string(),
         }
+    }
+    #[test]
+    fn bundled_interactive_skill_is_discoverable_with_its_reference_and_preserves_user_edits() {
+        let root = tempfile::tempdir().unwrap();
+        let ws = Workspace::open(root.path()).unwrap();
+        seed_workflows(&ws).unwrap();
+        let listing = perform(&ws, &call("skills_list", json!({}))).unwrap();
+        assert!(listing["skills"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|s| s["name"] == "mewu-interactive-objects"));
+        let body = perform(
+            &ws,
+            &call("skill_read", json!({"name":"mewu-interactive-objects"})),
+        )
+        .unwrap();
+        assert!(body["availableFiles"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p == "references/runtime.md"));
+        let reference = perform(
+            &ws,
+            &call(
+                "skill_read",
+                json!({"name":"mewu-interactive-objects","file":"references/runtime.md"}),
+            ),
+        )
+        .unwrap();
+        assert_eq!(
+            reference["content"],
+            include_str!("../../../../docs/document-runtime.md")
+        );
+        let path = root.path().join("skills/mewu-interactive-objects/SKILL.md");
+        let custom = format!(
+            "{}\n用户自定义补充。\n",
+            std::fs::read_to_string(&path).unwrap()
+        );
+        std::fs::write(&path, &custom).unwrap();
+        drop(ws);
+        let reopened = Workspace::open(root.path()).unwrap();
+        seed_workflows(&reopened).unwrap();
+        let readback = perform(
+            &reopened,
+            &call("skill_read", json!({"name":"mewu-interactive-objects"})),
+        )
+        .unwrap();
+        assert_eq!(readback["content"], custom);
     }
     #[test]
     fn failed_behavior_checks_block_prepare_and_corrected_source_must_be_retested() {

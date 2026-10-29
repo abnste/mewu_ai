@@ -188,6 +188,8 @@ once. It still checks scene identity and revocation before making any mutation.
 
 Mewu 空间内的交互内容继续使用 HTML/SVG 代码块和原生对象存储。用户说“桌面上”默认指悬浮呈现；仅明确文件操作才使用本机文件系统工具。
 
+交互对象使用[独立文档运行契约](document-runtime.md)。同一份契约注入模型请求，并作为内置 `mewu-interactive-objects` 技能的 `references/runtime.md` 安装到数据目录。它说明真实的沙箱、DOM 初始化、临时状态与验证边界，不放宽内容安全策略；初始化技能与更新引用仍沿普通技能安装路径，保留用户编辑。
+
 ## 可选思考强度
 
 连接高级设置中的思考强度是可选参数，留空沿用服务商默认值；不按模型名称注入固定参数。显式选择后，Chat Completions 使用 `reasoning_effort`，Responses 使用 `reasoning.effort`，Anthropic Messages 使用 `output_config.effort`。五档选择为 low、medium、high、xhigh、max，实际支持范围由所选服务决定。该参数随连接修订保存，不能替换消息、工具或认证信息；插件模型预设和原生 Agent 复用同一协议转换。
