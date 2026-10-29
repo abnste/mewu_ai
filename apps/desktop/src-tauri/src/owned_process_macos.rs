@@ -39,6 +39,7 @@ pub(super) fn prepare(command: &mut Command) -> io::Result<()> {
     let gated_helper = first.is_some_and(|arg| {
         [
             "--code-worker",
+            "--ocr-worker",
             "--formula-layout-worker",
             "--speech-worker",
             "--recording-worker",
@@ -471,6 +472,20 @@ mod tests {
         );
         assert!(ManagedProcess::spawn(&mut command, TestPermit(released.clone())).is_err());
         assert!(released.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn installed_ocr_helper_is_admitted_without_admitting_similar_or_external_commands() {
+        let executable = std::env::current_exe().unwrap();
+        let mut ocr = Command::new(&executable);
+        ocr.arg("--ocr-worker");
+        prepare(&mut ocr).unwrap();
+        let mut similar = Command::new(&executable);
+        similar.arg("--ocr-worker-extra");
+        assert_eq!(prepare(&mut similar).unwrap_err().kind(), io::ErrorKind::Unsupported);
+        let mut external = Command::new("/bin/sh");
+        external.arg("--ocr-worker");
+        assert_eq!(prepare(&mut external).unwrap_err().kind(), io::ErrorKind::Unsupported);
     }
 
     #[test]
