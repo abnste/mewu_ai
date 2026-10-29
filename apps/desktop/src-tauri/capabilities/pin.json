@@ -14,6 +14,7 @@
     "allow-show-pin-menu",
     "allow-export-pin",
     "allow-start-pin-drag",
-    "allow-reference-pin-object"
+    "allow-reference-pin-object",
+    "allow-get-extension-appearance"
   ]
 }

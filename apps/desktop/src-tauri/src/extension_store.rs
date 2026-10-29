@@ -118,6 +118,9 @@ impl Record {
     }
 }
 fn ensure_platform(manifest: &ExtensionManifest, source: &Source, platform: &str) -> Result<(), String> {
+    if manifest.requires_capabilities.iter().any(|capability|!mewu_extension::HOST_CAPABILITIES.contains(&capability.as_str())) {
+        return Err("Mewu 尚不支持插件所需的宿主能力，请更新软件".into());
+    }
     let catalog = match source { Source::Github { entry } => Some(entry.platforms.as_slice()), _ => None };
     if !mewu_extension::plugin_platform_supported(manifest.platforms.as_deref(), platform)
         || !mewu_extension::plugin_platform_supported(catalog, platform) {

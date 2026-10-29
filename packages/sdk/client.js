@@ -3,6 +3,8 @@
 (() => {
   let port, closed = false, closing = false, serial = 0, pinned = false;
   const beforeClose=new Set();
+  let appearance;
+  const appearanceListeners=new Set();
   const previews=new Set();
   async function previewRaster(source){
     const image=new Image();image.src=source;await image.decode();
@@ -65,6 +67,14 @@
           if(activeDrag?.id===data.id)releaseDrag();
           data.ok ? entry.resolve(data.value) : entry.reject(new Error(data.error || 'Plugin request failed'));
         } else if (data.type === 'event') {
+          if(data.name==='appearance'){
+            const value=data.value,tokens={};
+            if(value?.version===1&&['light','dark'].includes(value.colorScheme)&&value.tokens&&typeof value.tokens==='object'){
+              for(const [key,color] of Object.entries(value.tokens).slice(0,128))if(/^--[a-z][a-z-]{0,63}$/.test(key)&&typeof color==='string'&&/^#[0-9a-f]{6}$/i.test(color))tokens[key]=color;
+              appearance=Object.freeze({version:1,colorScheme:value.colorScheme,tokens:Object.freeze(tokens)});
+              for(const callback of appearanceListeners){try{callback(appearance);}catch{/* isolate listeners */}}
+            }
+          }
           if(data.name==='window-state')pinned=data.value?.pinned===true;
           if(data.name==='close-request'){void requestClose();return;}
           for (const callback of listeners.get(data.name) || []) {
@@ -80,11 +90,21 @@
     closed = true; releaseDrag(); port?.close();
     for(const cancel of previews)cancel();previews.clear();
     for (const entry of pending.values()) {clearTimeout(entry.timer);entry.reject(new Error('Surface closed'));}
-    pending.clear(); listeners.clear(); beforeClose.clear();
+    pending.clear(); listeners.clear(); beforeClose.clear(); appearanceListeners.clear();
   }
   addEventListener('pagehide', dispose, {once:true});
   Object.defineProperty(globalThis, 'mewu', {value: Object.freeze({
     ready,
+    appearance:Object.freeze({
+      current:()=>appearance,
+      onChange(callback){if(closed||typeof callback!=='function')throw Error('Invalid appearance callback');appearanceListeners.add(callback);if(appearance)callback(appearance);return()=>appearanceListeners.delete(callback);},
+      follow(){
+        const root=document.documentElement,before=new Map();let owned=[],oldScheme=root.style.colorScheme,oldColor=root.style.color;
+        const restore=()=>{for(const key of owned){const value=before.get(key);value?root.style.setProperty(key,value):root.style.removeProperty(key);}owned=[];};
+        const stop=this.onChange(value=>{restore();owned=Object.keys(value.tokens);for(const [key,color]of Object.entries(value.tokens)){if(!before.has(key))before.set(key,root.style.getPropertyValue(key));root.style.setProperty(key,color);}root.style.colorScheme=value.colorScheme;root.style.color='var(--text)';});
+        return()=>{stop();restore();root.style.colorScheme=oldScheme;root.style.color=oldColor;};
+      }
+    }),
     async previewDocument(input) {
       if(closed||typeof input?.html!=='string'||input.html.length>2*1024*1024)throw Error('Invalid preview document');
       const width=Math.min(1600,Math.max(80,Number(input.width)||640)),height=Math.min(1200,Math.max(40,Number(input.height)||480));

@@ -67,7 +67,7 @@ function frames() {
 const event = (type, x, y, extra = {}) => ({ type, button: 0, buttons: type === 'pointerup' ? 0 : 1, pointerId: 7, clientX: 10 + x * 2, clientY: 20 + y * .5, pressure: .5, shiftKey: false, preventDefault() {}, stopPropagation() {}, ...extra });
 const tick = () => new Promise(resolve => setImmediate(resolve));
 let fixtureSerial=0;
-function setup(values = [], history, reactive = false) {
+function setup(values = [], history, reactive = false, draftIdentity) {
   const window = new Events(), svg = new Events(), commands = [], errors = [];
   let layoutReads = 0;
   svg.box = { left: 10, top: 20, width: 2000, height: 500 };
@@ -78,7 +78,7 @@ function setup(values = [], history, reactive = false) {
     port: { frame:()=>({x:0,y:0,width:1000,height:1000}),sourceSize:()=>({width:1000,height:1000}),sourceIdentity:()=>props.source,draftKey:()=>JSON.stringify(['pointer-scene-'+fixtureSerial,'region',props.source]),revision:()=>props.revision,drawings:()=>values,canSelect:()=>true,allows:()=>props.allowed!==false,propertyCommand:draft=>({type:draft.base?'update_drawing':'add_drawing',drawing:plain(draft.drawing),expectedRevision:draft.expectedRevision}) },
     onCommand:async command=>{commands.push(plain(command));if(command.type==='add_drawing'){const drawing=plain(command.drawing);if(history){history.undo.push({index:values.length,before:null,after:drawing});history.redo=[];}values.push(drawing);props.revision++;}else if(history&&['undo_drawing','redo_drawing'].includes(command.type)){const next=historyModule.projectDrawingHistory({source:props.source,revision:props.revision,drawings:values,...history},command.type==='redo_drawing');values.splice(0,values.length,...plain(next.drawings));history.undo=plain(next.undo);history.redo=plain(next.redo);props.revision++;}},onClose:()=>{},onError:error=>errors.push(error) };
   if(history){props.port.history=()=>history;props.port.historyAvailable=redo=>(redo?history.redo:history.undo).length>0;props.port.historyStep=redo=>(redo?history.redo:history.undo).at(-1);}
-  const fixtureId=++fixtureSerial;props.port.draftKey=()=>JSON.stringify(['pointer-scene-'+fixtureId,'region',props.source]);
+  const fixtureId=++fixtureSerial;props.port.draftKey=()=>draftIdentity??JSON.stringify(['pointer-scene-'+fixtureId,'region',props.source]);
   if(!reactive) return { ...module.namespace.fixture(props,svg,window), props, svg, window, commands, errors, reads:()=>layoutReads };
   let result;solid.createRoot(dispose=>{const [revision,setRevision]=solid.createSignal(props.revision);Object.defineProperty(props,'revision',{get:revision,set:setRevision});result={...module.namespace.fixture(props,svg,window),disposeReactive:dispose,props,svg,window,commands,errors,reads:()=>layoutReads};});return result;
 }
@@ -95,6 +95,18 @@ function mouseSurface(f) {
     up(x,y,extra={}) { const e=mouse('mouseup',x,y,extra);document.emit(e);f.window.emit(e); },
   };
 }
+
+test('independent ports accept opaque draft identities through draw, Undo and immediate drawing',async()=>{
+ const clock=frames(),values=[],f=setup(values,{undo:[],redo:[]},true,`opaque-draft-${++fixtureSerial}:not-json`),input=mouseSurface(f);
+ try{
+  input.down(10,20);f.window.emit(input.pointer('pointerup',30,40));await f.drainHistory();
+  assert.equal(values.length,1);void f.history(false);
+  input.down(40,50);f.window.emit(input.pointer('pointerup',60,70));await f.drainHistory();
+  assert.deepEqual(f.commands.map(value=>value.type),['add_drawing','undo_drawing','add_drawing']);
+  assert.deepEqual(values.map(value=>value.points),[[{x:40,y:50},{x:60,y:70}]]);
+  assert.deepEqual(f.errors,[]);
+ }finally{input.detach();f.dispose();f.disposeReactive();clock.restore();}
+});
 
 test('physical toolbar mouseup with stale buttons permits missing PointerDown immediately after real Solid Undo',async()=>{
  const clock=frames(),values=[],f=setup(values,{undo:[],redo:[]},true),input=mouseSurface(f);

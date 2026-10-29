@@ -233,6 +233,7 @@ fn trusted(window: &tauri::WebviewWindow) -> Result<(), String> {
 }
 fn publish(app: &AppHandle) {
     if let Ok(records) = app.state::<ExtensionHost>().store().and_then(|s| s.list()) {
+        let _ = app.emit("extension-appearance", crate::extension_appearance::projection(&records));
         let _ = app.emit("extension-state", records);
     }
     crate::extension_surface_window::reconcile(app);
@@ -2082,10 +2083,10 @@ fn bridge(
         .map_err(|message| HostCallFailure::from_error(method, &message, diagnostic))
 }
 fn tool_initialization_read(method: &str) -> bool {
-    matches!(method, "runtime.describe" | "ui.toolbars.describe" | "configuration.get" | "storage.get" | "storage.list" | "services.list" | "objects.library.describe")
+    matches!(method, "runtime.describe" | "ui.appearance.describe" | "ui.toolbars.describe" | "configuration.get" | "storage.get" | "storage.list" | "services.list" | "objects.library.describe")
 }
 pub(crate) fn runtime_capabilities()->Value {
-    json!({"hostApi":mewu_extension::HOST_API,"capabilities":["ui.settings","ui.toolbar-layout","ui.toolbar-catalog","configuration.shared","secrets.network","secrets.settings","memory.archive","process.jsonlines","process.frame-bindings","process.installation-search"]})
+    json!({"hostApi":mewu_extension::HOST_API,"capabilities":mewu_extension::HOST_CAPABILITIES})
 }
 
 fn bridge_impl(
@@ -2099,6 +2100,7 @@ fn bridge_impl(
     if context.tool_preparing && !tool_initialization_read(method) {
         return Err("工具初始化阶段不能执行宿主操作".into());
     }
+    if method=="ui.appearance.describe" { return Ok(mewu_extension::appearance_contract()); }
     if method=="runtime.describe" {
         return Ok(runtime_capabilities());
     }

@@ -82,7 +82,10 @@ export function createContext(send) {
     models: Object.freeze({ register: register('model') }),
     channels: Object.freeze({ register: register('channel') }),
     renderers: Object.freeze({ register: register('renderer') }),
-    ui: Object.freeze({ register: register('ui'), render: value => host.call('ui.render', value), transient: value => host.call('ui.transient', value), toolbars: Object.freeze({ describe: surface => host.call('ui.toolbars.describe', { surface }) }) }),
+    ui: Object.freeze({ register: register('ui'), render: value => host.call('ui.render', value), transient: value => host.call('ui.transient', value), toolbars: Object.freeze({ describe: surface => host.call('ui.toolbars.describe', { surface }) }), themes: Object.freeze({
+      describe: () => host.call('ui.appearance.describe'),
+      register: descriptor => register('ui')({ id:descriptor.id, title:descriptor.title, metadata:{surface:'application-theme',theme:descriptor.theme} }, () => ({version:1}))
+    }) }),
     objects: Object.freeze({
       describe: () => host.call('objects.library.describe'),
       get: () => host.call('objects.library.get'),

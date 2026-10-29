@@ -13,6 +13,7 @@
     "allow-restore-frozen-scene",
     "allow-resize-frozen-widget",
     "allow-close-scene-window",
-    "allow-hide-frozen-widget"
+    "allow-hide-frozen-widget",
+    "allow-get-extension-appearance"
   ]
 }

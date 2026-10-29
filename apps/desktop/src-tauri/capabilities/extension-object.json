@@ -12,6 +12,7 @@
     "core:event:allow-listen",
     "core:event:allow-unlisten",
     "allow-extension-surface-viewport-point",
-    "allow-publish-extension-surface-targets"
+    "allow-publish-extension-surface-targets",
+    "allow-get-extension-appearance"
   ]
 }

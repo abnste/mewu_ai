@@ -20,6 +20,16 @@ function harness(dispatch) {
   return { scope, calls };
 }
 
+test('appearance is a declarative contribution using the published contract',async()=>{
+ const {scope,calls}=harness(async(method)=>{assert.equal(method,'ui.appearance.describe');return {version:1};});
+ assert.equal((await scope.ctx.ui.themes.describe()).version,1);
+ const stop=scope.ctx.ui.themes.register({id:'independent.palette',title:'Palette',theme:{version:1,base:'dark',colors:{accent:'#AACCEE'}}});
+ const registered=JSON.parse(scope.finishRegistration());
+ assert.equal(registered[0].kind,'ui');assert.equal(registered[0].metadata.surface,'application-theme');assert.equal(registered[0].metadata.theme.colors.accent,'#AACCEE');
+ assert.equal(calls.length,1);stop();assert.equal(JSON.parse(scope.finishRegistration()).length,0);
+ await scope.deactivate();assert.throws(()=>scope.ctx.ui.themes.register({id:'late',title:'Late',theme:{version:1,base:'dark'}}),/closed/);
+});
+
 test('toolbar catalog reads use the public scoped API and retain explicit separator metadata',async()=>{
  const result={version:1,surface:'example.surface',items:[{id:'new-rule',title:'分隔线',kind:'separator'},{id:'save',title:'保存',kind:'button'}],current:null,currentScope:'definition'};
  const {scope,calls}=harness(async(method,params)=>{assert.equal(method,'ui.toolbars.describe');assert.deepEqual(params,{surface:'example.surface'});return result;});

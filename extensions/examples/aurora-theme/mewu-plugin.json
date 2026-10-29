@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 2,
+  "id": "example.aurora-theme",
+  "version": "0.1.0",
+  "name": "Aurora",
+  "description": "深色青绿主题",
+  "publisher": "Mewu",
+  "license": "MPL-2.0",
+  "hostApi": 2,
+  "runtime": "javascript",
+  "entry": "index.mjs",
+  "permissions": [
+    "ui.theme"
+  ],
+  "tags": [
+    "themes"
+  ],
+  "dependencies": {},
+  "icon": {
+    "paths": [
+      "M12 3a9 9 0 1 0 9 9c0-1-1-2-2-2h-2a2 2 0 0 1-2-2V6c0-2-1-3-3-3Z",
+      "M7 11h.01M8 16h.01M12 18h.01"
+    ],
+    "color": "#80D6C5"
+  },
+  "requiresCapabilities": [
+    "ui.appearance.v1"
+  ]
+}

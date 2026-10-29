@@ -24,10 +24,10 @@
 .capture-override-image{display:block;width:100%;height:100%;object-fit:contain;background:#41464f;pointer-events:none;-webkit-user-drag:none}
 .capture-region.capture-active{--capture-border:#348bf1}
 .capture-region.capture-located::after{animation:capture-locate .45s ease-in-out 2}
-@keyframes capture-locate{50%{border-color:#e6f3ff;box-shadow:0 0 0 3px #348bf199,0 0 22px #348bf155}}
+@keyframes capture-locate{50%{border-color:var(--line);box-shadow:0 0 0 3px color-mix(in srgb,var(--shadow-color) 60%,transparent),0 0 22px color-mix(in srgb,var(--shadow-color) 33.33%,transparent)}}
 @media(prefers-reduced-motion:reduce){.capture-region.capture-located::after{animation:none;box-shadow:0 0 0 3px #348bf199}}
 .capture-selection{pointer-events:none;z-index:6}
-.capture-snap-preview{position:absolute;z-index:4;box-sizing:border-box;border:1.5px solid #559aef;pointer-events:none}
+.capture-snap-preview{position:absolute;z-index:4;box-sizing:border-box;border:1.5px solid var(--accent-line);pointer-events:none}
 .capture-region-number{position:absolute;right:7px;top:7px;min-width:20px;height:20px;display:grid;place-items:center;padding:0 4px;background:#348bf1;color:#fff;border:1px solid #ffffffa6;border-radius:5px;font-size:10px;line-height:1;pointer-events:none}
 .capture-region.capture-active .capture-region-number{top:auto;bottom:7px}
 .capture-region:hover>.capture-region-number{visibility:hidden}
@@ -38,16 +38,16 @@
 .capture-edge-w,.capture-edge-e{top:0;width:10px;height:100%;transform:translateX(-50%);cursor:ew-resize}
 .capture-edge-w{left:0}.capture-edge-e{left:100%}
 .capture-handle{position:absolute;display:block;width:14px;height:14px;z-index:3;touch-action:none;transform:translate(-50%,-50%)}
-.capture-handle::before{content:"";position:absolute;inset:4px;box-sizing:border-box;border:1px solid #fff;background:#438ff0}
+.capture-handle::before{content:"";position:absolute;inset:4px;box-sizing:border-box;border:1px solid var(--line);background:var(--accent)}
 .capture-handle-nw{left:0;top:0;cursor:nwse-resize}.capture-handle-ne{left:100%;top:0;cursor:nesw-resize}
 .capture-handle-sw{left:0;top:100%;cursor:nesw-resize}.capture-handle-se{left:100%;top:100%;cursor:nwse-resize}
 .capture-surface.capture-add-mode,.capture-add-mode .capture-region,.capture-add-mode .capture-handle,.capture-add-mode .capture-edge{cursor:crosshair}
 .capture-dragging .capture-region{cursor:grabbing}
-.capture-toolbar{position:absolute;z-index:25;display:flex;align-items:center;gap:var(--toolbar-button-gap);width:max-content;max-width:calc(100vw - 12px);padding:5px;border:0;border-radius:12px;background:var(--surface,#fafcff);box-shadow:0 4px 18px #3347623d,0 1px 4px #3347621a;cursor:default;user-select:none;touch-action:none;flex-wrap:wrap}
-.capture-toolbar>button{color:#52637a;border:1px solid transparent;background:transparent}
-.capture-toolbar>button:hover{background:#eaf1fa;border-color:#d7e1ef}.capture-toolbar>button:active{background:#dfeafa}
-.capture-toolbar>button:focus-visible{outline:2px solid #6e83f2;outline-offset:1px}
-.capture-toolbar>button.capture-reference{font:600 20px/1 "Segoe UI",sans-serif;color:#5869e9}
-.capture-toolbar>button.capture-referenced{background:#e9edff;border-color:#d8e0ff}
-.capture-toolbar>button.capture-delete{color:#ce6371}
-.capture-toolbar .capture-separator{flex:0 0 1px;width:1px;height:22px;background:#dce4ef;margin:0 3px}
+.capture-toolbar{position:absolute;z-index:25;display:flex;align-items:center;gap:var(--toolbar-button-gap);width:max-content;max-width:calc(100vw - 12px);padding:5px;border:0;border-radius:12px;background:var(--surface,#fafcff);box-shadow:0 4px 18px color-mix(in srgb,var(--shadow-color) 23.92%,transparent),0 1px 4px color-mix(in srgb,var(--shadow-color) 10.2%,transparent);cursor:default;user-select:none;touch-action:none;flex-wrap:wrap}
+.capture-toolbar>button{color:var(--secondary);border:1px solid transparent;background:transparent}
+.capture-toolbar>button:hover{background:var(--toolbar-background);border-color:var(--line)}.capture-toolbar>button:active{background:var(--toolbar-background)}
+.capture-toolbar>button:focus-visible{outline:2px solid var(--accent-line);outline-offset:1px}
+.capture-toolbar>button.capture-reference{font:600 20px/1 "Segoe UI",sans-serif;color:var(--accent)}
+.capture-toolbar>button.capture-referenced{background:var(--toolbar-background);border-color:var(--line)}
+.capture-toolbar>button.capture-delete{color:var(--danger)}
+.capture-toolbar .capture-separator{flex:0 0 1px;width:1px;height:22px;background:var(--toolbar-background);margin:0 3px}

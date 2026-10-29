@@ -182,6 +182,7 @@ pub struct ExtensionRuntime {
     host_count: Arc<AtomicU64>,
     limits: RuntimeLimits,
     registrations: Vec<ServiceRegistration>,
+    permissions: Vec<String>,
 }
 
 impl ExtensionRuntime {
@@ -192,6 +193,9 @@ impl ExtensionRuntime {
         output: Output,
     ) -> Result<Self, ExtensionError> {
         validate_package(&package.manifest, &package.modules)?;
+        if package.manifest.requires_capabilities.iter().any(|value|!HOST_CAPABILITIES.contains(&value.as_str())) {
+            return Err(ExtensionError::InvalidPackage("required host capability unavailable"));
+        }
         if !(4 * 1024 * 1024..=256 * 1024 * 1024).contains(&limits.memory_bytes)
             || !(64 * 1024..=2 * 1024 * 1024).contains(&limits.stack_bytes)
             || limits.initialization_timeout.is_zero()
@@ -309,6 +313,7 @@ impl ExtensionRuntime {
             host_count,
             limits,
             registrations: Vec::new(),
+            permissions: package.manifest.permissions.clone(),
         })
     }
 
@@ -381,6 +386,9 @@ impl ExtensionRuntime {
         for registration in &registrations {
             crate::service_platforms(registration)?;
             crate::validate_trigger(registration)?;
+            if crate::appearance_theme(registration)?.is_some() && !self.permissions.iter().any(|v|v==crate::APPEARANCE_PERMISSION) {
+                return Err(ExtensionError::InvalidPackage("appearance contribution requires ui.theme"));
+            }
             if !identifier(&registration.id)
                 || !ids.insert(&registration.id)
                 || !bounded_text(&registration.title, 128, false)

@@ -48,6 +48,7 @@ export default function DrawingEditor(props:Props) {
     frame:()=>({x:props.region.x,y:props.region.y,width:props.region.width,height:props.region.height}),
     sourceSize:()=>({width:props.backgroundWidth,height:props.backgroundHeight}),
     sourceIdentity:()=>props.background ? richSourceIdentity(richContext()!) : props.backgroundId,
+    draftScope:()=>props.sceneId,
     draftKey:()=>drawingDraftKey({...target(),sourceId:props.region.imageOverride?.id??props.backgroundId,x:props.region.x,y:props.region.y,width:props.region.width,height:props.region.height}),
     revision:()=>props.region.drawingRevision??0,drawings:()=>props.region.drawings??[],
     canSelect:drawing=>drawing.rich?.kind!=='repair'&&(!props.documentOnly||drawing.kind==='rich'),canStyle:drawing=>!props.documentOnly&&drawing.kind!=='rich',

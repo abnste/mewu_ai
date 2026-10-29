@@ -28,6 +28,10 @@ Use the host's `toolbar-layout` service contract in `describe`, with the existin
 
 Read `toolbarCatalog` and `ctx.ui.toolbars.describe(surface)` rather than inventing a catalog. Use host captions (including localization), explicit `kind`, and include separator rows in editing and persistence. Module globals do not survive calls: observing `input.items` during layout cannot populate a later settings invocation. Test cold settings before any screenshot, separator moves, missing contextual controls, new unknown controls and saved order restoration. If a required generic API is missing, report that gap instead of replacing it with guessed names or a private host patch.
 
+## Host appearance
+
+Use `ctx.ui.themes.describe()` and the current `references/appearance.json`, then `ctx.ui.themes.register({id,title,theme})` with `ui.theme` permission. The host applies semantic tokens and optional bounded base64 PNG backgrounds; do not inject CSS/DOM or modify captured pixels. The user selects a theme in General settings. Installation does not auto-select it. Disabled/removed themes stop applying immediately; the saved selection can recover when the same service is enabled again. Use `mewu.appearance.follow()` in your own isolated UI to consume current host colors; retain the returned cleanup. Do not assume arbitrary registration kinds have a user-facing host integration: check `runtime.describe()` capabilities.
+
 ## Portable skills
 
 Mewu reads normal Agent Skills folders from its data directory's `skills/`. Copy an existing portable skill folder there, keeping SKILL.md and references/scripts/assets together. A skill's `allowed-tools` field is advisory; it cannot grant permissions or create tools. If a skill requires a tool not available in this run, report the missing capability. Reading a script does not execute it. Never search personal history to discover APIs: use the current SDK contract and skill references.

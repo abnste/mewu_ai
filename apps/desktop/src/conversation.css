@@ -1,16 +1,16 @@
 /* SPDX-License-Identifier: MPL-2.0 */
 .app .mewu-composer .message {
   box-sizing:border-box;min-width:0;width:fit-content;max-width:calc(100% - 44px);
-  margin:3px 0 9px;padding:8px 12px;border:1px solid #dce4f1;border-radius:15px;
-  background:#f6f8fd;overflow-wrap:anywhere;
+  margin:3px 0 9px;padding:8px 12px;border:1px solid var(--line);border-radius:15px;
+  background:var(--composer-background);overflow-wrap:anywhere;
 }
-.app .mewu-composer .message.user { margin-left:auto;margin-right:0;background:#e8edff;border-color:#c4cffa;color:#415572; }
+.app .mewu-composer .message.user { margin-left:auto;margin-right:0;background:var(--composer-background);border-color:var(--accent-line);color:var(--secondary); }
 .app .mewu-composer .message.assistant { margin-left:0;margin-right:auto; }
 .app .mewu-composer .message:last-child { margin-bottom:0; }
 .app .mewu-composer .message-markdown { min-width:0; }
-.app .mewu-composer .message-markdown hr { border:0;border-top:1px solid #dce4f1;margin:14px 0; }
+.app .mewu-composer .message-markdown hr { border:0;border-top:1px solid var(--line);margin:14px 0; }
 .composer-tool { display:flex;flex-direction:column;align-items:center;flex:none;min-width:0;gap:3px; }
-.composer-button-label { display:block;color:#72829a;font-size:10px;line-height:15px;text-align:center;white-space:nowrap;user-select:none;pointer-events:none; }
+.composer-button-label { display:block;color:var(--secondary);font-size:10px;line-height:15px;text-align:center;white-space:nowrap;user-select:none;pointer-events:none; }
 .composer-tool.voice-tool .composer-button-label { align-self:flex-start;width:calc(100% - 13px); }
 .composer-row.with-button-labels .composer-field { margin-bottom:18px; }
 .space-thinking-glow {

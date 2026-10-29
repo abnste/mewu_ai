@@ -131,7 +131,7 @@ const controlCapability = JSON.parse(await readFile(new URL('../src-tauri/capabi
 const spaceCapability = JSON.parse(await readFile(new URL('../src-tauri/capabilities/space.json', import.meta.url), 'utf8'));
 assert.ok(config.app.security.capabilities.includes(controlCapability.identifier), 'explicit capability list must reference identifier, not filename');
 assert.deepEqual(controlCapability.windows, ['scroll-controls']);
-assert.deepEqual([...controlCapability.permissions].sort(), ['allow-control-scroll-capture', 'allow-get-scroll-status', 'allow-scroll-surface-ready', 'core:event:allow-listen', 'core:event:allow-unlisten'].sort());
+assert.deepEqual([...controlCapability.permissions].sort(), ['allow-control-scroll-capture', 'allow-get-scroll-status', 'allow-scroll-surface-ready', 'core:event:allow-listen', 'core:event:allow-unlisten','allow-get-extension-appearance'].sort());
 assert.equal(spaceCapability.permissions.includes('allow-scroll-surface-ready'),false);
 for (const permission of ['allow-start-scroll-capture', 'allow-get-scroll-status', 'allow-control-scroll-capture']) assert.ok(spaceCapability.permissions.includes(permission));
 checks.push('Native config explicitly enables the actual scroll-controls capability identifier; control window is least-privileged and space owns start/get/control');

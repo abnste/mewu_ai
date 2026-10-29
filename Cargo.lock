@@ -3536,7 +3536,7 @@ dependencies = [
 
 [[package]]
 name = "mewu-desktop"
-version = "1.1.2"
+version = "1.2.0"
 dependencies = [
  "arboard",
  "async-io",
@@ -3644,6 +3644,7 @@ dependencies = [
 name = "mewu-extension"
 version = "1.0.0"
 dependencies = [
+ "base64 0.22.1",
  "rquickjs",
  "schemars 1.2.2",
  "semver",

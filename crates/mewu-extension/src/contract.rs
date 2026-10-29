@@ -4,6 +4,9 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 
 pub const HOST_API: u32 = 2;
+/// A positive list of integrations actually consumed by this host generation.
+/// A registration kind by itself is not an advertised product capability.
+pub const HOST_CAPABILITIES: &[&str] = &["ui.settings","ui.toolbar-layout","ui.toolbar-catalog","ui.appearance.v1","configuration.shared","secrets.network","secrets.settings","memory.archive","process.jsonlines","process.frame-bindings","process.installation-search"];
 pub const MAX_MANIFEST_BYTES: usize = 64 * 1024;
 pub const MAX_MODULE_BYTES: usize = 1024 * 1024;
 pub const MAX_PACKAGE_BYTES: usize = 8 * 1024 * 1024;
@@ -44,6 +47,8 @@ pub struct ExtensionManifest {
     pub publisher: Option<String>,
     pub license: String,
     pub host_api: u32,
+    #[serde(default, skip_serializing_if="Vec::is_empty")]
+    pub requires_capabilities: Vec<String>,
     pub runtime: String,
     pub entry: String,
     /// Omitted for portable JavaScript packages. This restricts the package,

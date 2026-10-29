@@ -23,6 +23,7 @@ export default function ImageDrawingEditor(props: Props) {
     frame: () => ({ x: 0, y: 0, width: region().width, height: region().height }),
     sourceSize: () => ({ width: region().width, height: region().height }),
     sourceIdentity: () => richSourceIdentity(context()),
+    draftScope: () => props.sceneId,
     draftKey: () => JSON.stringify(['image-item', props.sceneId, props.item.id, props.item.asset.id]),
     revision: () => region().drawingRevision ?? 0, drawings: () => region().drawings ?? [],
     canSelect: drawing => drawing.rich?.kind !== 'repair', canStyle: drawing => drawing.kind !== 'rich',

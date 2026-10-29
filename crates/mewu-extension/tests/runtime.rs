@@ -13,6 +13,13 @@ use std::{
 fn manifest() -> ExtensionManifest {
     serde_json::from_value(json!({"schemaVersion":2,"hostApi":2,"runtime":"javascript","id":"external.demo","version":"1.0.0","name":"Demo","description":"","license":"MPL-2.0","entry":"index.js"})).unwrap()
 }
+#[test]
+fn missing_host_requirements_stop_before_any_plugin_code_or_host_call(){
+    let mut required=manifest();required.requires_capabilities=vec!["future.integration".into()];
+    let result=ExtensionRuntime::new(ExtensionPackage{manifest:required,modules:BTreeMap::from([("index.js".into(),"throw Error('must not execute');".into())])},RuntimeLimits::default(),Arc::new(AtomicBool::new(false)),Arc::new(|_|panic!("no host call before compatibility check")));
+    assert!(matches!(result,Err(ExtensionError::InvalidPackage("required host capability unavailable"))));
+    assert!(serde_json::to_value(manifest()).unwrap().get("requiresCapabilities").is_none(),"old manifest bytes must not gain an empty compatibility field");
+}
 fn runtime(
     source: &str,
     modules: &[(&str, &str)],

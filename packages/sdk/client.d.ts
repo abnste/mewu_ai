@@ -1,5 +1,11 @@
 // SPDX-License-Identifier: MPL-2.0
 export interface ClientSurface {
+  readonly appearance: {
+    current():Readonly<{version:1;colorScheme:'light'|'dark';tokens:Readonly<Record<string,string>>}>|undefined;
+    onChange(callback:(theme:Readonly<{version:1;colorScheme:'light'|'dark';tokens:Readonly<Record<string,string>>}>)=>void):()=>void;
+    /** Opt in to host colors in this plugin's own document. Returns cleanup. */
+    follow():()=>void;
+  };
   readonly ready: Promise<void>;
   /** Render an authorized object document in a disposable, opaque offline frame. */
   previewDocument(input:{html:string;width?:number;height?:number}):Promise<string|null>;

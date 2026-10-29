@@ -37,12 +37,6 @@ export default function ExtensionSettings(props: { choice: ExtensionServiceChoic
     bridge = surfaceBridge(channel.port1, input => extensions.invokeExtension({ ...owner, input, surface: { action: 'call', id: mounted.surfaceId } }), () => undefined, undefined, props.onEscape, setError);
     bridgeSurfaceId = mounted.surfaceId;
     target.postMessage({ type: 'mewu-connect' }, '*', [channel.port2]);
-    const style = getComputedStyle(iframe!.parentElement!);
-    bridge.event('appearance', { colorScheme: style.colorScheme === 'dark' ? 'dark' : 'light', colors: {
-      text: style.getPropertyValue('--text').trim(), muted: style.getPropertyValue('--secondary').trim(),
-      field: style.getPropertyValue('--surface-subtle').trim(), line: style.getPropertyValue('--line').trim(),
-      accent: style.getPropertyValue('--accent').trim(),
-    } });
   };
   onCleanup(() => bridge?.close());
   return <section class="extension-settings-page">

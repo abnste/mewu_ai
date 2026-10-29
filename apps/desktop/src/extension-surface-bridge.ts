@@ -6,6 +6,18 @@ export interface DropTarget {id:string;x:number;y:number;width:number;height:num
 export function surfaceBridge(port:MessagePort, call:(input:unknown)=>Promise<unknown>,
   targets:(value:DropTarget[])=>void, drag?:(input:unknown)=>SurfacePointerGesture, escape?:()=>void, closeError?:(message:string)=>void, escapeKey?:()=>void) {
   let closed=false, pending=0;
+  // Presentation data only. No identity or invocation authority crosses.
+  const appearance=()=>{
+    if(closed||typeof document==='undefined'||!document.documentElement||typeof getComputedStyle!=='function')return;
+    const style=getComputedStyle(document.documentElement),tokens:Record<string,string>={};
+    for(let i=0;i<style.length&&Object.keys(tokens).length<128;i++){
+      const key=style[i],value=style.getPropertyValue(key).trim();
+      if(/^--[a-z][a-z-]{0,63}$/.test(key)&&/^#[0-9a-f]{3}(?:[0-9a-f]{3})?$/i.test(value))tokens[key]=value.length===4?'#'+[...value.slice(1)].map(c=>c+c).join(''):value;
+    }
+    port.postMessage({type:'event',name:'appearance',value:{version:1,colorScheme:style.colorScheme==='dark'?'dark':'light',tokens,colors:{text:style.getPropertyValue('--text').trim(),muted:style.getPropertyValue('--secondary').trim(),field:style.getPropertyValue('--surface-subtle').trim(),line:style.getPropertyValue('--line').trim(),accent:style.getPropertyValue('--accent').trim()}}});
+  };
+  const appearanceObserver=typeof MutationObserver==='function'&&typeof document!=='undefined'?new MutationObserver(appearance):undefined;
+  appearanceObserver?.observe(document.documentElement,{attributes:true,attributeFilter:['style','data-mewu-theme','data-mewu-theme-base']});
   const active=new Set<number>();
   const gestures=new Map<number,SurfacePointerGesture>();
   port.onmessage=async ({data})=>{
@@ -50,8 +62,9 @@ export function surfaceBridge(port:MessagePort, call:(input:unknown)=>Promise<un
     finally{gestures.delete(data.id);active.delete(data.id);pending--;}
   };
   port.start();
+  appearance();
   return {
     event(name:string,value:unknown){if(!closed)port.postMessage({type:'event',name,value});},
-    close(){closed=true;port.onmessage=null;for(const gesture of gestures.values())gesture.cancel();gestures.clear();port.close();active.clear();targets([]);}
+    close(){closed=true;appearanceObserver?.disconnect();port.onmessage=null;for(const gesture of gestures.values())gesture.cancel();gestures.clear();port.close();active.clear();targets([]);}
   };
 }

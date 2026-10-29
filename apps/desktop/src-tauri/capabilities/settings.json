@@ -80,6 +80,7 @@
     "allow-check-hook",
     "allow-run-hook",
     "allow-cancel-hook",
-    "allow-edit-hook-shortcut"
+    "allow-edit-hook-shortcut",
+    "allow-get-extension-appearance"
   ]
 }

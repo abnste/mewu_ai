@@ -20,7 +20,7 @@ select option {color:var(--text,#26364d);background:var(--surface,#fafcff)}
     border:1px solid var(--line,#d7e1ef);
     border-radius:10px;
     padding:4px;
-    box-shadow:0 8px 28px #24384e24,0 2px 6px #24384e12;
+    box-shadow:0 8px 28px color-mix(in srgb,var(--shadow-color) 14.12%,transparent),0 2px 6px color-mix(in srgb,var(--shadow-color) 7.06%,transparent);
     max-height:min(320px,calc(100vh - 24px));
     overflow:auto;
     overscroll-behavior:contain;

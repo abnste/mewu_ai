@@ -1,6 +1,6 @@
 {
   "name": "@mewu/sdk",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "description": "Mewu API executable extension SDK",
   "type": "module",
   "license": "MPL-2.0",
@@ -21,7 +21,8 @@
     "README.md",
     "LICENSE",
     "client.js",
-    "client.d.ts"
+    "client.d.ts",
+    "appearance.json"
   ],
   "engines": {
     "node": ">=20.6"

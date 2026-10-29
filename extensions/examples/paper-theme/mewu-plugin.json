@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 2,
+  "id": "example.paper-theme",
+  "version": "0.1.0",
+  "name": "Paper",
+  "description": "暖色纸张主题与背景",
+  "publisher": "Mewu",
+  "license": "MPL-2.0",
+  "hostApi": 2,
+  "runtime": "javascript",
+  "entry": "index.mjs",
+  "permissions": [
+    "ui.theme"
+  ],
+  "tags": [
+    "themes"
+  ],
+  "dependencies": {},
+  "icon": {
+    "paths": [
+      "M5 3h10l4 4v14H5V3Z",
+      "M14 3v5h5M8 12h8M8 16h6"
+    ],
+    "color": "#947231"
+  },
+  "requiresCapabilities": [
+    "ui.appearance.v1"
+  ]
+}

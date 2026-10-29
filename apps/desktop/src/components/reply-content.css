@@ -3,7 +3,7 @@
 .reply-reasoning-toggle { display:flex;align-items:center;gap:6px;max-width:100%;font-size:12px;line-height:20px;padding:2px 0;color:inherit; }
 .reply-reasoning-toggle>svg:last-child { transition:transform .14s; }
 .reply-reasoning-toggle>svg.expanded { transform:rotate(180deg); }
-.reply-reasoning-body { max-height:140px;overflow:auto;overflow-wrap:anywhere;user-select:text;border-left:2px solid #c5d0e4;padding:6px 10px;margin-top:5px;font-size:12px;line-height:19px;scrollbar-width:thin;color:#75829a; }
+.reply-reasoning-body { max-height:140px;overflow:auto;overflow-wrap:anywhere;user-select:text;border-left:2px solid var(--line);padding:6px 10px;margin-top:5px;font-size:12px;line-height:19px;scrollbar-width:thin;color:var(--secondary); }
 .message-markdown a { color:var(--accent);text-decoration:underline;text-underline-offset:2px;overflow-wrap:anywhere; }
 .message-markdown h5,.message-markdown h6 { margin:10px 0 5px;font-size:1em;line-height:1.5; }
 .reply-image-slot { display:block;margin:7px 0;max-width:400px; }
@@ -13,7 +13,7 @@
 .reply-code-block.collapsed .reply-code-heading { padding-bottom:0; }
 .reply-code-toggle,.reply-code-restore {font:inherit;color:inherit;background:transparent;border:0;padding:2px 4px;cursor:pointer;white-space:nowrap}
 .reply-code-restore:hover,.reply-code-toggle:hover{color:var(--accent)}
-.reply-document-drag{position:fixed;z-index:2147483647;pointer-events:none;padding:10px 16px;border-radius:12px;background:var(--panel,#f7f8fc);color:var(--text,#223);box-shadow:0 4px 20px #0003;font:12px system-ui}
+.reply-document-drag{position:fixed;z-index:2147483647;pointer-events:none;padding:10px 16px;border-radius:12px;background:var(--panel,#f7f8fc);color:var(--text,#223);box-shadow:0 4px 20px color-mix(in srgb,var(--shadow-color) 20%,transparent);font:12px system-ui}
 .reply-code-heading { display:flex;align-items:center;justify-content:space-between;gap:12px;user-select:none;font-size:10px;line-height:18px;color:var(--secondary);padding-bottom:6px; }
 .reply-code-copy { margin-left:auto;font:inherit;color:inherit;padding:0 2px;border-radius:3px; }
 .reply-code-copy:hover { color:var(--accent); }

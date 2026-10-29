@@ -48,6 +48,7 @@ pub fn probe(project:&Project,cases:&[ProbeCase],mut configuration:BTreeMap<Stri
                     let key=||params["key"].as_str().filter(|k|!k.is_empty()&&k.len()<=512&&!k.chars().any(char::is_control)).ok_or("Invalid configuration key");
                     let result:Result<Value,&str>=match method.as_str(){
                         "runtime.describe"=>Ok(capabilities.clone()),
+                        "ui.appearance.describe"=>Ok(mewu_extension::appearance_contract()),
                         "ui.toolbars.describe" if has("ui.render")=>catalog["surfaces"].as_array().and_then(|surfaces|surfaces.iter().find(|s|s["id"]==params["surface"]))
                             .map(|s|json!({"version":1,"surface":s["id"],"items":s["items"],"current":null,"currentScope":"isolated test: no rendered UI"})).ok_or("Unknown toolbar"),
                         "configuration.get" if has("configuration.read")=>key().map(|k|configuration.get(k).cloned().unwrap_or(Value::Null)),
@@ -175,5 +176,10 @@ mod tests {
         let report=probe(&p,&cases(json!([{"serviceId":"hang","input":{},"assertions":[{"path":"","equals":true}]}])),BTreeMap::new(),json!({}),json!({})).unwrap();
         assert_eq!(report["passed"],false);assert!(report["cases"][0]["error"].is_string());
         assert!(started.elapsed()<Duration::from_secs(10));
+    }
+    #[test]fn authoring_probe_reads_the_exact_host_appearance_contract(){
+        let p=project("export default ctx=>ctx.services.register({id:'contract',title:'Contract'},()=>ctx.ui.themes.describe());");
+        let report=probe(&p,&cases(json!([{ "serviceId":"contract","input":{},"assertions":[{"path":"/version","equals":1},{"path":"/permission","equals":"ui.theme"},{"path":"/colors/accent/css/0","equals":"--accent"}]}])),BTreeMap::new(),json!({}),json!({})).unwrap();
+        assert_eq!(report["passed"],true);
     }
 }

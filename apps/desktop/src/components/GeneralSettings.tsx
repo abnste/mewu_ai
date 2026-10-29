@@ -8,6 +8,7 @@ import { settingsApi } from '../settings-bridge';
 import type { SettingsClient } from '../settings-client';
 import type { SettingsInfo } from '../settings-contracts';
 import { Row, Toggle } from './SettingControls';
+import AppearanceSetting from './AppearanceSetting';
 
 export default function GeneralSettings(props: { active: boolean; agentEnabled?: boolean; preferences: Preferences; onPreferences: (value: Preferences) => void; platform?: SettingsInfo['platform']; api?: SettingsClient }) {
   const api = props.api ?? settingsApi;
@@ -38,6 +39,7 @@ export default function GeneralSettings(props: { active: boolean; agentEnabled?:
   const startup = () => view().draft?.value.launchAtStartup ?? view().state?.startupRegistered ?? false;
   return <div class="general-settings">
     <header class="settings-page-heading"><h2>{t('通用')}</h2></header>
+    <AppearanceSetting/>
     <Row title={t('界面语言')}><select aria-label={t('界面语言')} value={props.preferences.uiLanguage ?? 'system'} onChange={event => props.onPreferences({ ...props.preferences, uiLanguage: event.currentTarget.value as UiLanguage })}><option value="system">{t('跟随系统')}</option><option value="zh-CN">{t('简体中文')}</option><option value="en-US">English</option></select></Row>
     <Row title={t('文字大小')}><select aria-label={t('文字大小')} value={props.preferences.textSize} onChange={event => props.onPreferences({ ...props.preferences, textSize: event.currentTarget.value as Preferences['textSize'] })}><option value="small">{t('小')}</option><option value="default">{t('默认')}</option><option value="large">{t('大')}</option></select></Row>
     <Row title={t('显示按钮功能文字')}><Toggle label={t('显示按钮功能文字')} checked={props.preferences.showButtonLabels !== false} onChange={value => props.onPreferences({ ...props.preferences, showButtonLabels: value })} /></Row>

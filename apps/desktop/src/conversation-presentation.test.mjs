@@ -117,7 +117,7 @@ test('conversation CSS preserves original two-sided margins, bounded non-hit-tes
   const sheet = postcss.parse(await readFile(new URL('./conversation.css', import.meta.url), 'utf8'));
   const declarations = selector => { const found = []; sheet.walkRules(rule => { if (rule.selector === selector) { const values = {}; rule.walkDecls(decl => values[decl.prop] = decl.value); found.push(values); } }); return found; };
   const bubble = declarations('.app .mewu-composer .message')[0];
-  assert.equal(bubble['max-width'], 'calc(100% - 44px)'); assert.equal(bubble.border, '1px solid #dce4f1'); assert.equal(bubble.width, 'fit-content');
+  assert.equal(bubble['max-width'], 'calc(100% - 44px)'); assert.equal(bubble.border, '1px solid var(--line)'); assert.equal(bubble.width, 'fit-content');
   assert.equal(declarations('.app .mewu-composer .message.user')[0]['margin-left'], 'auto');
   assert.equal(declarations('.app .mewu-composer .message.assistant')[0]['margin-right'], 'auto');
   const glow = declarations('.space-thinking-glow')[0];

@@ -89,7 +89,7 @@ async function bridge(native = true, options = {}) {
   const capability = await json('../src-tauri/capabilities/pin.json'), space = await json('../src-tauri/capabilities/space.json'), config = await json('../src-tauri/tauri.conf.json');
   assert.ok(config.app.security.capabilities.includes(capability.identifier));
   assert.deepEqual(capability.windows, ['pin-*']);
-  assert.deepEqual([...capability.permissions].sort(), ['core:event:allow-listen', 'core:event:allow-unlisten', 'allow-get-pin-state', 'allow-pin-ready', 'allow-control-pin', 'allow-show-pin-menu', 'allow-export-pin', 'allow-start-pin-drag', 'allow-reference-pin-object'].sort());
+  assert.deepEqual([...capability.permissions].sort(), ['core:event:allow-listen', 'core:event:allow-unlisten', 'allow-get-pin-state', 'allow-pin-ready', 'allow-control-pin', 'allow-show-pin-menu', 'allow-export-pin', 'allow-start-pin-drag', 'allow-reference-pin-object','allow-get-extension-appearance'].sort());
   for (const permission of ['allow-run-plugin-pin', 'allow-cancel-plugin-pin']) assert.ok(space.permissions.includes(permission));
   assert.ok(!capability.permissions.includes('allow-get-snapshot'));
   checks.push('Actual Tauri configuration activates the pin-only owner capability; creation is granted only to the space surface');

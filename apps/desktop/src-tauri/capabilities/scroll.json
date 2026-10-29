@@ -9,6 +9,7 @@
     "core:event:allow-unlisten",
     "allow-get-scroll-status",
     "allow-control-scroll-capture",
-    "allow-scroll-surface-ready"
+    "allow-scroll-surface-ready",
+    "allow-get-extension-appearance"
   ]
 }

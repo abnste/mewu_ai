@@ -3,6 +3,9 @@ export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
 export type JsonObject = { [key: string]: JsonValue };
 export type Dispose = () => void;
+export type AppearanceColor = 'foreground'|'secondary'|'muted'|'surface'|'surfaceSubtle'|'surfaceHover'|'inputBackground'|'border'|'accent'|'accentHover'|'accentSoft'|'accentBorder'|'onAccent'|'danger'|'dangerSoft'|'warning'|'shadow'|'success'|'workspaceBackground'|'workspaceForeground'|'overlayBackground'|'overlayForeground'|'toolbarBackground'|'composerBackground'|'settingsBackground'|'settingsContent'|'userMessage'|'codeBackground';
+export interface AppearanceTheme { version:1; base:'light'|'dark'; colors?:Partial<Record<AppearanceColor,string>>; backgrounds?:Partial<Record<'workspace'|'settings'|'composer',{png:string;fit:'cover'|'contain'|'repeat'}>> }
+export interface AppearanceContract { version:1;surface:'application-theme';permission:'ui.theme';backgroundSurfaces:string[];colors:Record<AppearanceColor,{css:string[];light:string;dark:string}> }
 export type ServiceKind = 'command' | 'tool' | 'agent' | 'memory' | 'model' | 'channel' | 'renderer' | 'ui' | 'trigger' | 'service';
 export type PluginPlatform = 'any' | 'windows-x86_64' | 'darwin-aarch64' | 'linux-x86_64';
 /** SVG paths in a 24×24 viewBox. No markup, URLs, scripts or external assets. */
@@ -17,6 +20,8 @@ export interface ExtensionManifest {
   publisher?: string;
   license: string;
   hostApi: 2;
+  /** Positive runtime.describe capability names; checked before activation. */
+  requiresCapabilities?: string[];
   runtime: 'javascript';
   entry: string;
   /** Omit for one portable JavaScript package shared by all three platforms. */
@@ -164,6 +169,10 @@ export interface ExtensionContext {
   readonly channels: ServiceRegistry;
   readonly renderers: ServiceRegistry;
   readonly ui: ServiceRegistry & {
+    /** Host-wide semantic tokens and inert PNG backgrounds. Requires ui.theme.
+     * Only the user selects the active contribution; uninstall/disable revokes
+     * its styles in every host window. Never inject CSS/DOM or style user media. */
+    themes: { describe():Promise<AppearanceContract>; register(descriptor:{id:string;title:string;theme:AppearanceTheme}):Dispose };
     /** Read-only authoritative IDs, localized captions and separator kinds.
      * current is the last rendered context, null before first use; items is
      * the complete definition including context-dependent controls. */

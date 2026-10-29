@@ -69,6 +69,9 @@ mod extension_host;
 mod extension_input;
 mod extension_market;
 mod extension_model_lease;
+mod extension_appearance;
+#[cfg(test)]
+mod extension_appearance_tests;
 mod extension_objects_host;
 mod extension_overlay_policy;
 mod extension_process;
@@ -3522,6 +3525,7 @@ fn main() {
                 plugin_host::get_official_plugins,
                 plugin_host::control_official_plugin,
                 extension_host::get_extensions,
+                extension_appearance::get_extension_appearance,
                 toolbar_catalog::publish_toolbar_catalog,
                 extension_host::get_extension_bindings,
                 extension_host::set_extension_binding,

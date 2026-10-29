@@ -78,7 +78,7 @@
 .settings-cleanup-review .settings-actions { justify-content:flex-end; }
 .settings-cleanup-result { margin:12px 0 0;color:var(--secondary);font-size:11px;line-height:1.7; }
 .settings-data-path code { font-size:11px;overflow-wrap:anywhere;white-space:pre-wrap;user-select:text;color:var(--secondary); }
-.settings-document-backdrop { position:fixed;inset:0;z-index:160;display:flex;align-items:center;justify-content:center;padding:26px;background:#25344b40; }
+.settings-document-backdrop { position:fixed;inset:0;z-index:160;display:flex;align-items:center;justify-content:center;padding:26px;background:color-mix(in srgb,var(--surface-subtle) 25.1%,transparent); }
 .settings-document { display:flex;flex-direction:column;gap:16px;width:min(680px,100%);max-height:100%;padding:18px;border-radius:14px;border:1px solid var(--line);background:var(--surface,#fff);box-shadow:var(--shadow);min-width:0; }
 .settings-document header { display:flex;align-items:center;justify-content:space-between;gap:16px; }
 .settings-document header h2 { margin:0;font-size:15px; }

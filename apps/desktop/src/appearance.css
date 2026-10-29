@@ -1,0 +1,8 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+/* Colors live in semantic tokens consumed by each original component. */
+:root[data-mewu-theme]{color:var(--text);accent-color:var(--accent)}
+:root[data-mewu-theme-base="dark"]{color-scheme:dark}
+:root[data-mewu-theme-base="light"]{color-scheme:light}
+:root[data-mewu-theme] .app{background-image:var(--theme-workspace-image);background-size:var(--theme-workspace-fit);background-repeat:var(--theme-workspace-repeat);background-position:center}
+:root[data-mewu-theme] .settings-content{background-image:var(--theme-settings-image);background-size:var(--theme-settings-fit);background-repeat:var(--theme-settings-repeat);background-position:center}
+:root[data-mewu-theme] .app .mewu-composer{background-image:var(--theme-composer-image);background-size:var(--theme-composer-fit);background-repeat:var(--theme-composer-repeat);background-position:center}

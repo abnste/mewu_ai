@@ -7,7 +7,7 @@
 html[data-button-labels="hide"] .capture-toolbar>button[data-caption]::after,html[data-button-labels="hide"] .drawing-toolbar button[data-caption]::after,html[data-button-labels="hide"] .video-preview-actions button[data-caption]::after{display:none}
 
 /* Shared bubble surface for capture, drawing and video object actions. */
-.capture-toolbar,.drawing-tools-row,.drawing-properties-row,.video-preview-actions,.video-trim-bar{padding:5px;border:0;border-radius:12px;background:var(--surface,#fafcff);box-shadow:0 4px 18px #3347623d,0 1px 4px #3347621a}
+.capture-toolbar,.drawing-tools-row,.drawing-properties-row,.video-preview-actions,.video-trim-bar{padding:5px;border:0;border-radius:12px;background:var(--surface,#fafcff);box-shadow:0 4px 18px color-mix(in srgb,var(--shadow-color) 23.92%,transparent),0 1px 4px color-mix(in srgb,var(--shadow-color) 10.2%,transparent)}
 .video-preview-actions button{border:1px solid transparent;background:transparent;color:var(--text,#52637a)}
 .video-preview-actions button:hover,.video-preview-actions button.capture-referenced{background:var(--accent-soft,#eaf1fa);border-color:var(--line,#d7e1ef);color:var(--accent,#348bf1)}
-.video-preview-actions button.capture-reference{font:600 20px/1 "Segoe UI",sans-serif;color:#5869e9}
+.video-preview-actions button.capture-reference{font:600 20px/1 "Segoe UI",sans-serif;color:var(--accent)}

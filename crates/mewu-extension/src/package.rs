@@ -99,7 +99,7 @@ pub fn validate_package(
     if !module_path(&manifest.entry) || !modules.contains_key(&manifest.entry) {
         return Err(invalid("entry module is missing or unsafe"));
     }
-    for list in [&manifest.permissions, &manifest.tags] {
+    for list in [&manifest.permissions, &manifest.tags, &manifest.requires_capabilities] {
         if list.len() > 64
             || list.iter().any(|p| !identifier(p))
             || list.iter().collect::<BTreeSet<_>>().len() != list.len()

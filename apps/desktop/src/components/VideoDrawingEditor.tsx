@@ -111,6 +111,7 @@ export default function VideoDrawingEditor(props:VideoDrawingEditorProps) {
     props.onSnapshot(receipt);
   }
   const port:DrawingEditorPort={
+    draftScope:()=>props.sceneId,
     frame:()=>({x:0,y:0,width:props.info.width,height:props.info.height}),sourceSize:()=>({width:props.info.width,height:props.info.height}),
     sourceIdentity:()=>JSON.stringify([scope(),props.grant??null,props.visibleAnnotationIds??null]),draftKey:sourceKey,revision:()=>doc()?.revision??0,drawings:()=>values().filter(value=>!props.visibleAnnotationIds||props.visibleAnnotationIds.includes(value.id)),
     stored:()=>(doc()?.objects??[]).filter(value=>!props.visibleAnnotationIds||props.visibleAnnotationIds.includes(value.id)).map(value=>({id:value.id,kind:value.primitive.kind,bounds:bounds(value.id)})),ensureEditable,

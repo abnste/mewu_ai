@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {readFile} from 'node:fs/promises';
 const source=await readFile(new URL('../client.js',import.meta.url),'utf8');
-function client(){
+function client(document){
   const listeners=new Map(),sent=[],parent={},port={start(){},close(){},postMessage(value){sent.push(value);}};
   class PointerEvent {constructor(trusted=true){this.isTrusted=trusted;this.type='pointerdown';this.button=0;this.buttons=1;this.pointerId=1;}preventDefault(){}}
   class Element {
@@ -13,12 +13,24 @@ function client(){
     hasPointerCapture(id){return this.captures.has(id);}
     releasePointerCapture(id){this.captures.delete(id);}
   }
-  const context=vm.createContext({parent,PointerEvent,Element,HTMLSelectElement:class{},setTimeout,clearTimeout,
+  const context=vm.createContext({parent,document,PointerEvent,Element,HTMLSelectElement:class{},setTimeout,clearTimeout,
     addEventListener(name,fn){listeners.set(name,fn);},removeEventListener(name){listeners.delete(name);}});
   vm.runInContext(source,context);
   listeners.get('message')({source:parent,data:{type:'mewu-connect'},ports:[port]});
   return {api:context.mewu,listeners,sent,port,PointerEvent,Element};
 }
+
+test('appearance is immutable, filters executable styles, updates live and restores owned values',async()=>{
+  const colors=new Map([['--text','#123456']]),style={color:'old',colorScheme:'light',getPropertyValue:key=>colors.get(key)||'',setProperty:(key,value)=>colors.set(key,value),removeProperty:key=>colors.delete(key)};
+  const c=client({documentElement:{style}});await c.api.ready;
+  const send=tokens=>c.port.onmessage({data:{type:'event',name:'appearance',value:{version:1,colorScheme:'dark',tokens}}});
+  send({'--text':'#EEEEEE','--surface':'#202020','--attack':'url(https://x)'});
+  assert.equal(Object.isFrozen(c.api.appearance.current()),true);assert.equal(c.api.appearance.current().tokens['--attack'],undefined);
+  const stop=c.api.appearance.follow();assert.equal(colors.get('--text'),'#EEEEEE');assert.equal(style.colorScheme,'dark');
+  send({'--text':'#AABBCC'});assert.equal(colors.get('--text'),'#AABBCC');assert.equal(colors.has('--surface'),false);
+  stop();assert.equal(colors.get('--text'),'#123456');assert.equal(style.color,'old');assert.equal(style.colorScheme,'light');
+  c.api.dispose();assert.throws(()=>c.api.appearance.onChange(()=>{}),/Invalid/);
+});
 
 test('pinned object Escape returns to the space without saving or closing the object; explicit close still saves',async()=>{
   const c=client();await c.api.ready;let saves=0;

@@ -127,6 +127,7 @@
     "allow-request-close-extension-surface-window",
     "allow-forward-extension-surface-event",
     "allow-confirm-control-renderer",
-    "allow-publish-toolbar-catalog"
+    "allow-publish-toolbar-catalog",
+    "allow-get-extension-appearance"
   ]
 }

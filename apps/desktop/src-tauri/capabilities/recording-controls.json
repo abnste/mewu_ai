@@ -11,6 +11,7 @@
     "core:window:allow-start-dragging",
     "allow-get-recording-status",
     "allow-control-recording",
-    "allow-recording-surface-ready"
+    "allow-recording-surface-ready",
+    "allow-get-extension-appearance"
   ]
 }

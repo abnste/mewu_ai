@@ -5,6 +5,7 @@ export interface ExtensionManifest {
   schemaVersion: 2; hostApi: 2; runtime: 'javascript'; id: string; version: string;
   name: string; description: string; publisher?: string; license: string; entry: string;
   permissions: string[]; tags: string[]; dependencies: Record<string, string>;
+  requiresCapabilities?: string[];
   platforms?: PluginPlatform[];
   icon?: ExtensionIcon;
 }

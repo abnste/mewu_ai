@@ -21,7 +21,10 @@ export interface DrawingEditorPort {
   frame:()=>EditorBox;
   sourceSize:()=>{width:number;height:number};
   sourceIdentity:()=>string;
+  /** Opaque identity; the editor must not interpret its representation. */
   draftKey:()=>string;
+  /** Optional owner for grouped draft cleanup; defaults to the opaque draft key. */
+  draftScope?:()=>string;
   revision:()=>number;
   drawings:()=>Drawing[];
   stored?:()=>{id:string;kind:'rect'|'text'|'vector';bounds:EditorBox}[];

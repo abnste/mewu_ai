@@ -4,6 +4,9 @@ import type { Component } from 'solid-js';
 import { storedLanguage, uiLanguage, updateLanguage } from './i18n';
 import { readPreferences } from './interface-preferences';
 import './controls.css';
+import './design-tokens.css';
+import './appearance.css';
+import { initializeAppearance } from './appearance-host';
 
 // Retain application context menus without exposing the WebView browser menu.
 document.addEventListener('contextmenu', event => event.preventDefault());
@@ -32,4 +35,5 @@ const paths: Record<string, string> = {
   'extension-object':'./ExtensionObjectView.tsx',
 };
 const { default: Surface } = await loaders[paths[surface ?? ''] ?? './App.tsx']();
+await initializeAppearance();
 render(() => <Surface />, root);

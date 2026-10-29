@@ -5,7 +5,7 @@
 .image-object .artifact-content img{display:block;width:100%;height:100%;max-width:none;max-height:none;object-fit:contain;pointer-events:none}
 .image-annotations-layer{position:absolute;pointer-events:none;overflow:hidden}
 .image-annotations-layer>.drawing-layer{inset:0;width:100%;height:100%;pointer-events:none}
-.image-object-tools{position:absolute;top:8px;right:8px;z-index:4;display:flex;align-items:center;gap:2px;padding:4px;border:0;border-radius:10px;background:var(--surface,#fafcff);box-shadow:0 3px 14px #15233735;opacity:0;visibility:hidden;pointer-events:none;transition:opacity .12s}
+.image-object-tools{position:absolute;top:8px;right:8px;z-index:4;display:flex;align-items:center;gap:2px;padding:4px;border:0;border-radius:10px;background:var(--surface,#fafcff);box-shadow:0 3px 14px color-mix(in srgb,var(--shadow-color) 20.78%,transparent);opacity:0;visibility:hidden;pointer-events:none;transition:opacity .12s}
 .image-object:hover .image-object-tools,.image-object:focus-within .image-object-tools,.image-object.blackboard-object-hovered .image-object-tools,.image-object-tools.image-export-open{opacity:1;visibility:visible;pointer-events:auto}
 .image-object-tools .selected{color:var(--accent,#348bf1);background:var(--accent-soft,#eaf1fa)}
 
@@ -14,5 +14,5 @@
 .artifact-card.document-object iframe{position:absolute;left:0;top:0;display:block;flex:none;max-width:none;max-height:none;border:0;background:transparent}
 .document-object-tools{position:absolute;z-index:4;display:flex;opacity:0;pointer-events:none;mix-blend-mode:difference}
 .document-object:is(:hover,:focus-within,.moving,.blackboard-object-hovered) .document-object-tools{opacity:1;pointer-events:auto}
-.document-object-tools button{display:grid;place-items:center;width:28px;height:28px;padding:0;border:0;background:transparent;color:#fff;box-shadow:none;border-radius:0}
+.document-object-tools button{display:grid;place-items:center;width:28px;height:28px;padding:0;border:0;background:transparent;color:var(--overlay-foreground);box-shadow:none;border-radius:0}
 .document-object-tools button:disabled{opacity:1}

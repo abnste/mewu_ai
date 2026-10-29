@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: MPL-2.0 */
-.extension-task-popover{position:absolute;z-index:3;top:calc(100% + 8px);left:0;width:min(310px,calc(100vw - 24px));padding:12px;border-radius:12px;background:var(--surface,#fafcff);color:var(--text);box-shadow:0 4px 18px #3347623d,0 1px 4px #3347621a;cursor:default;user-select:text;touch-action:auto}
+.extension-task-popover{position:absolute;z-index:3;top:calc(100% + 8px);left:0;width:min(310px,calc(100vw - 24px));padding:12px;border-radius:12px;background:var(--surface,#fafcff);color:var(--text);box-shadow:0 4px 18px color-mix(in srgb,var(--shadow-color) 23.92%,transparent),0 1px 4px color-mix(in srgb,var(--shadow-color) 10.2%,transparent);cursor:default;user-select:text;touch-action:auto}
 .extension-task-popover textarea{width:100%;resize:vertical;box-sizing:border-box;user-select:text;touch-action:auto}
 .extension-task-popover .field-label{display:grid;gap:8px;font-size:12px}
 .extension-task-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:10px}

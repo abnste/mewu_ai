@@ -5,7 +5,7 @@ html[data-surface="scroll-live"],html[data-surface="scroll-live"] body,html[data
 .scroll-live-mask{position:fixed;inset:0;pointer-events:none;user-select:none}
 .scroll-live-mask>svg{position:absolute;inset:0;width:100%;height:100%}
 .scroll-control-window{width:100%;height:100%;padding:10px;user-select:none}
-.scroll-controls{width:100%;height:56px;display:flex;align-items:center;gap:9px;padding:9px 12px;border:1px solid var(--line);border-radius:16px;background:#fcfdff;color:var(--text);box-shadow:0 3px 9px #101a2d2b,0 1px 3px #101a2d1a}
+.scroll-controls{width:100%;height:56px;display:flex;align-items:center;gap:9px;padding:9px 12px;border:1px solid var(--line);border-radius:16px;background:var(--surface);color:var(--text);box-shadow:0 3px 9px color-mix(in srgb,var(--shadow-color) 16.86%,transparent),0 1px 3px color-mix(in srgb,var(--shadow-color) 10.2%,transparent)}
 .scroll-measure{min-width:0;flex:1;display:flex;flex-direction:column;gap:3px}
 .scroll-measure output{font:13px Consolas,monospace;white-space:nowrap}
 .scroll-notice{font-size:11px;color:var(--danger);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -23,6 +23,6 @@ html[data-surface="scroll-live"],html[data-surface="scroll-live"] body,html[data
 .scroll-controls-slot{flex:none}
 .scroll-compound-window{position:fixed;inset:0;display:block;padding:0;overflow:hidden;pointer-events:none}
 .scroll-compound-window .scroll-controls-slot{position:absolute;padding:10px;pointer-events:auto}
-.scroll-compound-window .scroll-preview{position:absolute;display:block;overflow:hidden;border:1px solid var(--line);background:#fcfdffbf;padding:4px;pointer-events:none}
+.scroll-compound-window .scroll-preview{position:absolute;display:block;overflow:hidden;border:1px solid var(--line);background:color-mix(in srgb,var(--surface) 74.9%,transparent);padding:4px;pointer-events:none}
 .scroll-compound-window .scroll-preview img{width:100%;height:100%;object-fit:contain;object-position:center bottom}
 .scroll-live-outline{position:absolute;box-sizing:border-box;border:2px solid #3297f2;pointer-events:none}

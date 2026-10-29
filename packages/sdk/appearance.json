@@ -1,0 +1,212 @@
+{
+  "version": 1,
+  "surface": "application-theme",
+  "permission": "ui.theme",
+  "backgroundSurfaces": [
+    "workspace",
+    "settings",
+    "composer"
+  ],
+  "colors": {
+    "foreground": {
+      "css": [
+        "--text",
+        "--text-primary"
+      ],
+      "light": "#2D394C",
+      "dark": "#E8EDF5"
+    },
+    "secondary": {
+      "css": [
+        "--secondary",
+        "--text-secondary"
+      ],
+      "light": "#68768A",
+      "dark": "#B1BDD0"
+    },
+    "muted": {
+      "css": [
+        "--muted",
+        "--text-muted"
+      ],
+      "light": "#8995A6",
+      "dark": "#8E9AAF"
+    },
+    "surface": {
+      "css": [
+        "--surface"
+      ],
+      "light": "#FFFFFF",
+      "dark": "#202631"
+    },
+    "surfaceSubtle": {
+      "css": [
+        "--surface-subtle"
+      ],
+      "light": "#F5F7FB",
+      "dark": "#29313E"
+    },
+    "surfaceHover": {
+      "css": [
+        "--surface-hover"
+      ],
+      "light": "#EDF0F5",
+      "dark": "#354053"
+    },
+    "inputBackground": {
+      "css": [
+        "--input-background"
+      ],
+      "light": "#F8FAFE",
+      "dark": "#18202B"
+    },
+    "border": {
+      "css": [
+        "--line",
+        "--border"
+      ],
+      "light": "#DFE5ED",
+      "dark": "#46536A"
+    },
+    "accent": {
+      "css": [
+        "--accent"
+      ],
+      "light": "#6172E9",
+      "dark": "#A8B3FF"
+    },
+    "accentHover": {
+      "css": [
+        "--accent-hover"
+      ],
+      "light": "#5061D7",
+      "dark": "#C0C8FF"
+    },
+    "accentSoft": {
+      "css": [
+        "--accent-soft"
+      ],
+      "light": "#EDF1FF",
+      "dark": "#343D61"
+    },
+    "accentBorder": {
+      "css": [
+        "--accent-line"
+      ],
+      "light": "#CBD5F1",
+      "dark": "#6878B2"
+    },
+    "onAccent": {
+      "css": [
+        "--on-accent"
+      ],
+      "light": "#FFFFFF",
+      "dark": "#141B31"
+    },
+    "danger": {
+      "css": [
+        "--danger"
+      ],
+      "light": "#BB666B",
+      "dark": "#FF9A9F"
+    },
+    "success": {
+      "css": [
+        "--success"
+      ],
+      "light": "#487F62",
+      "dark": "#94D8AD"
+    },
+    "workspaceBackground": {
+      "css": [
+        "--workspace-background"
+      ],
+      "light": "#33353A",
+      "dark": "#151A23"
+    },
+    "workspaceForeground": {
+      "css": [
+        "--workspace-foreground"
+      ],
+      "light": "#EFF2F8",
+      "dark": "#EFF2F8"
+    },
+    "toolbarBackground": {
+      "css": [
+        "--toolbar-background"
+      ],
+      "light": "#FAFCFF",
+      "dark": "#202631"
+    },
+    "composerBackground": {
+      "css": [
+        "--composer-background"
+      ],
+      "light": "#FCFDFF",
+      "dark": "#202631"
+    },
+    "settingsBackground": {
+      "css": [
+        "--settings-background"
+      ],
+      "light": "#F5F7FB",
+      "dark": "#18202B"
+    },
+    "settingsContent": {
+      "css": [
+        "--settings-content"
+      ],
+      "light": "#FFFFFF",
+      "dark": "#202631"
+    },
+    "userMessage": {
+      "css": [
+        "--user-message"
+      ],
+      "light": "#EDF1FF",
+      "dark": "#343D61"
+    },
+    "codeBackground": {
+      "css": [
+        "--code-background"
+      ],
+      "light": "#F1F4F9",
+      "dark": "#141B26"
+    },
+    "dangerSoft": {
+      "css": [
+        "--danger-soft"
+      ],
+      "light": "#F8E9E9",
+      "dark": "#4E2832"
+    },
+    "warning": {
+      "css": [
+        "--warning"
+      ],
+      "light": "#A27F30",
+      "dark": "#E8BC62"
+    },
+    "shadow": {
+      "css": [
+        "--shadow-color"
+      ],
+      "light": "#101A2D",
+      "dark": "#000000"
+    },
+    "overlayBackground": {
+      "css": [
+        "--overlay-background"
+      ],
+      "light": "#25282F",
+      "dark": "#202631"
+    },
+    "overlayForeground": {
+      "css": [
+        "--overlay-foreground"
+      ],
+      "light": "#EFF2F8",
+      "dark": "#EFF2F8"
+    }
+  }
+}

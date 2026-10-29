@@ -1292,5 +1292,8 @@
   "中": "Medium",
   "高": "High",
   "更高": "Very high",
-  "最高": "Maximum"
+  "最高": "Maximum",
+  "主题": "Theme",
+  "所选主题不可用": "Selected theme unavailable",
+  "Mewu 尚不支持插件所需的宿主能力，请更新软件": "This plugin requires a newer Mewu host capability. Please update Mewu."
 }

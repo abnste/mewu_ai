@@ -293,7 +293,7 @@ const normalize = value => JSON.parse(JSON.stringify(value));
   };
   const surface = properties('.settings-surface'), overlay = properties('.settings-surface-overlay');
   const backdrop = properties('.settings-surface .modal-backdrop'), dialog = properties('.settings-surface .settings-dialog');
-  assert.equal(surface.padding, '0'); assert.equal(surface.background, '#f5f7fb');
+  assert.equal(surface.padding, '0'); assert.equal(surface.background, 'var(--settings-background)');
   assert.equal(overlay.position, 'fixed'); assert.equal(overlay.inset, '0'); assert.equal(overlay['z-index'], '100');
   assert.equal(backdrop.padding, '0'); assert.equal(backdrop.background, 'transparent'); assert.equal(backdrop.height, '100%');
   assert.equal(dialog.width, '100%'); assert.equal(dialog.height, '100%'); assert.equal(dialog['max-height'], 'none'); assert.equal(dialog['box-shadow'], 'none');

@@ -232,8 +232,8 @@ export default function SharedDrawingEditor(props: Props) {
     if (first) { setSelected(first.draft.drawing.id); setTool('select'); }
   }
   function newStrokeQueue() {
-    const base = cacheKey(), source = strokeSource();
-    const key = (id: string) => strokeCacheKey(id, base, source);
+    const base = cacheKey(), source = strokeSource(), scope = props.port.draftScope?.() ?? base;
+    const key = (id: string) => strokeCacheKey(id, base, source, scope);
     const queue = new DrawingAddQueue({
       read: () => ({ source: strokeSource(), revision: props.port.revision(), drawings: drawings() }),
       active: () => !disposed && source === strokeSource(),
@@ -258,9 +258,8 @@ export default function SharedDrawingEditor(props: Props) {
     });
     return queue;
   }
-  function strokeCacheKey(id: string, base = cacheKey(), source = strokeSource()) {
-    const parts = JSON.parse(base), sceneId = parts[0] === 'image-item' ? parts[1] : parts[0];
-    return JSON.stringify([sceneId, 'queued-stroke', base, source, id]);
+  function strokeCacheKey(id: string, base = cacheKey(), source = strokeSource(), scope = props.port.draftScope?.() ?? base) {
+    return JSON.stringify([scope, 'queued-stroke', base, source, id]);
   }
   function releaseFailedStrokes() {
     if (historyLane?.failed()) { historyLane.stop(); historyLane = createHistoryLane(); setQueuedDrawings([]); setHistoryPreview(undefined); setHistoryPending(false); setStrokeVersion(value => value + 1); }
@@ -892,8 +891,8 @@ export default function SharedDrawingEditor(props: Props) {
     if (number && number.preference === numberPreference && validNextNumber(nextNumber()) === (redo ? number.previous : number.next)) setNextNumber(String(redo ? number.next : number.previous));
   }
   function createHistoryLane() {
-    const source = strokeSource(), base = cacheKey();
-    const key = (id: string) => strokeCacheKey(id, base, source);
+    const source = strokeSource(), base = cacheKey(), scope = props.port.draftScope?.() ?? base;
+    const key = (id: string) => strokeCacheKey(id, base, source, scope);
     const lane = new DrawingHistoryLane({
       read: readHistory, active: () => !disposed && source === strokeSource(),
       save: (redo, expectedRevision) => {

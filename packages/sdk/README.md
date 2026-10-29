@@ -2,15 +2,14 @@
 
 Mewu API 插件运行在独立 QuickJS worker 中。宿主提供 SDK 模块，安装插件不需要 Node.js；此 npm 包用于开发时的类型提示与契约测试。
 
-仓库中的 0.2.0 是开发版本，新增通用客户端与对象事务。下面的已发布 0.1.0
-下载仍可用于既有插件，但不包含这些新增类型；开发新接口应使用本仓库对应 SDK。
+SDK 0.3.0 新增全局外观贡献、隔离客户端主题快照和激活前宿主能力声明，对应 Mewu 1.2.0。原有 Agent、记忆、对象事务、设置和工具条接口保留。外观协议与宿主共享同一份机器契约，详见[插件外观](https://github.com/abnste/mewu_ai/blob/master/docs/plugin-appearance.md)。
 
 在独立 ESM 项目中安装已发布的开发 SDK：
 
 ```sh
 npm init -y
 npm pkg set type=module
-npm install --save-dev --ignore-scripts --no-audit --no-fund https://github.com/abnste/mewu-plugins/releases/download/v0.2.2/mewu-sdk-0.2.2.tgz
+npm install --save-dev --ignore-scripts --no-audit --no-fund https://github.com/abnste/mewu-plugins/releases/download/v0.3.0/mewu-sdk-0.3.0.tgz
 ```
 
 运行时 SDK 由 Mewu 提供；不要把 `node_modules` 放入插件包。打包、自己的 GitHub Release 和社区 PR 流程见 [作者指南](https://github.com/abnste/mewu_ai/blob/master/tools/extension-market/README.md#from-an-independent-project-to-a-market-pr)。
