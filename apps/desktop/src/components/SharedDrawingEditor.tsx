@@ -288,6 +288,9 @@ export default function SharedDrawingEditor(props: Props) {
   }
   async function choose(next: Tool) {
     if (disabled()) return; const origin = identity(); cancelGesture?.();
+    // Reopening the active text tool's parameters must keep its live selection.
+    // A real tool change still drains and commits through the existing lane.
+    if (next === 'text' && tool() === 'text' && textEditor()) return;
     setFinishing(true);
     try {
       await strokeQueue?.drain();
@@ -961,7 +964,7 @@ export default function SharedDrawingEditor(props: Props) {
     if (event.key === 'Shift') { refreshConstraint?.(event.shiftKey); return; }
     if (event.type === 'keyup') return;
     if (nativeSelectOwnsEscape(event)) return;
-    if(props.blackboard&&propertyMenu()&&event.key==='Escape'){event.preventDefault();event.stopImmediatePropagation();setPropertyMenu(false);svg.focus({preventScroll:true});return;}
+    if(props.blackboard&&propertyMenu()&&event.key==='Escape'){event.preventDefault();event.stopImmediatePropagation();setPropertyMenu(false);if(textEditor())textInput?.focus();else svg.focus({preventScroll:true});return;}
     if (event.key === 'Escape') {
       event.preventDefault(); event.stopImmediatePropagation();
       if (cancelGesture) cancelGesture(); else if (!disabled() && textEditor()) confirmText(); else if (!disabled() && edit()) cancelUserEdit(); else if (!historyDisabled()) { if (props.blackboard) void done(); else void closeEditor(); }
@@ -1048,7 +1051,7 @@ export default function SharedDrawingEditor(props: Props) {
     const render = () => <>{props.port.render(drawing, interactive(), isSelected(), isPreview())}</>;
     const storedBounds = createMemo(() => storedPreviewId() === item.id ? storedDraft()?.bounds : undefined);
     const stored = createMemo(() => storedIndex().has(item.id) ? props.port.renderStored?.(item.id, copyModifier() || ['select', 'eraser', 'text'].includes(tool()), isSelected(), storedBounds()) : undefined);
-    return <g visibility={edit()?.mode==='text'&&edit()?.drawing.id===item.id?'hidden':undefined}><Show when={storedIndex().has(item.id)} fallback={<Show when={value()}>{_ => render()}</Show>}>
+    return <g aria-hidden={edit()?.mode==='text'&&edit()?.drawing.id===item.id?true:undefined}><Show when={storedIndex().has(item.id)} fallback={<Show when={value()}>{_ => render()}</Show>}>
       {_ => <Show when={isPreview()} fallback={stored()}>{_ => render()}</Show>}
     </Show></g>;
   }
@@ -1074,7 +1077,7 @@ export default function SharedDrawingEditor(props: Props) {
       <div ref={toolsRow} class="drawing-tools-row">
       <button data-drawing-tool="select" data-caption={t("选择")} title={t("选择并移动")} aria-label={t("选择并移动绘制对象")} classList={{ selected: tool() === 'select' }} data-unavailable={controlsLocked()} disabled={disabled()} onClick={() => choose('select')}><MousePointer2 size={17} /></button>
       <button data-drawing-tool="eraser" aria-expanded={props.blackboard&&tool()==='eraser'&&propertyMenu()} data-caption={t("橡皮")} title={t("橡皮")} aria-label={t("橡皮")} classList={{ selected: tool() === 'eraser' }} data-unavailable={controlsLocked()} disabled={disabled()} onClick={() => choose('eraser')}><Eraser size={17} /></button>
-      <For each={props.tools}>{kind => { const Icon = icons[kind]; return <button data-drawing-tool={kind} aria-expanded={props.blackboard&&tool()===kind&&propertyMenu()} data-caption={t(labels[kind])} title={t(labels[kind])} aria-label={t(labels[kind])} classList={{ selected: tool() === kind }} data-unavailable={controlsLocked()} disabled={disabled()} onClick={() => choose(kind)}><Icon size={18} /></button>; }}</For>
+      <For each={props.tools}>{kind => { const Icon = icons[kind]; return <button data-drawing-tool={kind} aria-expanded={props.blackboard&&tool()===kind&&propertyMenu()} data-caption={t(labels[kind])} title={t(labels[kind])} aria-label={t(labels[kind])} classList={{ selected: tool() === kind }} data-unavailable={controlsLocked()} disabled={disabled()} onPointerDown={event=>{if(kind==='text'&&textEditor()&&event.button===0)event.preventDefault();}} onClick={() => choose(kind)}><Icon size={18} /></button>; }}</For>
       <Show when={props.port.raster}><span class="drawing-divider" /><button data-drawing-tool="extract" data-caption={t("无痕提取")} title={t("无痕提取")} aria-label={t("无痕提取")} classList={{selected:tool()==='extract'}} disabled={disabled()} onClick={()=>choose('extract')}><Scissors size={18}/></button><button data-drawing-tool="heal" aria-expanded={props.blackboard&&tool()==='heal'&&propertyMenu()} data-caption={t("涂抹消除")} title={t("涂抹消除")} aria-label={t("涂抹消除")} classList={{selected:tool()==='heal'}} disabled={disabled()} onClick={()=>choose('heal')}><BrushCleaning size={18}/></button></Show>
       <Show when={selectionReading()}><LoaderCircle size={15} class="spin" /></Show>
       {props.extraTools?.()}

@@ -56,7 +56,8 @@
 .drawing-rich-text,.drawing-rich-text-content{display:block;box-sizing:border-box;width:100%;height:auto;min-height:1em;margin:0;padding:0;border:0!important;border-radius:0;background:transparent;outline:none!important;box-shadow:none!important;text-shadow:none;font-family:"Segoe UI","Microsoft YaHei",sans-serif;font-weight:400;font-style:normal;letter-spacing:normal;user-select:text;overflow:visible;white-space:inherit;word-break:inherit;line-break:inherit;line-height:inherit;cursor:text}
 .drawing-rich-text-content p{margin:0;padding:0;min-height:1em;line-height:inherit;white-space:inherit;word-break:inherit}
 .drawing-rich-text-content ::selection{background:#348bf14d}
-.drawing-rich-text-content strong{font-weight:700}.drawing-rich-text-content em{font-style:italic}
+.drawing-rich-text-content,.drawing-rich-text-content *{color:transparent!important;text-decoration-color:transparent!important}
+.drawing-rich-text-content strong{font-weight:700}.drawing-rich-text-content em{font-style:normal}
 .drawing-text-mode .drawing-hit{cursor:text}
 .drawing-edit-error{align-self:center;margin-right:auto;color:var(--danger,#b84040);font-size:11px;overflow-wrap:anywhere}
 .drawing-drafts-backdrop{z-index:140}

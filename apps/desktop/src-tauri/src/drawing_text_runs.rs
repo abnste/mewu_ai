@@ -175,6 +175,8 @@ mod tests {
             text_style: None,
         }]);
         assert_eq!(legacy, render(drawing.clone()));
+        drawing.text_runs = Some(["Red ", "Blue"].into_iter().map(|text| DrawingTextRun { text: text.into(), color: None, text_style: None }).collect());
+        assert_eq!(legacy, render(drawing.clone()), "fragment boundaries must retain the word space");
         drawing.text_runs = Some(runs());
         let actual = render(drawing.clone());
         let count = |blue: bool| {

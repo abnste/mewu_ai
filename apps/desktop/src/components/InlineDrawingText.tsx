@@ -8,7 +8,8 @@ import { drawingTextLayout } from './drawing-geometry';
 import { drawingTextPlugins, formatTextSelection, plainTextPaste, readTextDocument, selectionTextStyle, textDocument, type LiteralTextDocument, type TextSelectionStyle } from '../drawing-text-model';
 
 export interface InlineDrawingTextController { focus():void; format(patch:{color?:string;textStyle?:DrawingTextStyle}):void }
-/** Composition, selection and typing history share a literal, typed document. */
+/** ProseMirror owns composition, selection and history. SVG remains the sole
+ * visible glyph layer, including the exporter's fixed oblique/decoration policy. */
 export default function InlineDrawingText(props: {
   drawing: Drawing; disabled: boolean;
   ref: (control:InlineDrawingTextController|undefined) => void;

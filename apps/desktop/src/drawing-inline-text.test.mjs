@@ -31,6 +31,34 @@ test('moving focus into text styling, including the color portal, never submits 
   for(const relatedTarget of [null,new Element('toolbar'),new Element('palette')])ctx.textBlur({relatedTarget});
   assert.equal(saves,0);ctx.textBlur({relatedTarget:new Element('outside')});assert.equal(saves,1);
 });
+
+test('reopening current text parameters preserves selection and draft; a real tool change still commits',async()=>{
+  const choose=body.find(node=>node.type==='FunctionDeclaration'&&node.id.name==='choose');
+  for(const mode of ['same-active','same-idle','other-tool']){
+    let saves=0,finishes=0,selected='text-id',nextTool='text';
+    const context=vm.createContext({disabled:()=>false,identity:()=> 'source',cancelGesture:undefined,disposed:false,
+      tool:()=>nextTool,textEditor:()=>mode==='same-idle'?undefined:{drawing:{id:'text-id'}},setFinishing:()=>finishes++,strokeQueue:undefined,drainHistory:async()=>{},
+      saveText:async()=>{saves++;return true;},setDraft(){},setSelected:value=>selected=value,strokeKinds:[],setWideBrush(){},mosaicFailed:()=>false,setTool:value=>nextTool=value,highlightFailed:()=>false,report:error=>{throw error;}});
+    vm.runInContext(stripTypeScriptTypes(code.slice(choose.start,choose.end),{mode:'transform'}),context);
+    await context.choose(mode==='other-tool'?'select':'text');
+    assert.equal(saves,mode==='same-active'?0:1);
+    assert.equal(finishes,mode==='same-active'?0:2);
+    assert.equal(nextTool,mode==='other-tool'?'select':'text');
+    if(mode==='same-active')assert.equal(selected,'text-id');
+  }
+});
+
+test('Escape closes the board parameter menu back into the text editor instead of blurring into a commit',()=>{
+  const keyboard=body.find(node=>node.type==='FunctionDeclaration'&&node.id.name==='keyboard');
+  const gate=keyboard.body.body.find(node=>node.type==='IfStatement'&&code.slice(node.test.start,node.test.end).includes('propertyMenu()'));
+  for(const editing of [false,true]){
+    const events=[];
+    const context=vm.createContext({props:{blackboard:true},propertyMenu:()=>true,setPropertyMenu:value=>events.push(['menu',value]),textEditor:()=>editing?{}:undefined,textInput:{focus:()=>events.push(['editor'])},svg:{focus:()=>events.push(['canvas'])}});
+    const handle=vm.runInContext(stripTypeScriptTypes('(event)=>{'+code.slice(gate.start,gate.end)+'}',{mode:'transform'}),context);
+    handle({key:'Escape',preventDefault(){},stopImmediatePropagation(){}});
+    assert.deepEqual(events,[['menu',false],[editing?'editor':'canvas']]);
+  }
+});
 const inputCode=await readFile(new URL('./components/InlineDrawingText.tsx',import.meta.url),'utf8');
 const inputAst=parse(inputCode,{sourceType:'module',plugins:['typescript','jsx']});
 let keydown;
