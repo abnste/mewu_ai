@@ -31,18 +31,18 @@
 
 ## Features
 
-- **Personal Agent:** choose a role, model, tools, and memory. Reference images, videos, and files; retain conversation history; read Markdown, formulas, and collapsible public reasoning. Use the official Agent's persistent local memory or connect an independent memory service.
-- **AI creative canvas:** arrange, resize, pin, or save images, videos, text, and generated objects. Describe an HTML / SVG / Canvas tool, use the resulting calculator, experiment, or game, and ask for further changes.
+- **Personal Agent:** choose a role, model, tools, and memory, and reference images, videos, and files in conversation. Read Markdown, formulas, and model-provided reasoning. Long conversations can compact context while preserving the original history for retrieval. Use the official Agent's persistent local memory or connect an independent memory service.
+- **Local tools and skills:** the built-in Agent can read, write, edit, and search files, run commands and scripts through Shell / PowerShell, and stop execution when you cancel a task. Portable `SKILL.md` skills can include scripts and references. Bundled skills cover image annotation, video annotation, interactive objects, and task verification; ordinary local tasks need no custom plugin.
+- **AI creative canvas:** arrange, resize, pin, or save images, videos, text, and generated objects. Describe interactive HTML / SVG / Canvas content, use the resulting calculator, experiment, or game in the workspace, and ask for further changes.
 - **Capture and multiple selections:** capture a region, multiple areas, scrolling content, or supported windows. Selections automatically become references while the surrounding screen dims, with no separate “Reference” click.
-- **Drawing and annotation:** pens, arrows, shapes, text, numbering, highlights, and mosaic, with undo, redo, and object editing. Add marks yourself or ask AI to explain and highlight specific details in worksheets, code, and other references.
+- **Quick interaction:** open with a configurable hold shortcut, select and copy recognized text, capture a region, or pin an image. The interface closes after a successful image/video copy or pin. With a voice plugin enabled, you can also start tasks by voice. See [Hooks](./docs/hooks.md) for setup and shortcuts.
+- **Drawing and AI annotation:** pens, arrows, shapes, text, numbering, highlights, and mosaic, with undo, redo, and object editing. Annotate manually or ask AI to add construction lines, formulas, tables, and explanations to worksheet images, code, and other references. Generated annotations remain editable.
 - **Text and tables:** local OCR, capture translation, chart understanding, and table extraction. Windows/macOS also offer actionable recognition of links, emails, phone numbers, QR codes, and barcodes.
-- **Recording and video annotation:** capture system audio and microphone input; pause, resume, trim, and export MP4 / MP3 / GIF. Add rectangles and text for time ranges, then click conversation timestamps to revisit them. Audio support varies by system.
-- **Blackboard:** draw and explain on a full-screen board, combining questions, formulas, and AI analysis. A setting lets screen-sharing apps see selections and annotations.
+- **Recording and video annotation:** capture system audio and microphone input; pause, resume, trim, and export MP4 / MP3 / GIF. Annotate manually or ask AI to use video frames to add rectangles and text over specific time ranges. Edit or undo annotations, and click conversation timestamps to revisit frames. Audio support varies by system.
+- **Blackboard:** draw and explain on a full-screen board, combining questions, formulas, and AI analysis. Dock the toolbar to any of the four edges. A setting lets screen-sharing apps see selections and annotations.
 - **CLI and region AI operations:** local Agents can inspect scenes, capture, add selections, draw, and export. The region plugin lets a model observe a selected target, act, and check a fresh screenshot before continuing.
-- **Plugins and event triggers:** extend Agents, memory, tools, and UI independently. Official Hooks supports schedules, prompts, completed replies, global shortcuts, and app/plugin events, connecting Mewu operations, MCP, commands, and keyboard/mouse actions.
-- **Skills and self-made plugins:** the built-in Agent can read portable `SKILL.md` skills, create and validate plugin projects, and prepare an installable package. Review permissions before installation under Installed → Self-made. Plugins can reorder the original screenshot toolbar through the [generic layout service](./docs/plugin-toolbar-layout.md). See [skills and authoring](./docs/agent-skills.md).
-
-The native Agent uses local file tools and discovered Shell/PowerShell to read, write, edit, search, and run commands with your OS account permissions. Portable skills can include scripts; an ordinary local task does not require creating a plugin. It loads image/video annotation skills on demand, keeps original conversation history when compacting context, and exposes paginated session recall separately from long-term memory. See [Agent runtime](./docs/agent-runtime.md) and [repeatable evaluation](./docs/agent-evaluation.md).
+- **Plugins and event triggers:** extend Agents, memory, tools, and UI independently. Official Hooks supports schedules, prompts, completed replies, press or hold shortcuts, and app/plugin events, connecting Mewu operations, MCP, commands, and keyboard/mouse actions.
+- **Self-made plugins:** describe a need to the built-in Agent to create, validate, and package a plugin project. Review permissions before installation under **Plugins → Installed → Self-made**. Plugins can reorder the original screenshot toolbar through the [generic layout service](./docs/plugin-toolbar-layout.md). See [skills and authoring](./docs/agent-skills.md).
 
 Capture, drawing, and recording work without AI setup. AI conversations, translation, and generated content require a configured service.
 
@@ -127,7 +127,7 @@ Animations use Mewu interface components with prepared example content; generate
 ## Get started
 
 1. **Install and launch.** Choose your platform above. Windows uses WebView2; on macOS, move the app into Applications; on Linux, make the AppImage executable. Downloads follow the [latest stable release](https://github.com/abnste/mewu_ai/releases/latest).
-2. **Enter the workspace.** Open Mewu from the tray or a capture shortcut to select, draw, save, or open a blackboard. Configure capture shortcuts in **Hooks** and grant system capture/recording permissions when requested.
+2. **Enter the workspace.** Open Mewu from the tray or a capture shortcut to select, draw, save, or open a blackboard. Configure capture shortcuts in **Settings → Capture & recording**, and quick interaction and automation rules in **Settings → Hooks**. Grant system capture/recording permissions when requested.
 3. **Connect AI.** Add a model in **Settings → Agents & Connections**, choose a role and memory, or connect a client through External Agents. Selections become references automatically; send your task from the conversation bar.
 
 For Linux dependencies and permissions, see the [AppImage guide](./docs/linux-appimage-permissions.md) and [recording guide](./docs/linux-native-recording.md). Region AI operations support Windows, macOS, and compatible GNOME 50 Wayland x64 setups; Linux also requires [Desktop Witness](./tools/linux-desktop-witness/README.md) and Portal authorization.
@@ -136,12 +136,12 @@ For Linux dependencies and permissions, see the [AppImage guide](./docs/linux-ap
 
 | Connection | How to use it |
 | --- | --- |
-| Model APIs | Configure Chat Completions, OpenAI Responses, or Anthropic Messages services, save independent connections, and choose a model. |
+| Model APIs | Configure Chat Completions, OpenAI Responses, or Anthropic Messages services, save independent connections, and choose a model. Advanced settings include context window size and thinking effort. |
 | External Agents | Use the [independent plugin](https://github.com/abnste/mewu-plugin-agent-connectors) to connect Codex, MiniMax Code, WorkBuddy / CodeBuddy, or Hermes with the client's own login and configuration. |
 | Memory | Choose the Agent and memory separately: use official persistent local memory or connect Hindsight and other providers through plugins. |
 | MCP and tools | Add services in **Agents & Connections → MCP**, or enable plugin tools for the current Agent to call. |
 
-Image, video, and tool capabilities, limits, and fees depend on the selected service. External Agents require the corresponding client to be installed and signed in; consult each plugin's documentation for platform support.
+Image, video, tool calling, and thinking effort support, as well as usage limits and fees, depend on the selected service. Leave thinking effort unset to use the provider's default. External Agents require the corresponding client to be installed and signed in; consult each plugin's documentation for platform support.
 
 ## Plugin marketplace
 
@@ -149,7 +149,7 @@ Browse, install, and manage extensions in **Settings → Plugins**, or import a 
 
 | Plugin | What it adds |
 | --- | --- |
-| [Hooks · event triggers](./docs/hooks.md) | Included and enabled by default. Combine triggers and actions; enable, edit, and review the history of each rule independently. |
+| [Hooks · event triggers](./docs/hooks.md) | Included and enabled by default. Configure capture and quick interaction shortcuts, and combine triggers such as schedules and messages with actions. Enable, edit, and review the history of each rule independently. |
 | [External Agents](https://github.com/abnste/mewu-plugin-agent-connectors) | Connect an existing client to Mewu's roles and conversations. |
 | [Region AI operations](https://github.com/abnste/mewu-plugin-region-agent) | Select a target and describe a task; the model acts based on successive observations. |
 | [Hindsight memory](https://github.com/abnste/mewu-plugin-hindsight) | Connect your Hindsight service and memory banks. |
@@ -167,6 +167,7 @@ mewu                         # Start an Agent conversation
 mewu status                  # Inspect the app and current scene
 mewu schema                  # Discover operations and parameters
 mewu call capture.open --json '{}' --wait
+mewu call capture.quick --json '{}' --wait
 ```
 
 Plain `mewu chat` sends text by default; screenshots and files require explicit references. See the [CLI guide](./docs/cli.md) and [operation catalog](./apps/desktop/control/catalog.json) for setup, platform requirements, and parameters.
@@ -181,6 +182,20 @@ Capture, manual drawing, recording, and local OCR need no AI account. AI convers
 </details>
 
 <details>
+<summary>Will AI keep working when I minimize Mewu?</summary>
+
+The built-in Agent continues its current task and saves the result to the original conversation. Restore the window to read the reply and use generated objects. Minimizing does not quit the app. Temporary region-control authorization expires on actions such as minimizing, so screen control requires renewed authorization.
+
+</details>
+
+<details>
+<summary>Can I import skills from other Agents?</summary>
+
+Copy the complete folder containing `SKILL.md` into `skills/` in Mewu's data directory, keeping its scripts, references, and assets. The default location is `~/.mewu/skills`. The Agent reads skills on demand, and bundled skill updates preserve files you have modified. Importing a skill does not provide another Agent's private tools; tasks using those tools still need the corresponding capabilities. See the [skills guide](./docs/agent-skills.md).
+
+</details>
+
+<details>
 <summary>Why are selections and annotations missing from a screen share?</summary>
 
 Enable **Settings → General → Allow screen sharing to see selections and annotations**. Visibility also depends on the operating system and screen-sharing app.
@@ -190,7 +205,7 @@ Enable **Settings → General → Allow screen sharing to see selections and ann
 <details>
 <summary>Where do my captures and conversations go?</summary>
 
-Capture and manual drawing happen locally. When you use AI, referenced content and relevant context are sent to your selected service. Plugins use granted permissions, and external Agents retain their own runtime configuration.
+Capture and manual drawing happen locally. When you use AI, referenced content, relevant context, and tool results are sent to your selected service. Local file tools and commands access files and run programs with your OS account permissions. Plugins use granted permissions, and external Agents retain their own runtime configuration.
 
 </details>
 
@@ -208,6 +223,8 @@ Report an [Issue](https://github.com/abnste/mewu_ai/issues) with your system, ap
 Bug reports, use cases, code, plugins, and documentation contributions are welcome. The desktop app uses **Rust + Tauri 2 + SolidJS / TypeScript + SQLite** and renders through the system WebView.
 
 [Desktop development](./apps/desktop/README.md) · [Extension SDK](./packages/sdk/README.md) · [Extension interfaces](./docs/extensions.md) · [Plugin packaging](./tools/extension-market/README.md) · [Release guide](./docs/releasing.md)
+
+[Agent runtime](./docs/agent-runtime.md) · [Skills and plugin authoring](./docs/agent-skills.md) · [Interactive object runtime](./docs/document-runtime.md) · [Agent evaluation](./docs/agent-evaluation.md)
 
 Browser previews support interface development; native capture, recording, and system input require the desktop runtime.
 
