@@ -323,6 +323,64 @@ pub fn request_body(protocol: ConnectionProtocol, mut canonical: Value) -> Resul
     Ok(body)
 }
 
+/// Reserve the remaining model request for delivery, without increasing either
+/// model or tool budgets. Existing tool results and opaque continuation remain
+/// intact; a provider that still emits a tool call is fenced by the caller.
+pub fn prepare_final_answer(protocol: ConnectionProtocol, body: &mut Value) -> Result<(), String> {
+    const NOTICE: &str = "[Mewu 运行控制] 本轮工具预算即将结束，当前请求仅用于最终答复，不能再调用工具。请根据已有结果直接交付用户需要的内容；尚未完成的操作如实说明，不虚构执行或验证结果，不展开新的环境探测。";
+    let object = body.as_object_mut().ok_or("模型请求格式无效")?;
+    for key in ["tools", "tool_choice", "parallel_tool_calls"] { object.remove(key); }
+    match protocol {
+        ConnectionProtocol::ChatCompletions | ConnectionProtocol::OpenAiResponses => {
+            let key = if protocol == ConnectionProtocol::OpenAiResponses { "input" } else { "messages" };
+            body.get_mut(key).and_then(Value::as_array_mut).ok_or("模型请求缺少消息")?
+                .push(json!({"role":"system","content":NOTICE}));
+        }
+        ConnectionProtocol::AnthropicMessages => {
+            match body.get_mut("system") {
+                Some(Value::Array(system)) => system.push(json!({"type":"text","text":NOTICE})),
+                Some(Value::String(system)) => { system.push_str("\n\n"); system.push_str(NOTICE); }
+                None => body["system"] = json!([{"type":"text","text":NOTICE}]),
+                _ => return Err("模型系统提示格式无效".into()),
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod final_answer_tests {
+    use super::*;
+    #[test]
+    fn all_protocols_reserve_delivery_without_rewriting_history_or_continuation() {
+        for protocol in [ConnectionProtocol::ChatCompletions, ConnectionProtocol::OpenAiResponses, ConnectionProtocol::AnthropicMessages] {
+            let mut body = request_body(protocol, json!({"model":"fixture","temperature":0.3,
+                "messages":[{"role":"system","content":"original system"},{"role":"user","content":"deliver an object"}],
+                "tools":[{"type":"function","function":{"name":"read","parameters":{"type":"object"}}}]})).unwrap();
+            let key = if protocol == ConnectionProtocol::OpenAiResponses {"input"} else {"messages"};
+            let original = body[key].as_array().unwrap().clone();
+            let original_system = body.get("system").cloned();
+            body["tool_choice"] = json!("auto"); body["parallel_tool_calls"] = json!(true);
+            prepare_final_answer(protocol, &mut body).unwrap();
+            assert_eq!(body["model"], "fixture"); assert_eq!(body["temperature"], 0.3);
+            for name in ["tools", "tool_choice", "parallel_tool_calls"] { assert!(body.get(name).is_none()); }
+            assert_eq!(&body[key].as_array().unwrap()[..original.len()], original.as_slice());
+            if protocol == ConnectionProtocol::AnthropicMessages {
+                assert_eq!(body[key].as_array().unwrap().len(), original.len());
+                let old = original_system.unwrap();
+                let system = body["system"].as_array().unwrap();
+                assert_eq!(&system[..old.as_array().unwrap().len()], old.as_array().unwrap().as_slice());
+                assert!(system.last().unwrap()["text"].as_str().unwrap().contains("不虚构"));
+            } else {
+                let notice = body[key].as_array().unwrap().last().unwrap();
+                assert_eq!(notice["role"], "system");
+                assert!(notice["content"].as_str().unwrap().contains("最终答复"));
+            }
+        }
+        assert!(prepare_final_answer(ConnectionProtocol::ChatCompletions, &mut Value::Null).is_err());
+    }
+}
+
 pub fn append_turn(
     protocol: ConnectionProtocol,
     body: &mut Value,

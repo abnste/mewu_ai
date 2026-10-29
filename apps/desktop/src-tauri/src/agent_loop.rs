@@ -215,6 +215,9 @@ where
     for round in 0..MAX_ROUNDS {
         journal.active()?;
         turn_context.prepare(&transport, key, &mut body, ||journal.active()).await?;
+        if round + 1 == MAX_ROUNDS || call_count >= MAX_CALLS {
+            provider_transport::prepare_final_answer(transport.protocol, &mut body)?;
+        }
         let request_hash = format!(
             "{:x}",
             Sha256::digest(serde_json::to_vec(&body).map_err(|_| "模型请求格式无效")?)
@@ -399,6 +402,9 @@ where
     let mut output_bytes = 0usize;
     for round in 0..MAX_ROUNDS {
         turn_context.prepare(&transport, key, &mut body, ||Ok(())).await?;
+        if round + 1 == MAX_ROUNDS || call_count >= MAX_CALLS {
+            provider_transport::prepare_final_answer(transport.protocol, &mut body)?;
+        }
         let mut first_text = true;
         let mut overflow = false;
         let turn = provider_transport::stream_turn(&transport, key, body.clone(), |delta| {
@@ -1373,6 +1379,23 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn exact_call_budget_still_gets_a_final_answer_without_extra_effects() {
+        let ids: Vec<_> = (0..MAX_CALLS).map(|index|format!("exact-{index}")).collect();
+        let mut responses: Vec<_> = ids.chunks(8).map(|chunk| calls(&chunk.iter().map(String::as_str).collect::<Vec<_>>(), "remember", "")).collect();
+        let tool_rounds = responses.len();
+        responses.push(final_text("delivered"));
+        let fixture = Fixture::new(responses);
+        let mut executed = 0;
+        let result = run(fixture.url.clone(), "", body(), tools(), |_| {}, |_| {
+            executed += 1; async { Ok(json!({"observed":true})) }
+        }).await.unwrap();
+        assert_eq!(result, "delivered"); assert_eq!(executed, MAX_CALLS);
+        let requests = fixture.requests.lock().unwrap();
+        assert_eq!(requests.len(), tool_rounds+1);
+        assert!(requests.last().unwrap().get("tools").is_none());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn round_and_call_budgets_stop_before_dispatching_an_excess_batch() {
         let responses = (0..MAX_ROUNDS)
             .map(|index| calls(&[&format!("call{index}")], "remember", ""))
@@ -1392,8 +1415,10 @@ mod tests {
         )
         .await
         .unwrap_err()
-        .contains("轮次上限"));
+        .contains("此请求没有启用工具"));
         assert_eq!(executed, MAX_ROUNDS - 1);
+        assert_eq!(fixture.requests.lock().unwrap().len(), MAX_ROUNDS);
+        assert!(fixture.requests.lock().unwrap().last().unwrap().get("tools").is_none());
         let ids: Vec<String> = (0..=MAX_CALLS).map(|index|format!("batch-{index}")).collect();
         let fixture = Fixture::new(ids.chunks(8).map(|chunk|calls(&chunk.iter().map(String::as_str).collect::<Vec<_>>(),"remember","")).collect());
         let mut executed = 0;
@@ -1410,8 +1435,9 @@ mod tests {
         )
         .await
         .unwrap_err()
-        .contains("次数上限"));
+        .contains("此请求没有启用工具"));
         assert_eq!(executed, MAX_CALLS);
+        assert!(fixture.requests.lock().unwrap().last().unwrap().get("tools").is_none());
     }
 
     #[tokio::test(flavor = "current_thread")]

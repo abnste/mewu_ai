@@ -345,6 +345,37 @@ mod feedback {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn recorded_http_reserves_last_model_round_for_delivery_without_replaying_tools() {
+        let mut responses: Vec<_> = (0..MAX_ROUNDS-1)
+            .map(|index| turn(&[(&format!("round-{index}"), json!({"text":"observed"}))]))
+            .collect();
+        responses.push(final_text("delivered from observed results"));
+        let fixture = Fixture::new(responses);
+        let journal = FeedbackJournal::new();
+        let host = journal.clone();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let actual = calls.clone();
+        let result = recorded_inner(Transport::chat(fixture.url.clone()), "", body(), tools(), |_| {},
+            journal.clone(), move |_, lease| {
+                let host = host.clone(); let actual = actual.clone();
+                async move {
+                    actual.fetch_add(1, Ordering::SeqCst);
+                    host.responded(&lease, json!({"observed":true}))
+                }
+            }).await.unwrap();
+        assert_eq!(result, "delivered from observed results");
+        assert_eq!(calls.load(Ordering::SeqCst), MAX_ROUNDS-1);
+        let requests = fixture.requests.lock().unwrap();
+        assert_eq!(requests.len(), MAX_ROUNDS);
+        assert!(requests[0].get("tools").is_some());
+        let last = requests.last().unwrap();
+        assert!(last.get("tools").is_none() && last.get("tool_choice").is_none());
+        assert!(last["messages"].as_array().unwrap().last().unwrap()["content"]
+            .as_str().unwrap().contains("最终答复"));
+        assert_eq!(last["messages"].as_array().unwrap().iter().filter(|m|m["role"]=="tool").count(), MAX_ROUNDS-1);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn recorded_http_permission_revocation_after_rejection_prevents_feedback_and_the_next_model_request(
     ) {
         let fixture = Fixture::new(vec![
