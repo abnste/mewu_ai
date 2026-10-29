@@ -1022,6 +1022,11 @@ export default function App() {
     finally { setBusy(false); finishOperation(); }
   }
   async function newConversation(strict = false) {
+    if (strict && !agentAvailable()) {
+      const availability = await settleOptionalAgentReadiness(scene, agentAvailable, capabilities.refresh);
+      if (availability === 'changed') throw new AppControlError('CONFLICT', '会话已变化');
+      if (availability !== 'ready') throw new AppControlError('NOT_READY', '请先配置 Agent 和模型');
+    }
     const current = scene();
     if (!agentAvailable() || !current || busy() || sending() || recording() || scroll() || exitPreparing() || current.run?.status === 'running') { if (strict) throw new AppControlError('BUSY', '当前无法新建对话'); return; }
     const sceneId = current.id;

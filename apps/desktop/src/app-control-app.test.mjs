@@ -13,6 +13,7 @@ const ast = parse(raw, { sourceType: 'module', plugins: ['typescript', 'jsx'] })
 const control = await import(`data:text/javascript;base64,${Buffer.from(stripTypeScriptTypes(await readFile(new URL('./app-control.ts', import.meta.url), 'utf8'), { mode: 'transform' })).toString('base64')}`);
 const submission = await import(`data:text/javascript;base64,${Buffer.from(stripTypeScriptTypes(await readFile(new URL('./scene-submission.ts', import.meta.url), 'utf8'), { mode: 'transform' })).toString('base64')}`);
 const { DrawingFlushRegistry } = await import(`data:text/javascript;base64,${Buffer.from(stripTypeScriptTypes(await readFile(new URL('./drawing-flush.ts', import.meta.url), 'utf8'), { mode: 'transform' })).toString('base64')}`);
+const optional = await import(`data:text/javascript;base64,${Buffer.from(stripTypeScriptTypes(await readFile(new URL('./optional-capabilities.ts', import.meta.url), 'utf8'), { mode: 'transform' })).toString('base64')}`);
 function productFunction(name) {
   let found;
   const walk = node => {
@@ -109,6 +110,33 @@ function fixture() {
   vm.runInContext(['withoutScene', 'assertControlIdle', 'flushControl', 'controlReceipt', 'withControlBusy', 'setControlReferences', 'executeControl'].map(productFunction).join('\n'), scope);
   return { f, scope };
 }
+
+test('new conversation recovers one failed metadata read without retrying writes or crossing scenes', async () => {
+  for (const mode of ['ready', 'revoked', 'changed']) {
+    const { f, scope } = fixture();
+    let available = false, refreshes = 0;
+    Object.assign(scope, {
+      agentAvailable: () => available, settleOptionalAgentReadiness: optional.settleOptionalAgentReadiness,
+      capabilities: { async refresh() {
+        refreshes++;
+        available = mode !== 'revoked';
+        if (mode === 'changed') f.saved = { ...f.saved, activeSceneId: 'successor', scenes: [{ ...f.scene, id: 'successor' }] };
+      } },
+      draft: () => '', setDrafts() {}, setExpanded() {}, setSendErrors() {}, setFocusRequest() {},
+      streamBuffer: { clear() {} }, showError() {},
+    });
+    vm.runInContext(productFunction('newConversation'), scope);
+    if (mode === 'ready') {
+      await scope.newConversation(true);
+      assert.equal(f.calls.filter(([name, value]) => name === 'command' && value.type === 'new_conversation').length, 1);
+      assert.equal(f.operations, 0);
+    } else {
+      await assert.rejects(scope.newConversation(true), error => error.code === (mode === 'revoked' ? 'NOT_READY' : 'CONFLICT'));
+      assert.equal(f.calls.length, 0, 'failed eligibility cannot flush or change any conversation');
+    }
+    assert.equal(refreshes, 1);
+  }
+});
 
 test('actual App dispatcher routes the catalog into existing action handlers and returns compact receipts', async () => {
   const examples = [

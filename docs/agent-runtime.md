@@ -169,3 +169,12 @@ General execution lives in the `mewu-agent-tools` crate and the native owned
 process adapter. It does not grant extensions additional permissions or turn a
 skill document into executable authority. Engine replacement remains a plugin
 contract; native tool implementation is independent of plugin-authoring logic.
+
+The retained space WebView also owns draft flush and shutdown acknowledgements.
+On macOS 14 and later its background throttling is disabled so hiding the UI
+cannot suspend that control path after five minutes. This uses Tauri's
+[documented WebView policy](https://docs.rs/tauri/latest/tauri/webview/struct.WebviewWindowBuilder.html#method.background_throttling),
+not a visible keepalive window or a polling loop. Other platforms ignore that
+platform-specific property; the Rust Agent and its cancellation remain native.
+An explicit new-conversation request can refresh unavailable capability metadata
+once. It still checks scene identity and revocation before making any mutation.

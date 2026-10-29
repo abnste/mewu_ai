@@ -19,6 +19,7 @@
         "minWidth": 720,
         "minHeight": 480,
         "visible": false,
+        "backgroundThrottling": "disabled",
         "decorations": false,
         "backgroundColor": "#00000000",
         "dragDropEnabled": false,
