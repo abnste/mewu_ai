@@ -119,6 +119,8 @@ fn main() {
         include_bytes!("../../crates/mewu-extension/src/package.rs").as_slice(),
         include_bytes!("../../crates/mewu-extension/src/sdk.js").as_slice(),
         include_bytes!("../../crates/mewu-extension/src/runtime.rs").as_slice(),
+        include_bytes!("../../crates/mewu-extension/src/appearance.rs").as_slice(),
+        include_bytes!("../../crates/mewu-extension/src/appearance-contract.json").as_slice(),
         include_bytes!("../../apps/desktop/src-tauri/src/extension_market.rs").as_slice(),
     ]
     .iter()

@@ -10,7 +10,7 @@ import { buildCatalog, packPlugin, publishPlugin, run } from './cli.mjs';
 import { crc32, createZip, packagePath, readZip } from './zip.mjs';
 import { bindEntryManifest, downloadReleaseAsset, getRelease, githubBytes, sha256, verifyEntry } from './github.mjs';
 import { collectPullRequest } from './collect-pr.mjs';
-import { invokeExtensionValidator } from './validator.mjs';
+import { invokeExtensionValidator, extensionFingerprint, CONTRACT_PATHS } from './validator.mjs';
 import { createHash } from 'node:crypto';
 
 const manifest = { schemaVersion: 2, id: 'tests.example', version: '1.0.0', name: '示例', description: '传输测试', license: 'MPL-2.0', hostApi: 2,
@@ -20,6 +20,18 @@ const packageBytes = createZip(files());
 const entry = { id: manifest.id, name: manifest.name, description: manifest.description, tags: manifest.tags, repository: 'example/plugins',
   version: manifest.version, releaseTag: 'v1.0.0', assetName: 'tests.example-1.0.0.zip', sha256: sha256(packageBytes), size: packageBytes.length, hostApi: 2, platforms: ['any'] };
 const catalog = plugins => Buffer.from(`${JSON.stringify({ schemaVersion: 2, plugins }, null, 2)}\n`);
+test('appearance schema and validation changes invalidate the trusted native contract identity',async()=>{
+ const root=await mkdtemp(path.join(os.tmpdir(),'mewu-contract-'));
+ try{
+  for(const file of CONTRACT_PATHS){const target=path.join(root,file);await mkdir(path.dirname(target),{recursive:true});await writeFile(target,await readFile(new URL('../../'+file,import.meta.url)));}
+  const original=await extensionFingerprint(root);
+  for(const file of ['crates/mewu-extension/src/appearance.rs','crates/mewu-extension/src/appearance-contract.json']){
+   const target=path.join(root,file),source=await readFile(target);await writeFile(target,Buffer.concat([source,Buffer.from('\n')]));
+   assert.notEqual(await extensionFingerprint(root),original,file);await writeFile(target,source);
+  }
+  assert.equal(await extensionFingerprint(root),original);
+ }finally{await rm(root,{recursive:true,force:true});}
+});
 // A test double only for exercising atomic/network orchestration, never a product parser.
 const validate = async (mode, bytes) => {
   if(mode==='extension-package') {const m=JSON.parse(readZip(bytes).get('mewu-plugin.json').toString());return {id:m.id,version:m.version};}

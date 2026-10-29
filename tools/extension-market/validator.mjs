@@ -12,6 +12,8 @@ export const CONTRACT_PATHS = [
   'crates/mewu-extension/src/package.rs',
   'crates/mewu-extension/src/sdk.js',
   'crates/mewu-extension/src/runtime.rs',
+  'crates/mewu-extension/src/appearance.rs',
+  'crates/mewu-extension/src/appearance-contract.json',
   'apps/desktop/src-tauri/src/extension_market.rs',
 ];
 
