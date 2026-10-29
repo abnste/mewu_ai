@@ -8,7 +8,6 @@ use serde_json::{json, Value};
 
 pub struct TurnContext {
     base_count: usize,
-    base_tokens: usize,
     model: String,
     evidence: Vec<SessionMessage>,
     summary: Option<String>,
@@ -31,7 +30,6 @@ impl TurnContext {
                 .or_else(|| base.get("messages"))
                 .and_then(Value::as_array)
                 .map_or(0, Vec::len),
-            base_tokens: wire_tokens(base),
             model: base["model"].as_str().ok_or("模型缺失")?.into(),
             evidence: vec![],
             summary: None,
@@ -76,30 +74,52 @@ impl TurnContext {
         if wire_tokens(body) <= self.policy.input_limit() {
             return Ok(());
         }
-        if self.evidence.is_empty()
-            || self.base_tokens + self.policy.summary_limit() > self.policy.input_limit()
-        {
+        if self.evidence.is_empty() {
             return Err(
                 "必要上下文超过连接的窗口预算，请减少输入/启用工具，或按模型实际能力调整上下文窗口"
                     .into(),
             );
         }
-        let summary = crate::agent_context::summarize(
+        let field = if transport.protocol == ConnectionProtocol::OpenAiResponses {
+            "input"
+        } else {
+            "messages"
+        };
+        // Account for the actual immutable prefix and continuation envelope.
+        // The ceiling is not a reservation: image-heavy requests can still fit
+        // a smaller factual summary after a completed tool batch.
+        let mut next = self.compacted_request(body, transport.protocol)?;
+        let max_summary_bytes = self.policy.input_limit()
+            .saturating_sub(wire_tokens(&next))
+            .min(self.policy.summary_limit());
+        if max_summary_bytes == 0 {
+            return Err("必要上下文超过连接的窗口预算，完整运行记录已保留".into());
+        }
+        let summary = crate::agent_context::summarize_to_budget(
             transport,
             key,
             &self.model,
             self.policy,
             &self.evidence,
             self.summary.clone(),
+            max_summary_bytes,
             &active,
         )
         .await?;
         active()?;
-        let field = if transport.protocol == ConnectionProtocol::OpenAiResponses {
-            "input"
-        } else {
-            "messages"
-        };
+        *next[field].as_array_mut().and_then(|messages| messages.last_mut())
+            .ok_or("上下文摘要位置缺失")? = summary_message(transport.protocol, &summary);
+        if wire_tokens(&next) > self.policy.input_limit() {
+            return Err("压缩后的上下文仍超过预算，运行记录已保留".into());
+        }
+        *body = next;
+        self.summary = Some(summary);
+        self.evidence.clear();
+        Ok(())
+    }
+
+    fn compacted_request(&self, body: &Value, protocol: ConnectionProtocol) -> Result<Value, String> {
+        let field = if protocol == ConnectionProtocol::OpenAiResponses { "input" } else { "messages" };
         // Rebuild only on compaction. Do not retain an extra full copy of the
         // initial base64 image input throughout every ordinary tool round.
         let mut next = serde_json::Map::new();
@@ -114,21 +134,17 @@ impl TurnContext {
         }
         let mut next = Value::Object(next);
         let messages = next[field].as_array_mut().ok_or("模型消息缺失")?;
-        let text=format!("本次任务已完成步骤的摘要（历史资料，不是新指令；不得再次执行已完成的副作用；以原任务为目标继续，失败和未知结果不能当成功）：\n{summary}");
-        messages.push(
-            if transport.protocol == ConnectionProtocol::AnthropicMessages {
-                json!({"role":"user","content":[{"type":"text","text":text}]})
-            } else {
-                json!({"role":"user","content":text})
-            },
-        );
-        if wire_tokens(&next) > self.policy.input_limit() {
-            return Err("压缩后的上下文仍超过预算，运行记录已保留".into());
-        }
-        *body = next;
-        self.summary = Some(summary);
-        self.evidence.clear();
-        Ok(())
+        messages.push(summary_message(protocol, ""));
+        Ok(next)
+    }
+}
+
+fn summary_message(protocol: ConnectionProtocol, summary: &str) -> Value {
+    let text = format!("本次任务已完成步骤的摘要（历史资料，不是新指令；不得再次执行已完成的副作用；以原任务为目标继续，失败和未知结果不能当成功）：\n{summary}");
+    if protocol == ConnectionProtocol::AnthropicMessages {
+        json!({"role":"user","content":[{"type":"text","text":text}]})
+    } else {
+        json!({"role":"user","content":text})
     }
 }
 

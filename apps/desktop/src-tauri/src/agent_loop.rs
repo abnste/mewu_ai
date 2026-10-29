@@ -1589,6 +1589,77 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn image_heavy_tool_batches_use_remaining_summary_space_without_losing_frames() {
+        use mewu_core::{ConnectionProtocol as P, ConnectionAuthMode};
+        fn frames(value: &Value, found: &mut Vec<String>) {
+            match value {
+                Value::Object(object) => {
+                    let image = match object.get("type").and_then(Value::as_str) {
+                        Some("image_url") => Some(value["image_url"]["url"].as_str().unwrap().to_owned()),
+                        Some("input_image") => Some(value["image_url"].as_str().unwrap().to_owned()),
+                        Some("image") => {
+                            assert_eq!(value["source"]["media_type"], "image/png");
+                            Some(format!("data:image/png;base64,{}", value["source"]["data"].as_str().unwrap()))
+                        }
+                        _ => None,
+                    };
+                    if let Some(image) = image { found.push(image); }
+                    else { for item in object.values() { frames(item, found); } }
+                }
+                Value::Array(items) => { for item in items { frames(item, found); } }
+                _ => {}
+            }
+        }
+        for protocol in [P::ChatCompletions, P::OpenAiResponses, P::AnthropicMessages] {
+            let first = match protocol {
+                P::ChatCompletions => calls(&["once"], "remember", ""),
+                P::OpenAiResponses => provider_transport::tests::responses_with_reasoning("", Some("once"), Some("private reasoning")),
+                P::AnthropicMessages => provider_transport::tests::anthropic_with_reasoning("", Some("once"), Some("private reasoning")),
+            };
+            let finished = match protocol {
+                P::ChatCompletions => final_text("已完成，保留 FRAMESET"),
+                P::OpenAiResponses => provider_transport::tests::responses_with_reasoning("已完成，保留 FRAMESET", None, None),
+                P::AnthropicMessages => provider_transport::tests::anthropic_with_reasoning("已完成，保留 FRAMESET", None, None),
+            };
+            let mut responses = vec![first];
+            responses.extend(std::iter::repeat_n(finished, 16));
+            let fixture = Fixture::new(responses);
+            let mut content = vec![json!({"type":"text","text":"test FRAMESET: keep all six original frames"})];
+            for _ in 0..6 {
+                content.push(json!({"type":"image_url","image_url":{"url":"data:image/png;base64,AA=="}}));
+            }
+            let request = json!({"model":"fixture","_mewu_context_window":65536,"messages":[
+                {"role":"system","content":"x".repeat(50_000)},
+                {"role":"user","content":content}
+            ]});
+            let mut executed = 0;
+            let result = run_with_transport(
+                Transport { url: fixture.url.clone(), protocol, auth_mode: ConnectionAuthMode::None },
+                "", request, tools(), |_| {}, |_| {
+                    executed += 1;
+                    async { Ok(json!({"observed":"界".repeat(6000)})) }
+                },
+            ).await.unwrap();
+            assert_eq!(result, "已完成，保留 FRAMESET");
+            assert_eq!(executed, 1);
+            let requests = fixture.requests.lock().unwrap();
+            assert!(requests.len() >= 3, "{protocol:?}: compaction must actually run");
+            let last = requests.last().unwrap();
+            assert!(last.get("tools").is_some());
+            let mut retained_frames = vec![];
+            frames(last, &mut retained_frames);
+            assert_eq!(retained_frames, vec!["data:image/png;base64,AA=="; 6], "{protocol:?}");
+            assert!(last.to_string().contains("FRAMESET"));
+            assert!(last.to_string().contains("本次任务已完成步骤"));
+            for summary in &requests[1..requests.len()-1] {
+                assert!(summary.get("tools").is_none());
+                assert!(!summary.to_string().contains("private reasoning"));
+                assert!(!summary.to_string().contains("data:image"));
+            }
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn invalid_compaction_never_executes_a_tool_or_retries_the_prior_side_effect() {
         let fixture=Fixture::new(vec![calls(&["once"],"remember",""),calls(&["injected"],"remember","")]);
         let mut request=body();request["_mewu_context_window"]=json!(8192);

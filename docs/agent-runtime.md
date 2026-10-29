@@ -85,6 +85,13 @@ or retransmits a tool merely to rebuild context. Original execution receipts sta
 in the journal. Initial image inputs are not duplicated into a permanent second
 runtime transcript.
 
+The summary ceiling is not reserved unconditionally. Between tool batches the
+host measures the retained request prefix, including images and the continuation
+envelope, then bounds the summary to the remaining input space. A smaller summary
+may therefore continue an image-heavy task. A genuinely oversized immutable input
+still fails explicitly; the host does not drop current frames, raise the model
+window silently, or truncate a summary into a false account of executed work.
+
 `session_read` provides paginated access to original text from the **current
 conversation**, including messages omitted from the projection. It cannot read
 another scene, private reasoning, credentials or file contents. This remains
