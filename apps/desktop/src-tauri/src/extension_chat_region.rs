@@ -128,6 +128,7 @@ impl PreparedChatRegion {
             source: self,
             run_id,
             canceled,
+            region_revoked: AtomicBool::new(false),
             region: Mutex::new(None),
             #[cfg(windows)]
             escape: crate::extension_escape::RunEscapeLease::default(),
@@ -141,6 +142,9 @@ pub(crate) struct ChatRegionScope {
     source: PreparedChatRegion,
     run_id: String,
     canceled: Arc<AtomicBool>,
+    // Screen-input authority can expire without cancelling the conversation.
+    // A screenshot reference is also ordinary context for text/code generation.
+    region_revoked: AtomicBool,
     region: Mutex<Option<Arc<extension_region::RegionSession>>>,
     #[cfg(windows)]
     escape: crate::extension_escape::RunEscapeLease,
@@ -163,11 +167,18 @@ impl ChatRegionScope {
     pub(crate) fn run_id(&self) -> &str {
         &self.run_id
     }
-    pub(crate) fn check_engine(&self, engine: &Engine) -> Result<(), String> {
+    fn check_run_engine(&self, engine: &Engine) -> Result<(), String> {
         if self.canceled.load(Ordering::SeqCst)
             || !crate::run_is_authorized(engine, self.scene_id(), self.run_id(), None)
         {
             return Err("本次区域运行已停止".into());
+        }
+        Ok(())
+    }
+    pub(crate) fn check_engine(&self, engine: &Engine) -> Result<(), String> {
+        self.check_run_engine(engine)?;
+        if self.region_revoked.load(Ordering::SeqCst) {
+            return Err("区域操作已撤销；对话仍可继续".into());
         }
         let scene = engine
             .store
@@ -175,6 +186,14 @@ impl ChatRegionScope {
             .map_err(|e| e.to_string())?;
         let active = engine.store.active_scene().map_err(|e| e.to_string())?;
         self.source.check_source(scene, &active.id)
+    }
+    fn revoke_region(&self) {
+        if self.region_revoked.swap(true, Ordering::SeqCst) { return; }
+        if let Ok(session) = self.region.lock() {
+            if let Some(session) = session.as_ref() { session.revoke(); }
+        }
+        #[cfg(windows)]
+        self.escape.release();
     }
     pub(crate) fn check(&self, app: &AppHandle) -> Result<(), String> {
         let host = app.state::<Host>();
@@ -238,17 +257,27 @@ impl Drop for ChatRegionScope {
         }
     }
 }
-/// Poll only the task's cancellation/source fences, never physical keys. The
-/// short-lived native Escape lease sets the same signal while a model waits.
+/// A native Escape / explicit cancellation ends the run. Losing presentation
+/// only revokes screen input: a minimized chat must keep generating its answer.
 pub(crate) async fn canceled(app: &AppHandle, scope: Option<&Arc<ChatRegionScope>>) {
     let Some(scope) = scope else {
         std::future::pending::<()>().await;
         return;
     };
     loop {
-        if scope.check(app).is_err() {
+        let state = (|| {
+            let host = app.state::<Host>();
+            host.exit.ensure_background()?;
+            let engine = host.lock()?;
+            scope.check_run_engine(&engine)?;
+            Ok::<_, String>(scope.check_engine(&engine).is_ok())
+        })();
+        let Ok(region_current) = state else {
             scope.canceled.store(true, Ordering::SeqCst);
             return;
+        };
+        if !region_current {
+            scope.revoke_region();
         }
         tokio::time::sleep(std::time::Duration::from_millis(80)).await;
     }
@@ -427,7 +456,17 @@ mod tests {
         let admission = engine.agent_runs.remove(&run.run_id).unwrap();
         assert!(scope.check_engine(&engine).is_err());
         engine.agent_runs.insert(run.run_id.clone(), admission);
+        engine.store.apply(mewu_core::SceneCommand::FreezeScene { scene_id: id.clone() }).unwrap();
+        assert!(scope.check_run_engine(&engine).is_ok());
+        assert!(scope.check_engine(&engine).is_err());
+        scope.revoke_region();
+        assert!(!token.load(Ordering::SeqCst), "minimize must not cancel the model or unrelated tools");
+        assert!(engine.store.run_is_active(&id, &run.run_id));
+        engine.store.apply(mewu_core::SceneCommand::ActivateScene { scene_id: id.clone() }).unwrap();
+        assert!(scope.check_run_engine(&engine).is_ok());
+        assert!(scope.check_engine(&engine).is_err(), "restoring presentation cannot revive input authority");
         engine.store.cancel_run(&id).unwrap();
+        assert!(scope.check_run_engine(&engine).is_err());
         assert!(scope.check_engine(&engine).is_err());
         assert!(!scope.cancel_token().load(Ordering::SeqCst));
     }

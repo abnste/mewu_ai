@@ -178,3 +178,12 @@ not a visible keepalive window or a polling loop. Other platforms ignore that
 platform-specific property; the Rust Agent and its cancellation remain native.
 An explicit new-conversation request can refresh unavailable capability metadata
 once. It still checks scene identity and revocation before making any mutation.
+
+
+## 会话收起与区域工具
+
+最小化只改变会话的呈现，既有原生模型任务继续执行并将结果保存在原会话。屏幕选区是附加给特定工具的临时操作权限，不是整个对话的存活条件；最小化、换场景或改变选区会永久撤销该次区域输入会话和它的 Esc 注册，恢复窗口不能复活旧操作授权。未声明 `requiresRegion` 的插件工具不接收区域上下文，也不受区域可见性门约束。
+
+工具尚未执行且目录或局部授权失效时，先持久保存 `NotSent`，在原运行仍有效的前提下将 `tool_unavailable`、`executed:false`、`retryable:false` 回交模型。模型可以完成直接回答或选择其他已有能力，不能恢复权限或重放未知副作用。取消、运行替换、宿主退出和未知执行结果仍终止后续调用。
+
+Mewu 空间内的交互内容继续使用 HTML/SVG 代码块和原生对象存储。用户说“桌面上”默认指悬浮呈现；仅明确文件操作才使用本机文件系统工具。

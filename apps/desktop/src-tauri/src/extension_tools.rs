@@ -190,6 +190,9 @@ pub(crate) async fn execute_recorded(
     call: ai::ModelToolCall,
     lease: DispatchLease,
 ) -> Result<journal_runtime::CommittedToolOutput, String> {
+    // A run may carry a screen selection for one tool. Unrelated memory/UI/
+    // document tools neither inherit its input authority nor its visibility fence.
+    let region = if descriptor.requires_region()? { region } else { None };
     let outcome = if canceled.load(Ordering::SeqCst) {
         ToolInvocationOutcome::NotSent(NotSentReason::RunEnded)
     } else {

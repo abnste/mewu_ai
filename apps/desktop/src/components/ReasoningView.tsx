@@ -17,6 +17,6 @@ export default function ReasoningView(props: { identity: string; text: string; r
     <button class="reply-reasoning-toggle" aria-expanded={expanded()} onClick={() => setExpanded(disclosure().toggle())}>
       <Show when={props.running}><LoaderCircle size={12} class="spin" /></Show><span>{t(props.running ? '正在思考' : '思考过程')}</span><ChevronDown size={12} classList={{ expanded: expanded() }} />
     </button>
-    <Show when={expanded()}><div ref={panel} class="reply-reasoning-body" tabIndex={0}><Markdown text={reasoningDisplayText(props.text)} /></div></Show>
+    <Show when={expanded()}><div ref={panel} class="reply-reasoning-body" tabIndex={0}><Markdown text={reasoningDisplayText(props.text)} collapseCode={false} /></div></Show>
   </section></Show>;
 }

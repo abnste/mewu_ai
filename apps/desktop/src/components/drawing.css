@@ -97,7 +97,8 @@
 .board-toolbar-grip>span{width:4px;height:24px;border-radius:4px;background:var(--muted,#8290a3);opacity:.5}
 .board-toolbar-grip:hover{background:var(--accent-soft,#eaf1fa)}
 .board-toolbar-dragging .board-toolbar-grip{cursor:grabbing}
-.drawing-blackboard .drawing-property-controls.board-property-menu{position:absolute;display:flex;flex-wrap:wrap;overflow:visible;align-items:center;gap:6px;width:max-content;min-width:0;max-width:min(330px,calc(100vw - 28px));padding:8px;border-radius:12px;background:var(--surface,#fafcff);box-shadow:0 6px 24px #3347623d,0 1px 4px #3347621a;z-index:10}
+.drawing-blackboard .drawing-property-controls.board-property-menu{position:absolute;display:flex;flex-wrap:nowrap;white-space:nowrap;overflow-x:auto;align-items:center;gap:6px;width:max-content;min-width:0;max-width:calc(100vw - 12px);padding:8px;border-radius:12px;background:var(--surface,#fafcff);box-shadow:0 6px 24px #3347623d,0 1px 4px #3347621a;z-index:10;box-sizing:border-box}
+.board-toolbar-dock-preview{position:fixed;pointer-events:none;z-index:4;border:1px solid var(--accent,#6678e9);border-radius:15px;background:color-mix(in srgb,var(--accent,#6678e9) 9%,transparent);box-sizing:border-box}
 .drawing-blackboard .board-property-menu[hidden]{display:none!important}
 .board-property-menu>.drawing-divider{display:none}
 .drawing-blackboard .board-toolbar-vertical{flex-direction:column;max-width:72px;max-height:calc(100vh - 16px)}

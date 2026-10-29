@@ -28,3 +28,11 @@ export function avoidDrawingToolbar(current:ToolbarPlacement,point:{x:number;y:n
   const other=placeDrawingToolbar(box,current,viewport,rightDocked,edge);
   return near(other)?current.edge:edge;
 }
+
+/** Center a tool's bubble on its button; clamp only at viewport boundaries. */
+export function placeDrawingProperties(anchor:ToolbarRect,size:{width:number;height:number},viewport:{width:number;height:number},side:'top'|'bottom'|'left'|'right') {
+  const gap=8,margin=6;
+  const x=side==='left'?anchor.x-size.width-gap:side==='right'?anchor.x+anchor.width+gap:anchor.x+(anchor.width-size.width)/2;
+  const y=side==='top'?anchor.y-size.height-gap:side==='bottom'?anchor.y+anchor.height+gap:anchor.y+(anchor.height-size.height)/2;
+  return {x:clamp(x,margin,Math.max(margin,viewport.width-size.width-margin)),y:clamp(y,margin,Math.max(margin,viewport.height-size.height-margin))};
+}

@@ -159,14 +159,17 @@ mod feedback {
     }
 
     #[test]
-    fn feedback_is_only_for_the_two_explicit_notsent_reasons_and_has_no_private_data() {
-        for (reason, code, correctable) in [
-            (NotSentReason::InvalidArguments, "invalid_arguments", true),
+    fn feedback_distinguishes_correctable_input_from_unavailable_tools_without_private_data() {
+        for (reason, code, correctable, retryable) in [
+            (NotSentReason::InvalidArguments, "invalid_arguments", true, true),
             (
                 NotSentReason::PreparationFailed,
                 "preparation_failed",
                 false,
+                true,
             ),
+            (NotSentReason::AuthorityChanged, "tool_unavailable", false, false),
+            (NotSentReason::CatalogChanged, "tool_unavailable", false, false),
         ] {
             let output = not_sent_feedback(reason).unwrap();
             let value: Value = serde_json::from_str(&output.model_json).unwrap();
@@ -174,7 +177,7 @@ mod feedback {
             assert_eq!(value["executed"], false);
             assert_eq!(value["code"], code);
             assert_eq!(value["correctable"], correctable);
-            assert_eq!(value["retryable"], true);
+            assert_eq!(value["retryable"], retryable);
             assert!(value["correction"].is_string());
             for field in [
                 "arguments",
@@ -187,14 +190,34 @@ mod feedback {
             }
         }
         for reason in [
-            NotSentReason::AuthorityChanged,
-            NotSentReason::CatalogChanged,
             NotSentReason::RunEnded,
             NotSentReason::BudgetExhausted,
             NotSentReason::DuplicateCallId,
             NotSentReason::NotAdvertised,
         ] {
             assert!(not_sent_feedback(reason).is_none());
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn unavailable_unexecuted_tool_returns_to_model_for_direct_answer_without_replay() {
+        for reason in [NotSentReason::AuthorityChanged, NotSentReason::CatalogChanged] {
+            let fixture = Fixture::new(vec![turn(&[("unavailable", json!({"text":"old selection"}))]), final_text("```html\n<button>interactive object</button>\n```")]);
+            let journal = FeedbackJournal::new();
+            let host = journal.clone();
+            let stopped = reason.clone();
+            let answer = recorded_inner(Transport::chat(fixture.url.clone()), "", body(), tools(), |_| {}, journal.clone(), move |_call, lease| {
+                let host=host.clone();let reason=stopped.clone();
+                async move {host.not_sent(&lease,reason.clone())?;host.active()?;not_sent_feedback(reason).ok_or_else(||"hard failure".into())}
+            }).await.unwrap();
+            assert!(answer.contains("<button>interactive object</button>"));
+            let requests=fixture.requests.lock().unwrap();assert_eq!(requests.len(),2);
+            let result=requests[1]["messages"].as_array().unwrap().iter().find(|m|m["role"]=="tool").unwrap();
+            let value:Value=serde_json::from_str(result["content"].as_str().unwrap()).unwrap();
+            assert_eq!(value["code"],"tool_unavailable");assert_eq!(value["executed"],false);assert_eq!(value["retryable"],false);
+            let page=journal.base.page();
+            assert_eq!(page.entries.iter().filter(|e|e.kind==ReceiptKind::Tool&&e.phase==ReceiptPhase::NotSent).count(),1);
+            assert!(!page.entries.iter().any(|e|e.kind==ReceiptKind::Tool&&e.phase==ReceiptPhase::Dispatched));
         }
     }
 

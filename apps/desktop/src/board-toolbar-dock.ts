@@ -18,3 +18,11 @@ export function boardDockAt(point:{x:number;y:number},viewport:{width:number;hei
   const nearest=[...edges].sort((a,b)=>a[1]-b[1])[0];
   return nearest[1]<=36?nearest[0]:'free';
 }
+
+export function boardDockPreview(position:BoardToolbarPosition,size:{width:number;height:number},viewport:{width:number;height:number},edge:BoardDock,vertical:boolean) {
+  if(edge==='free')return undefined;
+  const nextVertical=edge==='left'||edge==='right';
+  const nextSize=nextVertical===vertical?size:{width:size.height,height:size.width};
+  const width=Math.min(nextSize.width,viewport.width-16),height=Math.min(nextSize.height,viewport.height-16);
+  return {...dockBoardToolbar({...position,edge},{width,height},viewport),width,height,edge};
+}

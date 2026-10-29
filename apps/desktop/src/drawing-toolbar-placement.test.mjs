@@ -6,7 +6,7 @@ import { stripTypeScriptTypes } from 'node:module';
 import { SourceTextModule } from 'node:vm';
 const mod=new SourceTextModule(stripTypeScriptTypes(await readFile(new URL('./drawing-toolbar-placement.ts',import.meta.url),'utf8')));
 await mod.link(()=>{throw Error('Unexpected dependency');});await mod.evaluate();
-const {placeDrawingToolbar:place,avoidDrawingToolbar:avoid}=mod.namespace;
+const {placeDrawingToolbar:place,avoidDrawingToolbar:avoid,placeDrawingProperties:properties}=mod.namespace;
 const vp={width:1280,height:720},size={width:650,height:124};
 const inside=r=>{assert.ok(r.x>=6&&r.y>=6);assert.ok(r.x+r.width<=vp.width-6&&r.y+r.height<=vp.height-6);};
 
@@ -35,4 +35,18 @@ test('no flip when the pointer is beside the toolbar or both choices are obstruc
   assert.equal(avoid(r,{x:1000,y:650},box,vp),'bottom');
   const tiny={width:800,height:190};const large=place({x:0,y:0,...tiny},size,tiny);
   assert.equal(avoid(large,{x:300,y:80},{x:0,y:0,...tiny},tiny),'bottom');
+});
+
+test('tool properties center on their button on all four palette edges',()=>{
+ const anchor={x:500,y:300,width:48,height:48},bubble={width:420,height:64};
+ for(const side of ['top','bottom']){
+  const p=properties(anchor,bubble,vp,side);assert.equal(p.x+bubble.width/2,524);
+  assert.equal(p.y,side==='top'?228:356);
+ }
+ for(const side of ['left','right']){
+  const p=properties(anchor,bubble,vp,side);assert.equal(p.y+bubble.height/2,324);
+  assert.equal(p.x,side==='left'?72:556);
+ }
+ const edge=properties({x:5,y:5,width:48,height:48},bubble,vp,'top');
+ assert.equal(edge.x,6);assert.equal(edge.y,6);
 });

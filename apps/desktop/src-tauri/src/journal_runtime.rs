@@ -34,12 +34,18 @@ pub(crate) fn not_sent_feedback(reason: NotSentReason) -> Option<CommittedToolOu
             false,
             "可以在本轮既有预算内决定重试，或改用其他已提供的工具；持续失败时向用户说明，不得声称已执行成功。",
         ),
+        NotSentReason::AuthorityChanged | NotSentReason::CatalogChanged => (
+            "tool_unavailable",
+            "该工具的授权或目录已变化，本次未执行。",
+            false,
+            "不要重复调用这个失效工具或尝试恢复授权。可以使用其他仍获授权的工具，或直接完成无需该工具的回答；确实依赖它时说明限制。",
+        ),
         _ => return None,
     };
     Some(CommittedToolOutput {
         model_json: serde_json::json!({
             "isError":true,"error":message,"code":code,"executed":false,
-            "correctable":correctable,"retryable":true,"correction":correction
+            "correctable":correctable,"retryable":!matches!(reason, NotSentReason::AuthorityChanged | NotSentReason::CatalogChanged),"correction":correction
         })
         .to_string(),
     })

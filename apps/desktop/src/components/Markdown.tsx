@@ -22,7 +22,7 @@ export function ReplyFormulaView(props: { formula: ReplyFormula; text: string })
   return <Show when={rendered()} fallback={props.text}>{html => <span class={props.formula.display ? 'reply-formula reply-formula-display' : 'reply-formula'} data-formula-source={props.text} innerHTML={html()} />}</Show>;
 }
 
-export default function Markdown(props: { text: string; onRestoreCode?:(code:string,point?:{x:number;y:number})=>Promise<void> }) {
+export default function Markdown(props: { text: string; collapseCode?:boolean; onRestoreCode?:(code:string,point?:{x:number;y:number})=>Promise<void> }) {
   let element!: HTMLDivElement;
   const patch = createReplyBlockPatcher(), timers = new Set<ReturnType<typeof setTimeout>>();
   const descendants = (root: Node, selector: string) => root instanceof HTMLElement ? [...(root.matches(selector) ? [root] : []), ...root.querySelectorAll<HTMLElement>(selector)] : [];
@@ -60,10 +60,11 @@ export default function Markdown(props: { text: string; onRestoreCode?:(code:str
     for (const pre of added.flatMap(root => descendants(root, 'pre'))) {
       const code = pre.querySelector('code'); if (!code) continue;
       const language = [...code.classList].find(value => /^language-[a-z0-9_+.-]{1,32}$/i.test(value))?.slice(9) || '';
-      pre.classList.add('reply-code-block','collapsed');
+      const initiallyCollapsed=props.collapseCode!==false;
+      pre.classList.add('reply-code-block');pre.classList.toggle('collapsed',initiallyCollapsed);
       const header = document.createElement('div'), label = document.createElement('span'), copy = document.createElement('button');
       header.className = 'reply-code-heading'; header.dataset.replyCopyExclude = ''; label.textContent = language;
-      const toggle=document.createElement('button');toggle.type='button';toggle.className='reply-code-toggle';toggle.textContent='▸';toggle.title=t('展开代码');toggle.setAttribute('aria-label',t('展开代码'));toggle.setAttribute('aria-expanded','false');
+      const toggle=document.createElement('button');toggle.type='button';toggle.className='reply-code-toggle';toggle.textContent=initiallyCollapsed?'▸':'▾';toggle.title=t(initiallyCollapsed?'展开代码':'收起代码');toggle.setAttribute('aria-label',toggle.title);toggle.setAttribute('aria-expanded',String(!initiallyCollapsed));
       toggle.onclick=event=>{event.stopPropagation();const collapsed=pre.classList.toggle('collapsed');toggle.textContent=collapsed?'▸':'▾';toggle.title=t(collapsed?'展开代码':'收起代码');toggle.setAttribute('aria-label',toggle.title);toggle.setAttribute('aria-expanded',String(!collapsed));};
       copy.type = 'button'; copy.className = 'reply-code-copy'; copy.dataset.replyCodeCopy = ''; copy.textContent = t('复制'); copy.setAttribute('aria-label', t('复制代码')); copy.title = t('复制代码');
       header.append(toggle,label, copy);

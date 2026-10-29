@@ -46,9 +46,12 @@ impl RunEscapeLease {
             .expect("registered region Escape lease")
             .clone())
     }
-    pub(crate) fn release(&mut self) {
-        if let Ok(lease) = self.0.get_mut() {
-            drop(lease.take());
+    pub(crate) fn release(&self) {
+        let lease = self.0.lock().ok().and_then(|mut lease| lease.take());
+        if let Some(lease) = lease {
+            // In-flight hooks may still hold an Arc. Retire registration now,
+            // without marking the parent model run as user-cancelled.
+            lease.stop();
         }
     }
 }
@@ -60,6 +63,10 @@ fn is_stop_message(message: u32, id: usize, data: isize) -> bool {
 }
 
 impl EscapeLease {
+    fn stop(&self) {
+        self.stop.store(true, Ordering::SeqCst);
+        unsafe { PostThreadMessageW(self.thread_id, WM_USER, 0, 0); }
+    }
     pub(crate) fn register(canceled: Arc<AtomicBool>) -> Result<Self, &'static str> {
         let (send, receive) = mpsc::sync_channel(0);
         let stop = Arc::new(AtomicBool::new(false));
@@ -149,7 +156,7 @@ impl EscapeLease {
 impl Drop for EscapeLease {
     fn drop(&mut self) {
         if let Some(thread) = self.thread.take() {
-            self.stop.store(true, Ordering::SeqCst);
+            self.stop();
             if !thread.is_finished() {
                 unsafe {
                     PostThreadMessageW(self.thread_id, WM_QUIT, 0, 0);
@@ -248,5 +255,22 @@ mod tests {
         drop(retried_hooks);
         run.release(); // Context drop after actual worker drain.
         drop(EscapeLease::register(Arc::new(AtomicBool::new(false))).unwrap());
+    }
+
+    #[test]
+    fn presentation_revocation_retires_escape_with_live_hooks_without_canceling_parent() {
+        let _serial = NATIVE_TEST.lock().unwrap();
+        let run = RunEscapeLease::default();
+        let canceled = Arc::new(AtomicBool::new(false));
+        let hooks = run.acquire(canceled.clone()).unwrap();
+        run.release();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !hooks.thread.as_ref().unwrap().is_finished() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(hooks.thread.as_ref().unwrap().is_finished());
+        assert!(!canceled.load(Ordering::SeqCst));
+        drop(EscapeLease::register(Arc::new(AtomicBool::new(false))).expect("retired hooks cannot own Escape"));
+        drop(hooks);
     }
 }
