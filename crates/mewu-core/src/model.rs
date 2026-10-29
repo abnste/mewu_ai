@@ -767,6 +767,16 @@ pub enum ConnectionServiceTier {
     Priority,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ConnectionReasoningEffort {
+    Low,
+    Medium,
+    High,
+    Xhigh,
+    Max,
+}
+
 /// Only supported generation options; this cannot replace messages, tools or auth.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -777,6 +787,8 @@ pub struct ConnectionParameters {
     pub top_p: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub service_tier: Option<ConnectionServiceTier>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<ConnectionReasoningEffort>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]

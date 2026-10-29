@@ -3281,6 +3281,7 @@ mod extension_tool_registry_tests {
             temperature: Some(0.42),
             top_p: Some(0.85),
             service_tier: Some(mewu_core::ConnectionServiceTier::Priority),
+            reasoning_effort: None,
         };
         let messages = vec![json!({"role":"user","content":[{"type":"text","text":"own test"}]})];
         let canonical = model_canonical_body(&connection, messages.clone()).unwrap();
@@ -3294,9 +3295,12 @@ mod extension_tool_registry_tests {
         assert_eq!(body["stream"], json!(true));
         assert!(body.get("reasoning").is_none());
         assert!(body.get("reasoning_effort").is_none());
+        connection.advanced.request_parameters.reasoning_effort = Some(mewu_core::ConnectionReasoningEffort::Low);
+        let explicit = model_canonical_body(&connection, messages).unwrap();
+        assert_eq!(explicit["reasoning_effort"], "low");
         connection.advanced.request_parameters = Default::default();
         let default = model_canonical_body(&connection, vec![]).unwrap();
-        for parameter in ["temperature", "top_p", "service_tier"] {
+        for parameter in ["temperature", "top_p", "service_tier", "reasoning_effort"] {
             assert!(default.get(parameter).is_none());
         }
     }

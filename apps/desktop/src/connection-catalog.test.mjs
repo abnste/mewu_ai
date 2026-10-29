@@ -23,6 +23,14 @@ async function load(file) {
 }
 const draft = (await load('./components/connection-draft.ts')).namespace;
 const policy = (await load('./connection-policy.ts')).namespace;
+test('reasoning effort accepts only optional bounded choices without allowing request replacement', () => {
+  assert.deepEqual(clean(policy.parseConnectionParameters('{}')), {});
+  for (const effort of ['low', 'medium', 'high', 'xhigh', 'max']) {
+    assert.deepEqual(clean(policy.parseConnectionParameters(JSON.stringify({ reasoning_effort: effort }))), { reasoning_effort: effort });
+  }
+  for (const value of ['none', 'invented', 3, null, { effort: 'low' }]) assert.throws(() => policy.parseConnectionParameters(JSON.stringify({ reasoning_effort: value })));
+  assert.throws(() => policy.parseConnectionParameters('{"reasoning_effort":"low","messages":[]}'));
+});
 function profile(baseUrl = 'https://api.example.test') {
   return { id: 'd362cb43-2704-44b8-87b0-9ee9e68c9a3f', providerId: 'custom', name: 'Synthetic', baseUrl, model: 'already-entered-model',
     hasKey: true, credentialId: 'synthetic-private-reference', revision: 7,
@@ -90,10 +98,28 @@ async function panel() {
     validateConnectionProfile: policy.validateConnectionProfile, normalizeConnectionPath: policy.normalizeConnectionPath, parseConnectionParameters: policy.parseConnectionParameters,
     t: value => value, groupLabels: {}, message: cause => cause instanceof Error ? cause.message : String(cause),
   });
-  runInContext(plain(body) + '\nglobalThis.api={open,ensure,field,edit,form,runProbe,save,models,modelStatus,errors,probe};', scope);
+  runInContext(plain(body) + '\nglobalThis.api={open,ensure,field,edit,form,runProbe,save,models,modelStatus,errors,probe,reasoningEffort,setReasoningEffort};', scope);
   await tick(); scope.api.open(saved.id);
   return { api: scope.api, props, id: saved.id, calls, flights, canceled, keyReads, dispose: () => cleanups.forEach(f => f()) };
 }
+
+test('actual effort selector preserves other options and credentials and refuses malformed JSON without losing edits', async () => {
+  const f = await panel();
+  f.api.setReasoningEffort(f.id, 'medium');
+  assert.equal(f.api.reasoningEffort(f.id), 'medium');
+  assert.deepEqual(JSON.parse(f.api.form(f.id).parametersText), { temperature: .4, reasoning_effort: 'medium' });
+  assert.equal(f.api.form(f.id).keyEdited, false);
+  await f.api.save(f.id);
+  assert.equal(f.calls[0][0].advanced.requestParameters.reasoning_effort, 'medium');
+  assert.equal(f.calls[0][2], undefined);
+  f.api.setReasoningEffort(f.id, '');
+  assert.deepEqual(JSON.parse(f.api.form(f.id).parametersText), { temperature: .4 });
+  f.api.edit(f.id, { parametersText: '{ invalid draft' });
+  f.api.setReasoningEffort(f.id, 'high');
+  assert.equal(f.api.form(f.id).parametersText, '{ invalid draft');
+  assert.ok(f.api.errors()[f.id]);
+  f.dispose();
+});
 
 test('saved key is refilled as its real password value; unchanged save does not replace the encrypted key', async () => {
   const f = await panel(), actualKey = 'a123456789012345';

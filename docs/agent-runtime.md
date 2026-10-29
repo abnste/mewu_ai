@@ -187,3 +187,9 @@ once. It still checks scene identity and revocation before making any mutation.
 工具尚未执行且目录或局部授权失效时，先持久保存 `NotSent`，在原运行仍有效的前提下将 `tool_unavailable`、`executed:false`、`retryable:false` 回交模型。模型可以完成直接回答或选择其他已有能力，不能恢复权限或重放未知副作用。取消、运行替换、宿主退出和未知执行结果仍终止后续调用。
 
 Mewu 空间内的交互内容继续使用 HTML/SVG 代码块和原生对象存储。用户说“桌面上”默认指悬浮呈现；仅明确文件操作才使用本机文件系统工具。
+
+## 可选思考强度
+
+连接高级设置中的思考强度是可选参数，留空沿用服务商默认值；不按模型名称注入固定参数。显式选择后，Chat Completions 使用 `reasoning_effort`，Responses 使用 `reasoning.effort`，Anthropic Messages 使用 `output_config.effort`。五档选择为 low、medium、high、xhigh、max，实际支持范围由所选服务决定。该参数随连接修订保存，不能替换消息、工具或认证信息；插件模型预设和原生 Agent 复用同一协议转换。
+
+MiniMax 的 [OpenAI 兼容文档](https://platform.minimax.io/docs/api-reference/text-openai-api)和 [Anthropic 兼容文档](https://platform.minimax.io/docs/api-reference/text-anthropic-api)说明 M3.1 Flash 未提供强度时默认 max。速度测试需要记录这项配置以及实际输出量，不能只根据模型名称判断延迟。

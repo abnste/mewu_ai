@@ -221,6 +221,10 @@ pub fn request_body(protocol: ConnectionProtocol, mut canonical: Value) -> Resul
             return Err("service_tier 参数无效".into());
         }
     }
+    if let Some(value) = canonical.get("reasoning_effort") {
+        serde_json::from_value::<mewu_core::ConnectionReasoningEffort>(value.clone())
+            .map_err(|_| "reasoning_effort 参数无效")?;
+    }
     if protocol == ConnectionProtocol::ChatCompletions {
         return Ok(canonical);
     }
@@ -229,6 +233,14 @@ pub fn request_body(protocol: ConnectionProtocol, mut canonical: Value) -> Resul
         .and_then(Value::as_array)
         .ok_or("模型请求缺少消息")?;
     let mut body = json!({"model":string(&canonical,"model")?,"stream":true});
+    if let Some(effort) = canonical.get("reasoning_effort") {
+        // The connection owns this optional choice; no vendor/model defaults.
+        match protocol {
+            ConnectionProtocol::OpenAiResponses => body["reasoning"] = json!({"effort":effort}),
+            ConnectionProtocol::AnthropicMessages => body["output_config"] = json!({"effort":effort}),
+            ConnectionProtocol::ChatCompletions => unreachable!(),
+        }
+    }
     for key in ["temperature", "top_p", "service_tier"] {
         if let Some(value) = canonical.get(key) {
             body[key] = value.clone();
@@ -1271,6 +1283,34 @@ pub(crate) mod tests {
                 .unwrap_err()
                 .contains("priority")
         );
+    }
+    #[test]
+    fn optional_reasoning_effort_uses_protocol_fields_without_adding_vendor_defaults() {
+        let canonical = json!({"model":"any-compatible-model","messages":[{"role":"user","content":"own task"}],"stream":true});
+        for protocol in [ConnectionProtocol::ChatCompletions, ConnectionProtocol::OpenAiResponses, ConnectionProtocol::AnthropicMessages] {
+            let default = request_body(protocol, canonical.clone()).unwrap();
+            for field in ["reasoning_effort", "reasoning", "output_config", "thinking"] {
+                assert!(default.get(field).is_none(), "{field}");
+            }
+            for effort in ["low", "medium", "high", "xhigh", "max"] {
+                let mut explicit = canonical.clone();
+                explicit["reasoning_effort"] = json!(effort);
+                let body = request_body(protocol, explicit).unwrap();
+                let field = match protocol {
+                    ConnectionProtocol::ChatCompletions => "/reasoning_effort",
+                    ConnectionProtocol::OpenAiResponses => "/reasoning/effort",
+                    ConnectionProtocol::AnthropicMessages => "/output_config/effort",
+                };
+                assert_eq!(body.pointer(field), Some(&json!(effort)));
+                if protocol != ConnectionProtocol::ChatCompletions { assert!(body.get("reasoning_effort").is_none()); }
+                assert!(body.get("thinking").is_none());
+            }
+            for invalid in [json!("none"), json!("invented"), json!(null), json!({"effort":"low"})] {
+                let mut bad = canonical.clone();
+                bad["reasoning_effort"] = invalid;
+                assert!(request_body(protocol, bad).is_err());
+            }
+        }
     }
     #[tokio::test(flavor = "current_thread")]
     async fn native_streams_accept_split_utf8_and_keep_reasoning_out_of_visible_text() {

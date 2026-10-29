@@ -13,8 +13,9 @@ export function parseConnectionParameters(text: string): ConnectionParameters {
   for (const [name, entry] of Object.entries(value)) {
     const valid = name === 'temperature' ? typeof entry === 'number' && Number.isFinite(entry) && entry >= 0 && entry <= 2
       : name === 'top_p' ? typeof entry === 'number' && Number.isFinite(entry) && entry > 0 && entry <= 1
-        : name === 'service_tier' && (entry === 'standard' || entry === 'priority');
-    if (!valid) throw new Error('仅支持 temperature（0–2）、top_p（0–1，不含 0）、service_tier（standard / priority）');
+        : name === 'reasoning_effort' ? typeof entry === 'string' && ['low', 'medium', 'high', 'xhigh', 'max'].includes(entry)
+          : name === 'service_tier' && (entry === 'standard' || entry === 'priority');
+    if (!valid) throw new Error('仅支持 temperature（0–2）、top_p（0–1，不含 0）、service_tier（standard / priority）、reasoning_effort（low / medium / high / xhigh / max）');
   }
   return value as ConnectionParameters;
 }

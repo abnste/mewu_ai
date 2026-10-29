@@ -415,8 +415,30 @@ fn restricted_options_and_identity_cannot_smuggle_secrets_or_override_messages()
             temperature: Some(0.0),
             top_p: Some(1.0),
             service_tier: Some(ConnectionServiceTier::Priority),
+            reasoning_effort: Some(ConnectionReasoningEffort::High),
         };
         validate_connection_profile(&accepted).unwrap();
+    }
+}
+
+#[test]
+fn optional_reasoning_effort_preserves_old_profiles_and_roundtrips_with_connection_cas() {
+    let temp = TempDb::new();
+    let mut store = Store::open(&temp.path).unwrap();
+    let original = profile("Any compatible model");
+    assert!(serde_json::to_value(&original).unwrap()["advanced"]["requestParameters"].get("reasoning_effort").is_none());
+    store.save_connection_profile(original.clone(), None).unwrap();
+    let mut changed = store.snapshot().connections.iter().find(|p| p.id == original.id).unwrap().clone();
+    changed.advanced.request_parameters.reasoning_effort = Some(ConnectionReasoningEffort::Medium);
+    let revision = changed.revision;
+    changed.revision += 1;
+    store.save_connection_profile(changed.clone(), Some(revision)).unwrap();
+    assert!(store.save_connection_profile(original.clone(), Some(revision)).is_err());
+    let saved = store.snapshot();
+    drop(store);
+    assert_eq!(Store::open(&temp.path).unwrap().snapshot(), saved);
+    for invalid in [json!("none"), json!("maximum"), json!(3), json!({"effort":"low"})] {
+        assert!(serde_json::from_value::<ConnectionParameters>(json!({"reasoning_effort":invalid})).is_err());
     }
 }
 

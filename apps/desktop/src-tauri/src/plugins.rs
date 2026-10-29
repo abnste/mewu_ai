@@ -299,6 +299,8 @@ pub struct ModelConnectionParameters {
     pub top_p: Option<serde_json::Number>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub service_tier: Option<mewu_core::ConnectionServiceTier>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<mewu_core::ConnectionReasoningEffort>,
 }
 
 impl ModelConnectionTemplate {

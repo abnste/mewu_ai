@@ -669,6 +669,7 @@ fn advanced_parameters_cannot_override_host_message_and_tool_fields() {
         temperature: Some(0.5),
         top_p: Some(0.9),
         service_tier: Some(mewu_core::ConnectionServiceTier::Standard),
+        reasoning_effort: Some(mewu_core::ConnectionReasoningEffort::Medium),
     };
     let mut body = json!({"model":"host-model","stream":true,"messages":[{"role":"user","content":"host-input"}],"tools":[]});
     let old_messages = body["messages"].clone();
@@ -681,6 +682,7 @@ fn advanced_parameters_cannot_override_host_message_and_tool_fields() {
     assert_eq!(body["temperature"], 0.5);
     assert_eq!(body["top_p"], 0.9);
     assert_eq!(body["service_tier"], "standard");
+    assert_eq!(body["reasoning_effort"], "medium");
 }
 
 fn catalog_response(status: u16, mime: &str, body: &[u8]) -> Vec<u8> {

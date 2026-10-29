@@ -74,7 +74,7 @@ export interface MemoryEvidencePage { entries: MemoryEvidenceView[]; total: numb
 export interface MemoryEvidenceDetail { summary: MemoryEvidenceView; attributedText: string | null }
 export interface MemoryProviderProbe { version: string; latencyMs: number }
 export interface Connection { baseUrl: string; model: string; hasKey: boolean }
-export interface ConnectionParameters { temperature?: number; top_p?: number; service_tier?: 'standard' | 'priority' }
+export interface ConnectionParameters { temperature?: number; top_p?: number; service_tier?: 'standard' | 'priority'; reasoning_effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max' }
 export interface ConnectionAdvanced { protocol: 'chat_completions' | 'anthropic_messages' | 'openai_responses'; authMode: 'bearer' | 'api_key' | 'none'; requestPath?: string | null; requestParameters: ConnectionParameters; contextWindowTokens?: number | null }
 export interface ConnectionProfile extends Connection { id: string; name: string; providerId: string; revision: number; credentialId?: string | null; advanced: ConnectionAdvanced }
 export interface ProviderPreset { id: string; name: string; group: 'china' | 'global' | 'custom'; baseUrl: string; model: string; advanced: ConnectionAdvanced; searchTerms?: string; pluginId: string; pluginRevision: number; contributionId: string }

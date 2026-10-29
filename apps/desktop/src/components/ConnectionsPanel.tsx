@@ -3,7 +3,7 @@ import { t } from "../i18n";
 import { nativeSelectOwnsEscape } from '../native-select-escape';
 import { createEffect, createMemo, createSignal, For, on, onCleanup, Show } from 'solid-js';
 import { Check, ChevronDown, ChevronRight, CircleAlert, LoaderCircle, MoreHorizontal, Plus, RefreshCw, Search } from 'lucide-solid';
-import type { ConnectionAdvanced, ConnectionProfile, ConnectionTestResult, ProviderPreset } from '../contracts';
+import type { ConnectionAdvanced, ConnectionParameters, ConnectionProfile, ConnectionTestResult, ProviderPreset } from '../contracts';
 import { cancelConnectionProbe, discoverConnectionModels, getProviderPresets, readConnectionKey, testConnection } from '../bridge';
 import { normalizeConnectionPath, parseConnectionParameters, validateConnectionProfile } from '../connection-policy';
 import { subscribePlugins } from '../plugin-bridge';
@@ -119,6 +119,19 @@ export default function ConnectionsPanel(props: Props) {
     validateConnectionProfile(profile, requireModel); return profile;
   }
   const keyArgument = (value: Draft) => value.clearKey ? '' : value.keyEdited ? value.key : undefined;
+  function reasoningEffort(id: string) {
+    try { return parseConnectionParameters(form(id)?.parametersText ?? '{}').reasoning_effort ?? ''; }
+    catch { return ''; }
+  }
+  function setReasoningEffort(id: string, effort: string) {
+    try {
+      const parameters = parseConnectionParameters(form(id)?.parametersText ?? '{}');
+      if (effort) parameters.reasoning_effort = effort as ConnectionParameters['reasoning_effort'];
+      else delete parameters.reasoning_effort;
+      edit(id, { parametersText: JSON.stringify(parameters, null, 2) });
+      clearError(id);
+    } catch (error) { setErrors(old => ({ ...old, [id]: message(error) })); }
+  }
   async function save(id: string) {
     const value = form(id); if (!value || pending()) return;
     cancelProbe(); setPending(id); setSaved(''); clearError(id);
@@ -188,6 +201,7 @@ export default function ConnectionsPanel(props: Props) {
           <div class="connection-advanced-row"><label class="field-label">{t("API 格式")}<select aria-label={t("API 格式")} value={value().profile.advanced.protocol} onChange={event => advanced(id, { protocol: event.currentTarget.value as ConnectionAdvanced['protocol'] })}><option value="chat_completions">OpenAI Chat</option><option value="anthropic_messages">Anthropic Messages</option><option value="openai_responses">OpenAI Responses</option></select></label><label class="field-label">{t("认证")}<select aria-label={t("认证方式")} value={value().profile.advanced.authMode} onChange={event => advanced(id, { authMode: event.currentTarget.value as ConnectionAdvanced['authMode'] })}><option value="bearer">Bearer</option><option value="api_key">API Key</option><option value="none">{t("无")}</option></select></label></div>
           <label class="field-label">{t("请求路径")}<input aria-label={t("请求路径")} value={value().profile.advanced.requestPath ?? ''} placeholder={t("可选，如 /v1/messages")} title={t("相对域名根路径；留空按 API 地址自动补全")} spellcheck={false} onInput={event => advanced(id, { requestPath: event.currentTarget.value })} /></label>
           <label class="field-label">{t("上下文窗口（tokens）")}<input type="number" min={8192} max={2097152} step={1} aria-label={t("上下文窗口（tokens）")} placeholder="65536" value={value().profile.advanced.contextWindowTokens ?? ''} onInput={event => advanced(id, { contextWindowTokens: event.currentTarget.value === '' ? null : Number(event.currentTarget.value) })} /></label>
+          <label class="field-label">{t("思考强度")}<select aria-label={t("思考强度")} value={reasoningEffort(id)} onChange={event => setReasoningEffort(id, event.currentTarget.value)}><option value="">{t("服务商默认")}</option><option value="low">{t("低")}</option><option value="medium">{t("中")}</option><option value="high">{t("高")}</option><option value="xhigh">{t("更高")}</option><option value="max">{t("最高")}</option></select></label>
           <label class="field-label">{t("请求参数 JSON")}<textarea aria-label={t("请求参数 JSON")} rows={3} maxlength={16384} spellcheck={false} value={value().parametersText} onInput={event => edit(id, { parametersText: event.currentTarget.value })} /></label>
         </details>
         <div class="connection-test"><button class="secondary-button" disabled={Boolean(pending()) || Boolean(probe())} onClick={() => void runProbe(id, 'test')}><Show when={probe()?.id === id && probe()?.kind === 'test'}><LoaderCircle size={13} class="spin" /></Show>{t("测试连接")}</button><Show when={probe()?.id === id} fallback={<Show when={testResults()[id]} fallback={<small>{t("会发送测试请求")}</small>}>{result => <span class="saved-label"><Check size={13} />{t("连接正常 ·")}{Math.round(result().latencyMs)} ms</span>}</Show>}><button class="text-button" onClick={cancelProbe}>{t("取消")}</button></Show></div>

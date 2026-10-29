@@ -1285,5 +1285,12 @@
   "修改文件": "Edit file",
   "列出目录": "List directory",
   "查找文件": "Find files",
-  "搜索文件": "Search files"
+  "搜索文件": "Search files",
+  "思考强度": "Thinking effort",
+  "服务商默认": "Provider default",
+  "低": "Low",
+  "中": "Medium",
+  "高": "High",
+  "更高": "Very high",
+  "最高": "Maximum"
 }
