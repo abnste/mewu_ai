@@ -50,6 +50,10 @@ Capture, drawing, and recording work without AI setup. AI conversations, transla
 
 - Reference-guided generation and dedicated image/video model connections.
 - Circle-to-search, a desktop companion plugin, and more desktop collaboration workflows.
+- Android x86 support for classroom interactive displays and TV systems.
+- Messaging channel integrations.
+- Exporting and sharing interactive workspaces.
+- One-click sharing.
 - Broader platform coverage, language support, and performance improvements.
 
 ## Feature demos
@@ -146,6 +150,12 @@ Image, video, tool calling, and thinking effort support, as well as usage limits
 ## Plugin marketplace
 
 Browse, install, and manage extensions in **Settings → Plugins**, or import a release ZIP. [Browse the full marketplace](https://github.com/abnste/mewu-plugins).
+
+You can also describe what you need to the built-in Agent and ask it to create a plugin. For example, send:
+
+> Generate a Mewu plugin that adds OpenClaw channel support.
+
+The Agent can load the plugin-authoring skill to create, validate, and package the plugin. Once it is ready, review its permissions and install it under **Plugins → Installed → Self-made**. See [skills and plugin authoring](./docs/agent-skills.md).
 
 | Plugin | What it adds |
 | --- | --- |
