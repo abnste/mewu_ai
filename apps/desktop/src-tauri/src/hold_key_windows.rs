@@ -17,7 +17,8 @@ use windows_sys::Win32::{
     UI::{
         Input::KeyboardAndMouse::{
             GetAsyncKeyState, MapVirtualKeyW, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD,
-            KEYBDINPUT, KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, MAPVK_VSC_TO_VK_EX,
+            KEYBDINPUT, KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, MAPVK_VK_TO_VSC,
+            MAPVK_VSC_TO_VK_EX,
         },
         WindowsAndMessaging::*,
     },
@@ -27,9 +28,7 @@ const RELEASE: u32 = WM_APP + 0x502;
 const STOP: u32 = WM_APP + 0x503;
 const TAG: usize = 0x4d455755;
 const STATE_TAG: usize = 0x4d455756;
-// Unassigned, non-character menu mask documented by AutoHotkey.
-// Never use Ctrl/Alt/Shift as a mask: that would change the user's real chord.
-const MENU_MASK_KEY: u16 = 0xe8;
+const CLEAR_STATE: u32 = WM_APP + 0x505;
 static ENABLED: AtomicBool = AtomicBool::new(false);
 static THREAD: AtomicU32 = AtomicU32::new(0);
 static THRESHOLD: AtomicU32 = AtomicU32::new(400);
@@ -113,7 +112,7 @@ fn modifier_release_input(key: u32) -> INPUT {
         Anonymous: INPUT_0 {
             ki: KEYBDINPUT {
                 wVk: key as u16,
-                wScan: 0,
+                wScan: unsafe { MapVirtualKeyW(key, MAPVK_VK_TO_VSC) } as u16,
                 dwFlags: KEYEVENTF_KEYUP | KEYEVENTF_EXTENDEDKEY,
                 time: 0,
                 dwExtraInfo: STATE_TAG,
@@ -121,25 +120,8 @@ fn modifier_release_input(key: u32) -> INPUT {
         },
     }
 }
-fn masked_modifier_release(key: u32) -> [INPUT; 3] {
-    let mask = |up| INPUT {
-        r#type: INPUT_KEYBOARD,
-        Anonymous: INPUT_0 {
-            ki: KEYBDINPUT {
-                wVk: MENU_MASK_KEY,
-                wScan: 0,
-                dwFlags: if up { KEYEVENTF_KEYUP } else { 0 },
-                time: 0,
-                dwExtraInfo: TAG,
-            },
-        },
-    };
-    // The mask must reach the OS BEFORE the state-only Win release. Suppressing
-    // all three messages leaves the shell's lone-Win Start action armed.
-    [mask(false), mask(true), modifier_release_input(key)]
-}
 unsafe fn release_os_modifier(key: u32) -> bool {
-    let inputs = masked_modifier_release(key);
+    let inputs = [modifier_release_input(key)];
     SendInput(
         inputs.len() as u32,
         inputs.as_ptr(),
@@ -153,20 +135,49 @@ enum TaggedRoute {
 }
 fn tagged_route(event: &KBDLLHOOKSTRUCT) -> Option<TaggedRoute> {
     if event.dwExtraInfo == STATE_TAG {
-        // This key-up MUST reach Windows' input queue. Consuming it in our own
-        // hook leaves the system modifier down, so Win+click can still activate
-        // the shell even though Mewu consumed the physical keyboard message.
-        return Some(
-            if matches!(event.vkCode, 0x5b | 0x5c)
-                && event.flags & (LLKHF_UP | LLKHF_EXTENDED) == (LLKHF_UP | LLKHF_EXTENDED)
-            {
-                TaggedRoute::Forward
-            } else {
-                TaggedRoute::Suppress
-            },
-        );
+        // State-only releases follow PowerToys' lower-level modifier reset:
+        // SendInput updates low-level state, but this hook must consume the
+        // tagged message. Forwarding it lets the shell treat our bookkeeping
+        // as a real Win release and open Start/Click to Do. Only actual tap or
+        // chord replay (TAG) belongs in the application's input queue.
+        // https://github.com/microsoft/PowerToys/blob/main/doc/devdocs/modules/keyboardmanager/keyboardmanager.md#modifier-caps-lock-interaction-on-japanese-ime-keyboards
+        return Some(TaggedRoute::Suppress);
     }
     (event.dwExtraInfo == TAG).then_some(TaggedRoute::Forward)
+}
+unsafe fn replay_keys(keys: &[(u32, bool)]) -> bool {
+    if keys.is_empty() {
+        return true;
+    }
+    let inputs: Vec<_> = keys
+        .iter()
+        .map(|(key, up)| INPUT {
+            r#type: INPUT_KEYBOARD,
+            Anonymous: INPUT_0 {
+                ki: KEYBDINPUT {
+                    wVk: *key as u16,
+                    wScan: MapVirtualKeyW(*key, MAPVK_VK_TO_VSC) as u16,
+                    dwFlags: (if *up { KEYEVENTF_KEYUP } else { 0 })
+                        | (if matches!(*key, 0x5b | 0x5c) {
+                            KEYEVENTF_EXTENDEDKEY
+                        } else {
+                            0
+                        }),
+                    time: 0,
+                    dwExtraInfo: TAG,
+                },
+            },
+        })
+        .collect();
+    SendInput(
+        inputs.len() as u32,
+        inputs.as_ptr(),
+        std::mem::size_of::<INPUT>() as i32,
+    ) == inputs.len() as u32
+}
+fn fault() {
+    FAULT.store(true, Ordering::Release);
+    ENABLED.store(false, Ordering::Release);
 }
 unsafe extern "system" fn keyboard(code: i32, w: WPARAM, l: LPARAM) -> LRESULT {
     if code < 0 || l == 0 {
@@ -202,66 +213,44 @@ unsafe extern "system" fn keyboard(code: i32, w: WPARAM, l: LPARAM) -> LRESULT {
             let decision =
                 cell.borrow_mut()
                     .key(key, down, clock(), THRESHOLD.load(Ordering::Acquire));
-            // Initial down is cleared by PRESS on this same hook thread AFTER
-            // the original callback returns. LowLevelKeyboardProc runs before
-            // async key state is updated; clearing inside that callback can be
-            // overtaken by the original Win down and leave Win+click active.
+            // All physical downs, including auto-repeat, are cleared on this
+            // same hook thread after the callback returns. Resetting within
+            // the callback can be overtaken by the original down. A delayed
+            // reset rechecks ownership so it cannot release a real Win chord.
             if let Some(key) = decision.clear_os_modifier.filter(|_| !decision.pressed) {
-                if !release_os_modifier(key) {
+                let cleared = if down {
+                    PostThreadMessageW(
+                        THREAD.load(Ordering::Acquire),
+                        CLEAR_STATE,
+                        key as WPARAM,
+                        0,
+                    ) != 0
+                } else {
+                    release_os_modifier(key)
+                };
+                if !cleared {
                     cell.borrow_mut().forwarded = true;
-                    FAULT.store(true, Ordering::Release);
-                    ENABLED.store(false, Ordering::Release);
+                    fault();
                     return false;
                 }
             }
             if (decision.pressed && !post(PRESS)) || (decision.released && !post(RELEASE)) {
-                FAULT.store(true, Ordering::Release);
-                ENABLED.store(false, Ordering::Release);
+                fault();
                 return false;
             }
-            if !decision.replay.is_empty() {
-                let inputs: Vec<_> = decision
-                    .replay
-                    .iter()
-                    .map(|(key, up)| INPUT {
-                        r#type: INPUT_KEYBOARD,
-                        Anonymous: INPUT_0 {
-                            ki: KEYBDINPUT {
-                                wVk: *key as u16,
-                                wScan: 0,
-                                dwFlags: (if *up { KEYEVENTF_KEYUP } else { 0 })
-                                    | (if matches!(*key, 0x5b | 0x5c) {
-                                        KEYEVENTF_EXTENDEDKEY
-                                    } else {
-                                        0
-                                    }),
-                                time: 0,
-                                dwExtraInfo: TAG,
-                            },
-                        },
-                    })
-                    .collect();
-                if SendInput(
-                    inputs.len() as u32,
-                    inputs.as_ptr(),
-                    std::mem::size_of::<INPUT>() as i32,
-                ) != inputs.len() as u32
-                {
-                    FAULT.store(true, Ordering::Release);
-                    ENABLED.store(false, Ordering::Release);
-                    // The original physical key-up must still release a Win
-                    // down if SendInput inserted only part of the tap batch.
-                    if up && matches!(event.vkCode, 0x5b | 0x5c) {
-                        return false;
-                    }
+            if !replay_keys(&decision.replay) {
+                fault();
+                // Preserve the physical release if a replay batch was only
+                // partly inserted; never leave an injected Win-down stuck.
+                if up && matches!(event.vkCode, 0x5b | 0x5c) {
+                    return false;
                 }
             }
             decision.consume
         })
     })
     .unwrap_or_else(|_| {
-        FAULT.store(true, Ordering::Release);
-        ENABLED.store(false, Ordering::Release);
+        fault();
         false
     });
     if consumed {
@@ -271,9 +260,45 @@ unsafe extern "system" fn keyboard(code: i32, w: WPARAM, l: LPARAM) -> LRESULT {
     }
 }
 unsafe extern "system" fn mouse(code: i32, w: WPARAM, l: LPARAM) -> LRESULT {
-    if code >= 0 && matches!(w as u32, WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MBUTTONDOWN) {
+    if code >= 0
+        && l != 0
+        && ENABLED.load(Ordering::Acquire)
+        && matches!(
+            w as u32,
+            WM_LBUTTONDOWN
+                | WM_RBUTTONDOWN
+                | WM_MBUTTONDOWN
+                | WM_XBUTTONDOWN
+                | WM_MOUSEWHEEL
+                | WM_MOUSEHWHEEL
+        )
+    {
         let event = &*(l as *const MSLLHOOKSTRUCT);
         if event.flags & LLMHF_INJECTED == 0 {
+            let handled = std::panic::catch_unwind(|| {
+                let decision = KEYS.with(|keys| {
+                    keys.borrow_mut()
+                        .mouse(clock(), THRESHOLD.load(Ordering::Acquire))
+                });
+                // The click must not reach a lower hook with Win logically
+                // down after a consumed repeat. Before the threshold, restore
+                // the ordinary Win+mouse chord instead of stealing it.
+                let mut cleared = true;
+                for key in [0x5b, 0x5c] {
+                    if KEYS.with(|keys| keys.borrow().owns_modifier(key)) {
+                        cleared &= release_os_modifier(key);
+                    }
+                }
+                if !cleared
+                    || !replay_keys(&decision.replay)
+                    || (decision.released && !post(RELEASE))
+                {
+                    fault();
+                }
+            });
+            if handled.is_err() {
+                fault();
+            }
             crate::quick_capture::mouse_touch();
         }
     }
@@ -341,8 +366,22 @@ pub fn configure(app: &AppHandle, milliseconds: u32) -> Result<(), String> {
                     GetModuleHandleW(std::ptr::null()),
                     0,
                 );
-                let mut mouse_hook: HHOOK = std::ptr::null_mut();
                 if keyboard_hook.is_null() {
+                    THREAD.store(0, Ordering::Release);
+                    let _ = tx.send(false);
+                    return;
+                }
+                // Listen from startup, not only after PRESS is dequeued: a
+                // quick Win+click/scroll is a normal chord and must cancel the
+                // pending hold before it can open Mewu.
+                let mouse_hook = SetWindowsHookExW(
+                    WH_MOUSE_LL,
+                    Some(mouse),
+                    GetModuleHandleW(std::ptr::null()),
+                    0,
+                );
+                if mouse_hook.is_null() {
+                    UnhookWindowsHookEx(keyboard_hook);
                     THREAD.store(0, Ordering::Release);
                     let _ = tx.send(false);
                     return;
@@ -350,6 +389,7 @@ pub fn configure(app: &AppHandle, milliseconds: u32) -> Result<(), String> {
                 let state_timer = SetTimer(null_mut(), 0, 500, None);
                 if state_timer == 0 {
                     UnhookWindowsHookEx(keyboard_hook);
+                    UnhookWindowsHookEx(mouse_hook);
                     THREAD.store(0, Ordering::Release);
                     let _ = tx.send(false);
                     return;
@@ -368,6 +408,14 @@ pub fn configure(app: &AppHandle, milliseconds: u32) -> Result<(), String> {
                                 post(RELEASE);
                             }
                         }
+                        CLEAR_STATE => {
+                            let key = message.wParam as u32;
+                            if KEYS.with(|keys| keys.borrow().owns_modifier(key))
+                                && !release_os_modifier(key)
+                            {
+                                fault();
+                            }
+                        }
                         PRESS | RELEASE => {
                             let pressed = message.message == PRESS;
                             if pressed {
@@ -375,22 +423,9 @@ pub fn configure(app: &AppHandle, milliseconds: u32) -> Result<(), String> {
                                 let Some(key) = owned else { continue };
                                 if !release_os_modifier(key) {
                                     KEYS.with(|keys| keys.borrow_mut().forwarded = true);
-                                    FAULT.store(true, Ordering::Release);
-                                    ENABLED.store(false, Ordering::Release);
+                                    fault();
                                     continue;
                                 }
-                            }
-                            if pressed && mouse_hook.is_null() {
-                                mouse_hook = SetWindowsHookExW(
-                                    WH_MOUSE_LL,
-                                    Some(mouse),
-                                    GetModuleHandleW(std::ptr::null()),
-                                    0,
-                                );
-                            }
-                            if !pressed && !mouse_hook.is_null() {
-                                UnhookWindowsHookEx(mouse_hook);
-                                mouse_hook = std::ptr::null_mut();
                             }
                             let target = app.clone();
                             let _ = app.run_on_main_thread(move || {
@@ -398,15 +433,15 @@ pub fn configure(app: &AppHandle, milliseconds: u32) -> Result<(), String> {
                             });
                         }
                         RESET => {
-                            if !mouse_hook.is_null() {
-                                UnhookWindowsHookEx(mouse_hook);
-                                mouse_hook = std::ptr::null_mut();
-                            }
                             let target = app.clone();
                             let _ = app.run_on_main_thread(move || {
                                 crate::hooks::modifier_hold_changed(&target, false)
                             });
-                            seed();
+                            if KEYS.with(|keys| keys.borrow().has_owned_modifiers()) {
+                                KEYS.with(|keys| keys.borrow_mut().cancel_owned());
+                            } else {
+                                seed();
+                            }
                         }
                         STOP => break,
                         _ => {
@@ -418,8 +453,10 @@ pub fn configure(app: &AppHandle, milliseconds: u32) -> Result<(), String> {
                 ENABLED.store(false, Ordering::Release);
                 // Cancel our suppressed gesture on shutdown. Never manufacture
                 // a Win-down after the OS state was deliberately cleared.
-                if let Some(key) = KEYS.with(|keys| keys.borrow().owned_modifier()) {
-                    let _ = release_os_modifier(key);
+                for key in [0x5b, 0x5c] {
+                    if KEYS.with(|keys| keys.borrow().owns_modifier(key)) {
+                        let _ = release_os_modifier(key);
+                    }
                 }
                 UnhookWindowsHookEx(keyboard_hook);
                 KillTimer(null_mut(), state_timer);
@@ -450,7 +487,29 @@ pub fn disable() {
 mod modifier_tests {
     use super::*;
     #[test]
-    fn logical_win_release_reaches_the_os_without_becoming_a_physical_release() {
+    fn actual_hook_consumes_private_resets_before_any_shell_or_physical_key_handling() {
+        // Invoke the real callback with a private message in memory. This test
+        // never calls SendInput or injects a Windows key into the desktop.
+        for key in [0x5b, 0x5c] {
+            let event = KBDLLHOOKSTRUCT {
+                vkCode: key,
+                scanCode: key,
+                flags: LLKHF_INJECTED | LLKHF_UP | LLKHF_EXTENDED,
+                time: 0,
+                dwExtraInfo: STATE_TAG,
+            };
+            let result = unsafe {
+                keyboard(
+                    HC_ACTION as i32,
+                    WM_KEYUP as WPARAM,
+                    &event as *const KBDLLHOOKSTRUCT as LPARAM,
+                )
+            };
+            assert_eq!(result, 1, "state bookkeeping must not reach the shell");
+        }
+    }
+    #[test]
+    fn state_reset_is_consumed_without_delivering_a_shell_win_release() {
         for key in [0x5b, 0x5c] {
             let mut event = KBDLLHOOKSTRUCT {
                 vkCode: key,
@@ -459,11 +518,11 @@ mod modifier_tests {
                 time: 0,
                 dwExtraInfo: STATE_TAG,
             };
-            assert_eq!(tagged_route(&event), Some(TaggedRoute::Forward));
+            assert_eq!(tagged_route(&event), Some(TaggedRoute::Suppress));
             let mut sequence = crate::hold_sequence::Sequence::default();
             sequence.key(key, true, 0, 400);
-            // The transport forwards this tagged event before its physical-key
-            // state machine, preserving ownership through the shell reset.
+            // Physical ownership survives our own hidden reset. Lower hooks
+            // and the shell must never see this artificial key-up.
             assert_eq!(sequence.owned_modifier(), Some(key));
             event.flags &= !LLKHF_UP;
             assert_eq!(tagged_route(&event), Some(TaggedRoute::Suppress));
@@ -477,22 +536,21 @@ mod modifier_tests {
         }
     }
     #[test]
-    fn menu_mask_is_balanced_and_os_visible_before_each_owned_win_release() {
+    fn an_owned_state_reset_contains_no_shell_visible_keys_or_dummy_key_downs() {
         for key in [0x5b, 0x5c] {
-            let inputs = masked_modifier_release(key);
-            let keyboard = inputs.map(|input| unsafe { input.Anonymous.ki });
-            assert_eq!(
-                keyboard.map(|key| key.wVk),
-                [MENU_MASK_KEY, MENU_MASK_KEY, key as u16]
-            );
-            assert_eq!(keyboard.map(|key| key.dwExtraInfo), [TAG, TAG, STATE_TAG]);
-            assert_eq!(
-                keyboard.map(|key| key.dwFlags),
-                [0, KEYEVENTF_KEYUP, KEYEVENTF_KEYUP | KEYEVENTF_EXTENDEDKEY]
-            );
-            assert!(keyboard
-                .iter()
-                .all(|key| key.dwFlags & KEYEVENTF_KEYUP != 0 || key.wVk == MENU_MASK_KEY));
+            let input = modifier_release_input(key);
+            let keyboard = unsafe { input.Anonymous.ki };
+            assert_eq!(keyboard.wVk, key as u16);
+            assert_eq!(keyboard.dwExtraInfo, STATE_TAG);
+            assert_eq!(keyboard.dwFlags, KEYEVENTF_KEYUP | KEYEVENTF_EXTENDEDKEY);
+            let event = KBDLLHOOKSTRUCT {
+                vkCode: keyboard.wVk as u32,
+                scanCode: keyboard.wScan as u32,
+                flags: LLKHF_INJECTED | LLKHF_UP | LLKHF_EXTENDED,
+                time: 0,
+                dwExtraInfo: keyboard.dwExtraInfo,
+            };
+            assert_eq!(tagged_route(&event), Some(TaggedRoute::Suppress));
         }
     }
     #[test]

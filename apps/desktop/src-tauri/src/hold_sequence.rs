@@ -22,6 +22,36 @@ impl Sequence {
     pub fn owned_modifier(&self) -> Option<u32> {
         self.held.filter(|_| !self.forwarded).map(|(key, _)| key)
     }
+    pub fn owns_modifier(&self, key: u32) -> bool {
+        self.owned_modifier() == Some(key) || self.suppressed_wins.contains(&key)
+    }
+    pub fn has_owned_modifiers(&self) -> bool {
+        self.owned_modifier().is_some() || !self.suppressed_wins.is_empty()
+    }
+    /// An editor/gesture cancellation must not forget a physically held Win.
+    /// Its OS state has already been reset, so reseeding from GetAsyncKeyState
+    /// would lose it and turn a subsequent repeat into a second tap.
+    pub fn cancel_owned(&mut self) {
+        if self.owned_modifier().is_some() {
+            self.captured = true;
+        }
+    }
+    /// A click/scroll before the hold threshold is an ordinary Win+mouse chord.
+    /// After claiming the hold, keep Windows neutral while Mewu receives input.
+    pub fn mouse(&mut self, now: u64, threshold: u32) -> Decision {
+        let mut decision = Decision::default();
+        if let Some((key, began)) = self.held.filter(|_| !self.forwarded) {
+            if self.captured || now.saturating_sub(began) >= u64::from(threshold) {
+                self.captured = true;
+                decision.clear_os_modifier = Some(key);
+            } else {
+                self.forwarded = true;
+                decision.released = true;
+                decision.replay.push((key, false));
+            }
+        }
+        decision
+    }
     /// Only physical keyboard keys have matching keyboard-hook releases.
     /// Mouse buttons and aggregate Shift/Ctrl/Alt aliases must not be seeded.
     pub fn physical_keyboard(key: u32) -> bool {
@@ -84,11 +114,15 @@ impl Sequence {
             if down {
                 if self.suppressed_wins.contains(&key) {
                     decision.consume = true;
+                    decision.clear_os_modifier = Some(key);
                     return decision;
                 }
                 if let Some((held, _)) = self.held {
                     if held == key {
                         decision.consume = !self.forwarded;
+                        // Physical auto-repeat can reassert the OS modifier
+                        // state even when the keyboard message is swallowed.
+                        decision.clear_os_modifier = decision.consume.then_some(key);
                         return decision;
                     }
                     self.other.insert(key);
@@ -225,6 +259,21 @@ mod tests {
         }
     }
     #[test]
+    fn a_second_owned_win_survives_primary_release_until_its_own_physical_release() {
+        let mut s = Sequence::default();
+        s.key(0x5b, true, 0, 400);
+        s.key(0x5c, true, 500, 400);
+        s.key(0x5b, false, 600, 400);
+        s.cancel_owned();
+        assert!(s.has_owned_modifiers() && s.owns_modifier(0x5c) && !s.owns_modifier(0x5b));
+        assert!(s.mouse(620, 400).replay.is_empty());
+        let repeat = s.key(0x5c, true, 640, 400);
+        assert_eq!(repeat.clear_os_modifier, Some(0x5c));
+        assert!(repeat.consume && !repeat.pressed);
+        assert!(s.key(0x5c, false, 700, 400).consume);
+        assert!(!s.has_owned_modifiers());
+    }
+    #[test]
     fn a_claimed_hold_cannot_become_a_short_tap_if_configuration_changes() {
         let mut sequence = Sequence::default();
         sequence.key(0x5b, true, 0, 400);
@@ -278,6 +327,7 @@ mod tests {
                 s.key(key, true, 150, 400),
                 Decision {
                     consume: true,
+                    clear_os_modifier: Some(key),
                     ..Decision::default()
                 }
             );
@@ -292,10 +342,10 @@ mod tests {
         }
     }
     #[test]
-    fn owned_win_state_is_cleared_on_initial_down_and_final_up_without_repeated_down() {
+    fn owned_win_state_is_cleared_after_every_physical_down_and_at_final_up() {
         let mut keys = Sequence::default();
         assert_eq!(keys.key(0x5b, true, 0, 400).clear_os_modifier, Some(0x5b));
-        assert_eq!(keys.key(0x5b, true, 100, 400).clear_os_modifier, None);
+        assert_eq!(keys.key(0x5b, true, 100, 400).clear_os_modifier, Some(0x5b));
         let chord = keys.key(0x43, true, 200, 400);
         assert_eq!(chord.clear_os_modifier, None);
         assert_eq!(chord.replay, vec![(0x5b, false)]);
@@ -353,5 +403,86 @@ mod tests {
         s.key(0x5b, false, 2, 400);
         s.key(0xa0, false, 3, 400);
         assert!(s.key(0x5b, true, 1000, 400).pressed);
+    }
+    #[test]
+    fn every_repeat_is_reset_without_dispatching_another_hold_or_tap() {
+        for win in [0x5b, 0x5c] {
+            let mut s = Sequence::default();
+            s.key(win, true, 0, 400);
+            for time in [30, 200, 399, 400, 450, 900, 1100] {
+                let repeat = s.key(win, true, time, 400);
+                assert!(repeat.consume && !repeat.pressed && !repeat.released);
+                assert_eq!(repeat.clear_os_modifier, Some(win));
+                assert!(repeat.replay.is_empty());
+                assert!(s.owns_modifier(win));
+            }
+            let click = s.mouse(1200, 400);
+            assert_eq!(click.clear_os_modifier, Some(win));
+            assert!(click.replay.is_empty() && !click.released);
+            let up = s.key(win, false, 1250, 400);
+            assert!(up.consume && up.replay.is_empty());
+            assert!(!s.owns_modifier(win) && !s.has_owned_modifiers());
+        }
+    }
+    #[test]
+    fn short_win_mouse_chords_restore_the_modifier_once_and_cancel_the_hold() {
+        for win in [0x5b, 0x5c] {
+            for delay in [0, 10, 200, 399] {
+                let mut s = Sequence::default();
+                s.key(win, true, 0, 400);
+                let click = s.mouse(delay, 400);
+                assert_eq!(click.replay, vec![(win, false)]);
+                assert!(click.released && !click.consume && click.clear_os_modifier.is_none());
+                assert!(
+                    !s.owns_modifier(win),
+                    "a pending clear must not break this chord"
+                );
+                assert_eq!(s.mouse(delay + 1, 400), Decision::default());
+                assert!(!s.key(win, false, delay + 20, 400).consume);
+                assert!(!s.has_owned_modifiers());
+            }
+        }
+    }
+    #[test]
+    fn ordinary_windows_chords_have_one_original_modifier_and_no_synthetic_release() {
+        // Win+E/R/D/V/Tab/arrows and Win+Shift+S, from both modifier orders.
+        for win in [0x5b, 0x5c] {
+            for key in [
+                0x45, 0x52, 0x44, 0x56, 0x09, 0x25, 0x26, 0x27, 0x28, 0xa0, 0xa2, 0xa4,
+            ] {
+                let mut s = Sequence::default();
+                s.key(win, true, 0, 400);
+                let chord = s.key(key, true, 80, 400);
+                assert_eq!(chord.replay, vec![(win, false)]);
+                assert!(chord.released && !chord.consume && chord.clear_os_modifier.is_none());
+                assert!(!s.owns_modifier(win));
+                assert_eq!(s.key(win, true, 900, 400), Decision::default());
+                assert!(!s.key(key, false, 1000, 400).consume);
+                assert!(!s.key(win, false, 1010, 400).consume);
+                let mut reverse = Sequence::default();
+                reverse.key(key, true, 0, 400);
+                assert_eq!(reverse.key(win, true, 10, 400), Decision::default());
+                assert!(reverse.key(key, false, 20, 400).replay.is_empty());
+                assert!(reverse.key(win, false, 30, 400).replay.is_empty());
+            }
+        }
+    }
+    #[test]
+    fn editor_cancellation_keeps_ownership_through_repeat_escape_and_release() {
+        for win in [0x5b, 0x5c] {
+            let mut s = Sequence::default();
+            s.key(win, true, 0, 400);
+            s.cancel_owned();
+            assert!(s.has_owned_modifiers());
+            let repeat = s.key(win, true, 50, 400);
+            assert!(repeat.consume && !repeat.pressed && repeat.replay.is_empty());
+            assert_eq!(repeat.clear_os_modifier, Some(win));
+            assert_eq!(s.key(0x1b, true, 60, 400), Decision::default());
+            s.key(0x1b, false, 70, 400);
+            assert!(s.key(win, false, 80, 400).replay.is_empty());
+            assert!(!s.has_owned_modifiers());
+            assert_eq!(s.key(0x41, true, 90, 400), Decision::default());
+            assert!(s.key(win, true, 100, 400).replay.is_empty());
+        }
     }
 }
