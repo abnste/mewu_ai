@@ -385,7 +385,7 @@ fn marquee_batch_is_one_atomic_geometry_step_and_rejects_forgery() {
         font_size: None, text_style: None,
         origin: None,
         rich: None,
-    };
+     text_runs: None, };
     store
         .apply(SceneCommand::AddDrawing {
             scene_id: target.scene_id.clone(),

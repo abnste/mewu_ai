@@ -111,6 +111,7 @@ export function liveDrawing(id: string, read: () => Drawing): Drawing {
     get strokeWidth() { return read().strokeWidth; }, get points() { return read().points; },
     get text() { return read().text; }, get fontSize() { return read().fontSize; },
     get textStyle() { return read().textStyle; },
+    get textRuns() { return read().textRuns; },
     get origin() { return read().origin; }, get rich() { return read().rich; },
   };
 }

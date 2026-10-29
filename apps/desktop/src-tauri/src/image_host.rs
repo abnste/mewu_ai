@@ -981,7 +981,7 @@ mod tests {
             font_size: None, text_style: None,
             origin: None,
             rich: None,
-        });
+         text_runs: None, });
         region.translation = Some(SavedTranslation {
             background_id: background.id.clone(),
             source_id: replacement.id.clone(),

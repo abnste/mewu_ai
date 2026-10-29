@@ -41,6 +41,33 @@ pub(crate) fn next_revision(region: &Region) -> Result<u64> {
         .ok_or_else(|| invalid("绘制修订号超出范围"))
 }
 
+/// Validate the literal rich-text wire at every document/raster boundary.
+/// Runs cannot replace the source text, inject markup or grow an empty document.
+pub fn validate_text_runs(text: &str, runs: Option<&[crate::DrawingTextRun]>) -> Result<()> {
+    let Some(runs) = runs else { return Ok(()) };
+    if runs.is_empty() || runs.len() > text.chars().count().min(2000) {
+        return Err(invalid("文字片段数量无效"));
+    }
+    let mut offset = 0usize;
+    for run in runs {
+        let end = offset.checked_add(run.text.len()).ok_or_else(|| invalid("文字片段过长"))?;
+        if run.text.is_empty() || text.get(offset..end) != Some(run.text.as_str()) {
+            return Err(invalid("文字片段与原文不一致"));
+        }
+        if let Some(color) = &run.color {
+            let bytes = color.as_bytes();
+            if bytes.len() != 7 || bytes[0] != b'#' || !bytes[1..].iter().all(u8::is_ascii_hexdigit) {
+                return Err(invalid("文字片段颜色必须为 #RRGGBB"));
+            }
+        }
+        offset = end;
+    }
+    if offset != text.len() {
+        return Err(invalid("文字片段没有覆盖完整原文"));
+    }
+    Ok(())
+}
+
 fn validate_object(object: &Drawing, width: f64, height: f64) -> Result<()> {
     if let Some(origin) = &object.origin {
         crate::visual_annotations::validate_origin(origin)?;
@@ -51,7 +78,7 @@ fn validate_object(object: &Drawing, width: f64, height: f64) -> Result<()> {
     if object.kind != DrawingKind::Rich && object.rich.is_some() {
         return Err(invalid("普通绘制不能携带富标注布局"));
     }
-    if object.kind != DrawingKind::Text && object.text_style.is_some() {
+    if object.kind != DrawingKind::Text && (object.text_style.is_some() || object.text_runs.is_some()) {
         return Err(invalid("只有文字对象可以设置文字样式"));
     }
     let color = object.color.as_bytes();
@@ -146,6 +173,7 @@ fn validate_object(object: &Drawing, width: f64, height: f64) -> Result<()> {
             if !size.is_finite() || !(6. ..=256.).contains(&size) {
                 return Err(invalid("绘制字号需为 6 至 256 像素"));
             }
+            validate_text_runs(text, object.text_runs.as_deref())?;
         }
         _ if object.text.is_some() || object.font_size.is_some() => {
             return Err(invalid("非文字对象不能携带文本或字号"))
@@ -760,7 +788,7 @@ mod history_replay_tests {
             color: "#112233".into(), stroke_width: 2.,
             points: vec![crate::DrawingPoint { x: 1., y: 2. }; MAX_POINTS],
             text: None, font_size: None, text_style: None, origin: None, rich: None,
-        }
+         text_runs: None, }
     }
 
     #[test]

@@ -89,6 +89,11 @@ fn catalog_real_drawing_schema_rejects_fake_rich_layouts_provenance_and_stale_wi
     });
     assert!(validator.is_valid(&valid));
     serde_json::from_value::<mewu_core::Drawing>(valid.clone()).unwrap();
+    let mut styled = valid.clone();
+    styled["textRuns"] = json!([{"text":"第一行","color":"#3366CC","textStyle":{"bold":true}},{"text":"\n第二行","textStyle":{}}]);
+    assert!(validator.is_valid(&styled));
+    let parsed: mewu_core::Drawing = serde_json::from_value(styled).unwrap();
+    mewu_core::validate_text_runs(parsed.text.as_deref().unwrap(), parsed.text_runs.as_deref()).unwrap();
     for changed in [
         json!({"kind":"rich","rich":{"layoutId":"forged"}}),
         json!({"origin":{"runId":"forged"}}),
@@ -96,6 +101,10 @@ fn catalog_real_drawing_schema_rejects_fake_rich_layouts_provenance_and_stale_wi
         json!({"color":"white"}),
         json!({"strokeWidth":0}),
         json!({"textStyle":{"bold":true,"extra":true}}),
+        json!({"textRuns":[]}),
+        json!({"textRuns":[{"text":"第一行\n第二行","color":"red"}]}),
+        json!({"textRuns":[{"text":"第一行\n第二行","textStyle":{"bold":"yes"}}]}),
+        json!({"textRuns":[{"text":"第一行\n第二行","html":"<svg/>"}]}),
         json!({"points":[{"x":-1,"y":0}]}),
         json!({"points":[{"x":0,"y":0},{"x":1,"y":1},{"x":2,"y":2}]}),
     ] {

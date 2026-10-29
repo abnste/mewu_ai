@@ -78,7 +78,7 @@ fn large_history() -> Snapshot {
                         text_style: None,
                         origin: None,
                         rich: None,
-                    });
+                     text_runs: None, });
                 }
                 region.drawing_history.undo.push(
                     DrawingEdit {

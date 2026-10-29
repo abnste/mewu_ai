@@ -103,7 +103,7 @@ fn blackboard_pixels_drawings_history_and_reference_survive_reopen() {
         font_size: None, text_style: None,
         origin: None,
         rich: None,
-    };
+     text_runs: None, };
     store
         .apply(SceneCommand::AddDrawing {
             scene_id: id.clone(),

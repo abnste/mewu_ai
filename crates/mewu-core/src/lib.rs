@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: MPL-2.0
 /// SQLite storage generation; distinct from the public snapshot schema.
-pub const STORAGE_SCHEMA_VERSION: u32 = 13;
+pub const STORAGE_SCHEMA_VERSION: u32 = 14;
 mod asset_lookup;
 mod blackboard_objects;
 mod checkpoint_worker;
 mod connections;
 mod drawing;
+pub use drawing::validate_text_runs;
 mod external_memory;
 mod external_memory_types;
 mod geometry_history;

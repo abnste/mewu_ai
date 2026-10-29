@@ -179,6 +179,10 @@ pub fn decode(png: &[u8], width: u32, height: u32) -> Result<image::RgbaImage, S
 }
 
 fn literal_text_svg(content: &VideoTextContent) -> Result<(String, f64), String> {
+    if let Some(runs)=&content.text_runs {
+        let (svg,lines)=crate::drawing_render::text_runs_svg(&content.text,runs,&content.color,content.text_style,content.font_size,content.text_box.map(|area|area.width),4.,4.)?;
+        return Ok((svg,4.+content.font_size*(1.+lines.saturating_sub(1) as f64*1.25)));
+    }
     let lines = crate::drawing_render::literal_text_lines(
         &content.text,
         content.font_size,
@@ -220,6 +224,7 @@ fn literal_text_svg(content: &VideoTextContent) -> Result<(String, f64), String>
 }
 
 pub fn render_text(content: VideoTextContent) -> Result<VerifiedVideoTextLayout, String> {
+    mewu_core::validate_text_runs(&content.text,content.text_runs.as_deref()).map_err(|e|e.to_string())?;
     hex_color(&content.color)?;
     if content.version != 1
         || content.text.trim().is_empty()
@@ -239,7 +244,7 @@ pub fn render_text(content: VideoTextContent) -> Result<VerifiedVideoTextLayout,
     // used by the final raster. No character-count width guess clips CJK/math.
     let (text, last_baseline) = literal_text_svg(&content)?;
     let mut opts = options(true)?;
-    let bold = content.text_style.is_some_and(|style| style.bold);
+    let bold = content.text_style.is_some_and(|style| style.bold)||content.text_runs.as_ref().is_some_and(|runs|runs.iter().any(|run|run.text_style.is_some_and(|style|style.bold)));
     if bold {
         opts.fontdb = crate::drawing_render::text_fonts(true)?;
         crate::drawing_render::prefer_matching_text_fallback(&mut opts);
@@ -300,7 +305,7 @@ pub fn render_text(content: VideoTextContent) -> Result<VerifiedVideoTextLayout,
         return Err("视频批注含当前字体无法绘制的字符".into());
     }
     let png = rasterize(&tree, width, height)?;
-    let style_version = if content.text_box.is_some() {
+    let style_version = if content.text_runs.is_some() { 5 } else if content.text_box.is_some() {
         4
     } else if content
         .text_style
@@ -420,7 +425,7 @@ mod tests {
             text: text.into(),
             color: "#1357b9".into(),
             font_size,
-        }
+         text_runs: None, }
     }
 
     #[test]
@@ -734,7 +739,7 @@ mod tests {
             text: "中文标注\n<svg>&公式 x²".into(),
             color: "#1357b9".into(),
             font_size: 24.,
-        })
+         text_runs: None, })
         .unwrap();
         let image = decode(layout.png(), layout.width(), layout.height()).unwrap();
         assert!(image.pixels().any(|p| p[3] > 200));
@@ -749,6 +754,7 @@ mod tests {
         assert!(render_text(VideoTextContent {
             text_box: None,
             text_style: None,
+            text_runs: None,
             version: 1,
             text: "中文\u{10ffff}".into(),
             color: "#123456".into(),

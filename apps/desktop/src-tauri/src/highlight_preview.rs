@@ -205,7 +205,7 @@ mod tests {
             font_size: None, text_style: None,
             rich: None,
             origin: None,
-        });
+         text_runs: None, });
         assert!(target.check(&changed_region).is_err());
     }
     #[test]

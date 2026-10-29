@@ -111,7 +111,7 @@ fn image_item_rich_formula_layout_is_registered_in_receipt_budget_and_verified_a
     let file=Db::new();let mut store=Store::open(&file.0).unwrap();let f=image_fixture(&mut store,false);let call=leases(&mut store,&f,1).remove(0);
     let png=vec![137,80,78,71,13,10,26,10,0,0,0,13,73,72,68,82,0,0,0,1,0,0,0,1,8,4,0,0,0,181,28,12,2,0,0,0,11,73,68,65,84,120,218,99,252,255,31,0,3,3,2,0,239,154,55,219,0,0,0,0,73,69,78,68,174,66,96,130];
     let layout=VerifiedRichLayout::new(uid(),RichContent::Formula { version:1,tex:"x=3".into(),color:"#ff0000".into(),font_size:24. },RichRendererIdentity { id:"synthetic-native-layout".into(),version:"1".into(),font_sha256:"a".repeat(64),style_version:1 },1,1,png).unwrap();
-    let reference=layout.reference().clone();let drawing=Drawing { id:uid(),kind:DrawingKind::Rich,color:RICH_DRAWING_COLOR.into(),stroke_width:RICH_DRAWING_STROKE_WIDTH,points:vec![DrawingPoint{x:100.,y:100.},DrawingPoint{x:124.,y:124.}],text:None,font_size:None, text_style: None,origin:None,rich:Some(reference.clone()) };
+    let reference=layout.reference().clone();let drawing=Drawing { id:uid(),kind:DrawingKind::Rich,color:RICH_DRAWING_COLOR.into(),stroke_width:RICH_DRAWING_STROKE_WIDTH,points:vec![DrawingPoint{x:100.,y:100.},DrawingPoint{x:124.,y:124.}],text:None,font_size:None, text_style: None,origin:None,rich:Some(reference.clone()) , text_runs: None, };
     store.apply_visual_annotations_with_rich_receipt(&call,&f.authority,VisualAppendBatch { groups:vec![VisualAppendGroup { target_handle:f.input.manifest().targets[0].handle.clone(),drawings:vec![drawing] }] },vec![layout]).unwrap();
     store.finish_run(&f.run.scene_id,&f.run.run_id,"完成").unwrap();drop(store);
     let store=Store::open(&file.0).unwrap();let item=annotated_item(&store,&f);assert_eq!(item.image_annotations.unwrap().drawings[0].rich.as_ref(),Some(&reference));assert_eq!(store.rich_layout(&reference).unwrap().content(),&RichContent::Formula { version:1,tex:"x=3".into(),color:"#ff0000".into(),font_size:24. });
@@ -147,7 +147,7 @@ fn shape() -> Drawing {
         font_size: Some(22.), text_style: None,
         origin: None,
         rich: None,
-    }
+     text_runs: None, }
 }
 struct Fixture {
     run: RunContext,

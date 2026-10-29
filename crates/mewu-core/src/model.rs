@@ -348,6 +348,18 @@ impl<'de> Deserialize<'de> for DrawingTextStyle {
     }
 }
 
+/// Literal, ordered text fragments. Their concatenation must equal Drawing.text.
+/// Each fragment inherits omitted color/effects from its drawing, never HTML/CSS.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DrawingTextRun {
+    pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_style: Option<DrawingTextStyle>,
+}
+
 /// Editable manual markup in original background pixels, never executable SVG.
 /// Two shape points are endpoints/opposite corners; text uses a legacy top-left
 /// anchor, or two points for a positive wrapping box whose height is a minimum.
@@ -367,6 +379,8 @@ pub struct Drawing {
     pub font_size: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text_style: Option<DrawingTextStyle>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_runs: Option<Vec<DrawingTextRun>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub origin: Option<crate::VisualDrawingOrigin>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

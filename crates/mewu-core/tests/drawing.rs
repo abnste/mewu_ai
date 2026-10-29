@@ -83,7 +83,7 @@ fn object(kind: DrawingKind) -> Drawing {
             _ => None,
         },
         font_size: matches!(kind, DrawingKind::Text | DrawingKind::Number).then_some(24.), text_style: None,
-    }
+     text_runs: None, }
 }
 fn region(store: &Store, scope: &(String, String, String)) -> Region {
     store
@@ -267,7 +267,7 @@ fn batch_remove_extracted_parent_keeps_root_repair_and_atomically_removes_attach
     let layout = |role, source: &VisualSourceFence, parent_id| VerifiedRichLayout::new(Uuid::new_v4().to_string(), RichContent::Raster { version: 1, role, source_sha256: source.visual_sha256.clone(), parent_id },
         RichRendererIdentity { id: "mewu.local-raster-edit".into(), version: "1".into(), font_sha256: "a".repeat(64), style_version: 1 }, 1, 1, png.clone()).unwrap();
     let drawing = |layout: &VerifiedRichLayout| Drawing { id: Uuid::new_v4().to_string(), kind: DrawingKind::Rich, color: RICH_DRAWING_COLOR.into(), stroke_width: RICH_DRAWING_STROKE_WIDTH,
-        points: vec![DrawingPoint { x: 30., y: 40. }, DrawingPoint { x: 31., y: 41. }], text: None, font_size: None, text_style: None, origin: None, rich: Some(layout.reference().clone()) };
+        points: vec![DrawingPoint { x: 30., y: 40. }, DrawingPoint { x: 31., y: 41. }], text: None, font_size: None, text_style: None, origin: None, rich: Some(layout.reference().clone()) , text_runs: None, };
     let fence = visual_source_fence(&background, &region(&store, &scope)).unwrap();
     let root_layout = layout(RasterRole::Repair, &fence, None); let parent_layout = layout(RasterRole::Extracted, &fence, None);
     let root_repair = drawing(&root_layout); let parent = drawing(&parent_layout);

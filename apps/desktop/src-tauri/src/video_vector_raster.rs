@@ -348,7 +348,7 @@ impl VideoSourceVector {
             font_size: size, text_style: None,
             origin: None,
             rich: None,
-        })
+         text_runs: None, })
     }
     pub fn validate(&self, width: u32, height: u32) -> Result<(), String> {
         if width < 2

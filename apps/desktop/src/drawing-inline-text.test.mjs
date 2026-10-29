@@ -34,15 +34,15 @@ test('moving focus into text styling, including the color portal, never submits 
 const inputCode=await readFile(new URL('./components/InlineDrawingText.tsx',import.meta.url),'utf8');
 const inputAst=parse(inputCode,{sourceType:'module',plugins:['typescript','jsx']});
 let keydown;
-function walk(node){if(!node||typeof node!=='object')return;if(node.type==='JSXAttribute'&&node.name.name==='onKeyDown')keydown=node.value.expression;for(const value of Object.values(node)){if(Array.isArray(value))value.forEach(walk);else walk(value);}}
+function walk(node){if(!node||typeof node!=='object')return;if(node.type==='ObjectMethod'&&node.key.name==='handleKeyDown')keydown=node;for(const value of Object.values(node)){if(Array.isArray(value))value.forEach(walk);else walk(value);}}
 walk(inputAst.program);
 test('inline text keeps Enter for newlines and IME confirmation; Ctrl Enter commits once',()=>{
   let commits=0;const ctx=vm.createContext({props:{onConfirm:()=>commits++}});
-  const handle=vm.runInContext(stripTypeScriptTypes('('+inputCode.slice(keydown.start,keydown.end)+')',{mode:'transform'}),ctx);
+  const handle=vm.runInContext(stripTypeScriptTypes('({'+inputCode.slice(keydown.start,keydown.end)+'}).handleKeyDown',{mode:'transform'}),ctx);
   for(const extra of [{},{shiftKey:true},{ctrlKey:true,isComposing:true},{ctrlKey:true,keyCode:229}]){
-    let prevented=false;handle({key:'Enter',preventDefault(){prevented=true;},stopPropagation(){},...extra});assert.equal(prevented,false);assert.equal(commits,0);
+    let prevented=false;handle(null,{key:'Enter',preventDefault(){prevented=true;},stopPropagation(){},...extra});assert.equal(prevented,false);assert.equal(commits,0);
   }
   let prevented=false,stopped=false;
-  handle({key:'Enter',ctrlKey:true,preventDefault(){prevented=true;},stopPropagation(){stopped=true;}});
+  handle(null,{key:'Enter',ctrlKey:true,preventDefault(){prevented=true;},stopPropagation(){stopped=true;}});
   assert.equal(commits,1);assert.ok(prevented&&stopped);
 });

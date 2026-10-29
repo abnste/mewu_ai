@@ -120,7 +120,7 @@ fn shape(kind: DrawingKind, color: &str, points: &[(f64, f64)]) -> Drawing {
         font_size: None, text_style: None,
         origin: None,
         rich: None,
-    }
+     text_runs: None, }
 }
 fn synthetic_profile() -> ConnectionProfile {
     ConnectionProfile {

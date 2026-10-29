@@ -612,6 +612,7 @@ mod tests {
                             ],
                             text: None,
                             font_size: None, text_style: None,
+                            text_runs: None,
                             origin: None,
                             rich: None,
                         }],

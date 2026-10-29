@@ -22,6 +22,9 @@ pub use mosaic::mosaic_grid;
 #[path = "drawing_text_wrap.rs"]
 mod text_wrap;
 pub(crate) use text_wrap::literal_text_lines;
+#[path = "drawing_text_runs.rs"]
+mod text_runs;
+pub(crate) use text_runs::text_runs_svg;
 
 const MAX_PIXELS: u64 = 32 * 1024 * 1024;
 const MAX_DRAWINGS_BYTES: usize = 4 * 1024 * 1024;
@@ -326,7 +329,8 @@ fn vector_overlay(
         .any(|drawing| matches!(drawing.kind, DrawingKind::Text | DrawingKind::Number))
     {
         let bold = drawings.iter().any(|drawing| {
-            drawing.kind == DrawingKind::Text && drawing.text_style.is_some_and(|style| style.bold)
+            drawing.kind == DrawingKind::Text && (drawing.text_style.is_some_and(|style| style.bold)
+                || drawing.text_runs.as_ref().is_some_and(|runs|runs.iter().any(|run|run.text_style.is_some_and(|style|style.bold))))
         });
         options.fontdb = text_fonts(bold)?;
         if bold {
@@ -392,7 +396,7 @@ fn validate_drawings(drawings: &[Drawing], width: u32, height: u32) -> Result<()
         return Err("绘制内容超过处理上限".into());
     }
     for drawing in drawings {
-        if drawing.kind != DrawingKind::Text && drawing.text_style.is_some() {
+        if drawing.kind != DrawingKind::Text && (drawing.text_style.is_some() || drawing.text_runs.is_some()) {
             return Err("只有文字对象可以设置文字样式".into());
         }
         if drawing.kind != DrawingKind::Rich && drawing.rich.is_some() {
@@ -599,6 +603,10 @@ fn drawing_svg(drawings: &[Drawing], width: u32, height: u32) -> Result<String, 
             }
             DrawingKind::Text => {
                 let size = drawing.font_size.unwrap();
+                if let Some(runs)=&drawing.text_runs {
+                    svg.push_str(&text_runs_svg(drawing.text.as_deref().unwrap(),runs,color,drawing.text_style,size,drawing.points.get(1).map(|end|end.x-first.x),first.x,first.y)?.0);
+                    continue;
+                }
                 let lines = literal_text_lines(
                     drawing.text.as_deref().unwrap(),
                     size,
@@ -1192,7 +1200,7 @@ mod tests {
             text: None,
             font_size: None,
             text_style: None,
-        }
+         text_runs: None, }
     }
 
     #[test]

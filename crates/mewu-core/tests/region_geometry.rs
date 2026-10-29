@@ -152,7 +152,7 @@ fn add_drawing(store: &mut Store, target: &OcrTarget) {
                 ],
                 text: None,
                 font_size: None, text_style: None,
-            },
+             text_runs: None, },
         })
         .unwrap();
 }

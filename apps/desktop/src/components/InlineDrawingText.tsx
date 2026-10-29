@@ -1,19 +1,25 @@
 // SPDX-License-Identifier: MPL-2.0
-import { createMemo } from 'solid-js';
-import type { Drawing } from '../contracts';
+import { createEffect, createMemo, onCleanup, onMount } from 'solid-js';
+import { EditorState } from 'prosemirror-state';
+import { EditorView } from 'prosemirror-view';
+import type { Drawing, DrawingTextStyle } from '../contracts';
 import { t } from '../i18n';
 import { drawingTextLayout } from './drawing-geometry';
+import { drawingTextPlugins, formatTextSelection, plainTextPaste, readTextDocument, selectionTextStyle, textDocument, type LiteralTextDocument, type TextSelectionStyle } from '../drawing-text-model';
 
-/** Native caret/selection over the actual SVG text, never a second text preview. */
+export interface InlineDrawingTextController { focus():void; format(patch:{color?:string;textStyle?:DrawingTextStyle}):void }
+/** Composition, selection and typing history share a literal, typed document. */
 export default function InlineDrawingText(props: {
   drawing: Drawing; disabled: boolean;
-  ref: (element: HTMLTextAreaElement) => void;
-  onInput: (text: string) => void; onConfirm: () => void; onBlur: (event: FocusEvent) => void;
+  ref: (control:InlineDrawingTextController|undefined) => void;
+  onInput:(value:LiteralTextDocument)=>void;onSelection:(style:TextSelectionStyle)=>void;
+  onError:(message:string)=>void;onConfirm: () => void; onBlur: (event: FocusEvent) => void;
 }) {
+  let host!:HTMLDivElement,view:EditorView|undefined;
   const context = document.createElement('canvas').getContext('2d')!;
   const layout = createMemo(() => {
     const text = drawingTextLayout(props.drawing), size = text.size;
-    context.font = `normal ${props.drawing.textStyle?.bold ? '700' : '400'} ${size}px "Segoe UI", "Microsoft YaHei", sans-serif`;
+    context.font = `normal 400 ${size}px "Segoe UI", "Microsoft YaHei", sans-serif`;
     const metrics = context.measureText('Mg中'), lineHeight = size * 1.25;
     const ascent = metrics.fontBoundingBoxAscent ?? size * .8;
     const descent = metrics.fontBoundingBoxDescent ?? size * .2;
@@ -24,16 +30,33 @@ export default function InlineDrawingText(props: {
       height: text.height, size, lineHeight, framed: text.framed,
     };
   });
-  return <foreignObject class="drawing-text-editor" x={layout().x} y={layout().y} width={layout().width} height={layout().height}>
-    <textarea ref={props.ref} aria-label={t('绘制文字')} wrap={layout().framed ? 'soft' : 'off'} spellcheck={false}
-      value={props.drawing.text ?? ''} disabled={props.disabled}
-      style={{ 'font-size': `${layout().size}px`, 'font-weight': props.drawing.textStyle?.bold ? '700' : '400', 'font-style': 'normal', 'line-height': `${layout().lineHeight}px`, 'caret-color': props.drawing.color, 'white-space': layout().framed ? 'break-spaces' : 'pre', 'word-break': layout().framed ? 'break-all' : 'normal', 'line-break': layout().framed ? 'anywhere' : 'auto', 'tab-size': '4' }}
-      onPointerDown={event => event.stopPropagation()} onContextMenu={event => event.preventDefault()}
-      onInput={event => props.onInput(event.currentTarget.value)} onBlur={props.onBlur}
-      onKeyDown={event => {
-        if (!event.isComposing && event.keyCode !== 229 && event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
-          event.preventDefault(); event.stopPropagation(); props.onConfirm();
-        }
-      }} />
+  const selected=()=>{if(view)props.onSelection(selectionTextStyle(view.state,props.drawing.color));};
+  onMount(()=>{
+    let initial=EditorState.create({doc:textDocument(props.drawing),plugins:drawingTextPlugins(props.onError)});
+    if(!initial.doc.textContent)initial=initial.apply(formatTextSelection(initial,{color:props.drawing.color,textStyle:props.drawing.textStyle??{}}));
+    view=new EditorView(host,{
+      state:initial,
+      attributes:{class:'drawing-rich-text-content',role:'textbox','aria-label':t('绘制文字'),'aria-multiline':'true',spellcheck:'false'},
+      editable:()=>!props.disabled,
+      dispatchTransaction(transaction){
+        if(!view)return;const previous=view.state.doc,state=view.state.apply(transaction);view.updateState(state);
+        if(!state.doc.eq(previous))props.onInput(readTextDocument(state.doc,props.drawing));selected();
+      },
+      handleKeyDown(_view,event){
+        if(!event.isComposing&&event.keyCode!==229&&event.key==='Enter'&&(event.ctrlKey||event.metaKey)){event.preventDefault();event.stopPropagation();props.onConfirm();return true;}return false;
+      },
+      handlePaste(editor,event){
+        const text=event.clipboardData?.getData('text/plain');if(text===undefined)return false;
+        event.preventDefault();editor.dispatch(editor.state.tr.replaceSelection(plainTextPaste(text,editor.state.storedMarks??editor.state.selection.$from.marks())));return true;
+      },
+      handleDOMEvents:{blur:(_view,event)=>{props.onBlur(event);return false;}},
+    });
+    props.ref({focus:()=>view?.focus(),format:patch=>{if(!view||props.disabled)return;view.dispatch(formatTextSelection(view.state,patch));view.focus();}});
+    selected();view.focus();
+  });
+  createEffect(()=>{props.disabled;view?.setProps({editable:()=>!props.disabled});});
+  onCleanup(()=>{view?.destroy();view=undefined;props.ref(undefined);});
+  return <foreignObject class="drawing-text-editor" x={layout().x} y={layout().y} width={layout().width} height={layout().height+4}>
+    <div ref={host} class="drawing-rich-text" style={{'font-size':`${layout().size}px`,'line-height':`${layout().lineHeight}px`,color:props.drawing.color,'caret-color':props.drawing.color,'white-space':layout().framed?'break-spaces':'pre','word-break':layout().framed?'break-all':'normal','line-break':layout().framed?'anywhere':'auto'}} onPointerDown={event=>event.stopPropagation()} onContextMenu={event=>event.stopPropagation()}/>
   </foreignObject>;
 }

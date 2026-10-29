@@ -418,7 +418,7 @@ impl Store {
                 transaction.pragma_update(None, "application_id", APPLICATION_ID)?;
                 (state, 0)
             }
-            1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | DB_SCHEMA_VERSION => {
+            1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | DB_SCHEMA_VERSION => {
                 if app_id != APPLICATION_ID {
                     return Err(invalid("数据库应用标识不匹配"));
                 }

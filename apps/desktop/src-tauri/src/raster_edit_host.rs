@@ -151,7 +151,7 @@ pub(crate) fn drawing(layout: &VerifiedRichLayout, x: f64, y: f64) -> Drawing {
         font_size: None, text_style: None,
         origin: None,
         rich: Some(layout.reference().clone()),
-    }
+     text_runs: None, }
 }
 #[tauri::command]
 pub async fn apply_raster_edit(

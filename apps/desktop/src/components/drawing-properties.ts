@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
-import type { Drawing, DrawingCommand, DrawingKind, DrawingTextStyle } from '../contracts';
+import type { Drawing, DrawingCommand, DrawingKind, DrawingTextRun, DrawingTextStyle } from '../contracts';
 
 export interface DrawingPropertyDraft {
   mode: 'style' | 'text';
@@ -10,7 +10,7 @@ export interface DrawingPropertyDraft {
 }
 export interface PendingDrawingDraft { key: string; draft: DrawingPropertyDraft }
 export const strokeKinds: DrawingKind[] = ['pen', 'line', 'arrow', 'rect', 'ellipse', 'highlighter'];
-export function copyDrawing(value: Drawing): Drawing { return { ...value, ...(value.origin ? { origin: { ...value.origin } } : {}), ...(value.rich ? { rich: { ...value.rich } } : {}), ...(value.textStyle ? { textStyle: { ...value.textStyle } } : {}), points: value.points.map(point => ({ ...point })) }; }
+export function copyDrawing(value: Drawing): Drawing { return { ...value, ...(value.origin ? { origin: { ...value.origin } } : {}), ...(value.rich ? { rich: { ...value.rich } } : {}), ...(value.textStyle ? { textStyle: { ...value.textStyle } } : {}), ...(value.textRuns ? {textRuns:value.textRuns.map(run=>({...run,...(run.textStyle?{textStyle:{...run.textStyle}}:{})}))}:{}), points: value.points.map(point => ({ ...point })) }; }
 export function drawingPreview(drawings: Drawing[], preview?: Drawing): Drawing[] {
   if (!preview) return drawings;
   const index = drawings.findIndex(value => value.id === preview.id);
@@ -21,14 +21,17 @@ export function propertyDraft(value: Drawing, revision: number, mode: 'style' | 
   if (value.kind === 'rich') throw new Error('此对象不支持修改样式');
   return { mode, base: existing ? copyDrawing(value) : undefined, drawing: copyDrawing(value), expectedRevision: revision };
 }
-export function changeProperty(value: DrawingPropertyDraft, patch: { color?: string; strokeWidth?: number; fontSize?: number; text?: string; textStyle?: DrawingTextStyle }): DrawingPropertyDraft {
+export function changeProperty(value: DrawingPropertyDraft, patch: { color?: string; strokeWidth?: number; fontSize?: number; text?: string; textStyle?: DrawingTextStyle; textRuns?: DrawingTextRun[] }): DrawingPropertyDraft {
   if (value.drawing.kind === 'rich') throw new Error('此对象不支持修改样式');
   const drawing = copyDrawing(value.drawing);
-  if (patch.color !== undefined && drawing.kind !== 'mosaic') drawing.color = patch.color;
+  if (patch.color !== undefined && drawing.kind !== 'mosaic') {drawing.color = patch.color;drawing.textRuns?.forEach(run=>run.color=patch.color);}
   if (patch.strokeWidth !== undefined && strokeKinds.includes(drawing.kind)) drawing.strokeWidth = patch.strokeWidth;
   if (patch.fontSize !== undefined && ['text', 'number'].includes(drawing.kind)) drawing.fontSize = patch.fontSize;
   if (patch.textStyle !== undefined && drawing.kind === 'text') drawing.textStyle = { ...patch.textStyle };
   if (patch.text !== undefined && value.mode === 'text' && drawing.kind === 'text') drawing.text = patch.text;
+  if(drawing.kind==='text'&&Object.hasOwn(patch,'textRuns')){
+    if(patch.textRuns)drawing.textRuns=patch.textRuns.map(run=>({...run,...(run.textStyle?{textStyle:{...run.textStyle}}:{})}));else delete drawing.textRuns;
+  }
   return { ...value, drawing, error: undefined };
 }
 export function draftChanged(value: DrawingPropertyDraft): boolean {

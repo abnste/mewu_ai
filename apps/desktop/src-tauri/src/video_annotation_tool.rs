@@ -701,7 +701,7 @@ fn render_model(
                     text,
                     color,
                     font_size,
-                })?;
+                 text_runs: None, })?;
                 // Native measurement is available now; reject only this exact
                 // placement condition before the atomic annotation transaction.
                 // Other renderer and Store failures remain hard errors.

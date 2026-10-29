@@ -80,7 +80,7 @@ fn wrap_lines(
     Ok(result)
 }
 
-struct TextMeasurer {
+pub(super) struct TextMeasurer {
     options: usvg::Options<'static>,
     size: f64,
     bold: bool,
@@ -90,7 +90,7 @@ struct TextMeasurer {
 }
 
 impl TextMeasurer {
-    fn new(size: f64, bold: bool) -> Result<Self, String> {
+    pub(super) fn new(size: f64, bold: bool) -> Result<Self, String> {
         let mut options = usvg::Options::default();
         options.image_href_resolver = usvg::ImageHrefResolver {
             resolve_data: Box::new(|_, _, _| None),
@@ -118,7 +118,7 @@ impl TextMeasurer {
         })
     }
 
-    fn width(&mut self, text: &str) -> Result<f64, String> {
+    pub(super) fn width(&mut self, text: &str) -> Result<f64, String> {
         if text.is_empty() {
             return Ok(0.);
         }

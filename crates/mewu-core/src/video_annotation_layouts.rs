@@ -30,6 +30,8 @@ pub struct VideoTextContent {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text_style: Option<crate::DrawingTextStyle>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_runs: Option<Vec<crate::DrawingTextRun>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text_box: Option<VideoTextBox>,
 }
 /// Editable inner text area, in source pixels. Raster padding is not included.
@@ -141,6 +143,7 @@ pub(crate) fn validate_ref_shape(v: &VideoTextLayoutRef) -> Result<()> {
     Ok(())
 }
 fn validate_descriptor(v: &Descriptor) -> Result<()> {
+    crate::validate_text_runs(&v.content.text,v.content.text_runs.as_deref())?;
     validate_ref_shape(&VideoTextLayoutRef {
         layout_id: v.layout_id.clone(),
         layout_sha256: "0".repeat(64),

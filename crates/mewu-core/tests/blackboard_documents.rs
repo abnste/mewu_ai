@@ -49,7 +49,7 @@ fn draw(store: &mut Store) {
                 font_size: None, text_style: None,
                 origin: None,
                 rich: None,
-            },
+             text_runs: None, },
         })
         .unwrap();
 }

@@ -1070,7 +1070,7 @@ mod tests {
             font_size: Some(64.), text_style: None,
             origin: None,
             rich: None,
-        })
+         text_runs: None, })
         .collect();
         let mut bitmap = crate::drawing_render::crop_region(
             &base,

@@ -11,9 +11,10 @@ export interface DrawingPoint { x: number; y: number }
 export interface DrawingOrigin { runId: string; userMessageId: string; toolEventId: string; groupId: string; targetHandle: string; manifestSha256: string }
 export interface VisualAnnotationGrant { pluginId: string; pluginRevision: number; contributionId: string }
 export interface DrawingTextStyle { bold?: boolean; italic?: boolean; underline?: boolean; strikethrough?: boolean }
+export interface DrawingTextRun { text: string; color?: string; textStyle?: DrawingTextStyle }
 /** Text uses one legacy origin, or origin + lower-right for an editable wrapping
  * box. Box height is a minimum; resizing never changes the font or truncates text. */
-export interface Drawing { id: string; kind: DrawingKind; color: string; strokeWidth: number; points: DrawingPoint[]; text?: string; fontSize?: number; textStyle?: DrawingTextStyle; origin?: DrawingOrigin; rich?: RichDrawingRef }
+export interface Drawing { id: string; kind: DrawingKind; color: string; strokeWidth: number; points: DrawingPoint[]; text?: string; fontSize?: number; textStyle?: DrawingTextStyle; textRuns?: DrawingTextRun[]; origin?: DrawingOrigin; rich?: RichDrawingRef }
 export interface DrawingStrokeErase { drawingId:string;fragments:{id:string;points:DrawingPoint[]}[] }
 export interface DrawingEdit { index: number; before: Drawing | null; after: Drawing | null }
 export type DrawingStep = DrawingEdit | { batch: DrawingEdit[] };

@@ -681,7 +681,7 @@ mod tests {
                 text: "中文<&>\n literal".into(),
                 color: "#123456".into(),
                 font_size: 24.,
-            },
+             text_runs: None, },
         };
         let (t, ts) = prepare_add(
             &SourceDrawing::Text(text),

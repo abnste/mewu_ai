@@ -103,7 +103,7 @@ fn drawing(point: DrawingPoint) -> Drawing {
         points: vec![point],
         text: None,
         font_size: None, text_style: None,
-    }
+     text_runs: None, }
 }
 fn add_drawing(
     store: &mut Store,

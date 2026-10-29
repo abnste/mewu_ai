@@ -844,7 +844,7 @@ mod tests {
             font_size: Some(64.), text_style: None,
             origin: None,
             rich: None,
-        })
+         text_runs: None, })
         .collect();
         crate::drawing_render::crop_region(
             &image,

@@ -768,7 +768,7 @@ mod tests {
                     ],
                     text: None,
                     font_size: None, text_style: None,
-                },
+                 text_runs: None, },
             })
             .unwrap();
         let inked = current(&store);
@@ -910,7 +910,7 @@ mod tests {
             points,
             text: None,
             font_size: None, text_style: None,
-        };
+         text_runs: None, };
         region.drawings = vec![
             object(
                 mewu_core::DrawingKind::Mosaic,
@@ -965,6 +965,7 @@ mod tests {
                 ],
                 text: None,
                 font_size: None, text_style: None,
+                text_runs: None,
             }],
             ..Default::default()
         };

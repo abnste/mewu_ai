@@ -1,5 +1,12 @@
 // SPDX-License-Identifier: MPL-2.0
-import type { Drawing, DrawingKind, DrawingPoint, Region } from '../contracts';
+import type { Drawing, DrawingKind, DrawingPoint, DrawingTextRun, DrawingTextStyle, Region } from '../contracts';
+
+export const textEffects = (style?: DrawingTextStyle): DrawingTextStyle => Object.fromEntries(
+  (['bold', 'italic', 'underline', 'strikethrough'] as const).filter(key => style?.[key]).map(key => [key, true]));
+export function drawingTextRuns(drawing: Drawing): DrawingTextRun[] {
+  return (drawing.textRuns ?? [{ text: drawing.text ?? '' }]).map(run => ({ text: run.text,
+    color: run.color ?? drawing.color, textStyle: textEffects(run.textStyle ?? drawing.textStyle) }));
+}
 
 /** Match native drawing_render: synthesize oblique for every script, including CJK. */
 export const DRAWING_TEXT_SKEW_DEGREES = -12;
@@ -12,6 +19,7 @@ let textMeasureContext: CanvasRenderingContext2D | null | undefined;
  * exponential/binary search policy. Contextual shaping can change earlier
  * advances, so this is not a promise of first-overflow greedy equivalence. */
 export function drawingTextLayout(drawing: Drawing, measureText?: (text: string) => number) {
+  if (drawing.textRuns?.length) return styledDrawingTextLayout(drawing, measureText);
   const size = drawing.fontSize ?? 20, lineHeight = size * 1.25;
   if (textMeasureContext === undefined && typeof document !== 'undefined') textMeasureContext = document.createElement('canvas').getContext('2d');
   const context = textMeasureContext;
@@ -52,7 +60,46 @@ export function drawingTextLayout(drawing: Drawing, measureText?: (text: string)
     }
   }
   const contentWidth = Math.max(1, ...lines.map(measure));
-  return { lines, size, lineHeight, contentWidth, width: frame?.width ?? contentWidth, height: Math.max(frame?.height ?? 0, lines.length * lineHeight), framed: !!frame };
+  return { lines, size, lineHeight, contentWidth, width: frame?.width ?? contentWidth, height: Math.max(frame?.height ?? 0, lines.length * lineHeight), framed: !!frame,
+    styledLines: lines.map(text => [{ text, color: drawing.color, textStyle: textEffects(drawing.textStyle), x: 0 }]) };
+}
+
+/** Literal spans share the existing grapheme wrap policy; no HTML is stored. */
+function styledDrawingTextLayout(drawing: Drawing, measureText?: (text: string) => number) {
+  const size=drawing.fontSize??20,lineHeight=size*1.25,framed=drawing.points.length===2;
+  if(textMeasureContext===undefined&&typeof document!=='undefined')textMeasureContext=document.createElement('canvas').getContext('2d');
+  const runs=drawingTextRuns(drawing).map(run=>({...run,text:run.text.replaceAll('\t','    ')}));
+  const full=runs.map(run=>run.text).join(''),starts:number[]=[];let total=0;
+  for(const run of runs){starts.push(total);total+=run.text.length;}
+  const width=framed?drawing.points[1].x-drawing.points[0].x:Infinity,cache=new Map<string,number>();
+  const measure=(text:string,style?:DrawingTextStyle)=>{
+    const key=`${style?.bold?'b':'n'}:${text}`;if(cache.has(key))return cache.get(key)!;
+    if(textMeasureContext)textMeasureContext.font=`normal ${style?.bold?'700':'400'} ${size}px "Segoe UI", "Microsoft YaHei", sans-serif`;
+    const value=measureText?.(text)??textMeasureContext?.measureText(text).width??[...text].reduce((n,c)=>n+(c.codePointAt(0)!>255?size:size*.6),0);
+    cache.set(key,value);return value;
+  };
+  const parts=(from:number,to:number)=>{
+    let low=0,high=runs.length;while(low+1<high){const mid=(low+high)>>1;if(starts[mid]<=from)low=mid;else high=mid;}
+    const result:(DrawingTextRun&{x:number})[]=[];let x=0;
+    for(let i=low;i<runs.length&&starts[i]<to;i++){
+      const run=runs[i],a=Math.max(0,from-starts[i]),b=Math.min(run.text.length,to-starts[i]);
+      if(a>=b)continue;const text=run.text.slice(a,b);result.push({...run,text,x});x+=measure(text,run.textStyle);
+    }
+    return {runs:result,width:x};
+  };
+  const ranges:[number,number][]=[];let offset=0;
+  for(const paragraph of full.split('\n')){
+    if(!framed||!paragraph){ranges.push([offset,offset+paragraph.length]);offset+=paragraph.length+1;continue;}
+    const ends=[...new Intl.Segmenter(undefined,{granularity:'grapheme'}).segment(paragraph)].map(x=>x.index);ends.push(paragraph.length);
+    const count=ends.length-1;let start=0;
+    while(start<count){let fit=start+1,step=1,limit=count;
+      while(fit<count){const probe=Math.min(start+step*2,count);if(parts(offset+ends[start],offset+ends[probe]).width>width+.001){limit=probe;break;}fit=probe;step*=2;}
+      while(fit+1<limit){const middle=fit+Math.floor((limit-fit)/2);if(parts(offset+ends[start],offset+ends[middle]).width<=width+.001)fit=middle;else limit=middle;}
+      ranges.push([offset+ends[start],offset+ends[fit]]);start=fit;
+    }offset+=paragraph.length+1;
+  }
+  const shaped=ranges.map(([a,b])=>parts(a,b)),contentWidth=Math.max(1,...shaped.map(x=>x.width));
+  return {lines:ranges.map(([a,b])=>full.slice(a,b)),styledLines:shaped.map(x=>x.runs),size,lineHeight,contentWidth,width:framed?width:contentWidth,height:Math.max(framed?drawing.points[1].y-drawing.points[0].y:0,ranges.length*lineHeight),framed};
 }
 
 export function drawingBounds(drawing: Drawing) {
@@ -63,7 +110,7 @@ export function drawingBounds(drawing: Drawing) {
     const layout = drawingTextLayout(drawing), size = layout.size;
     width = Math.max(layout.width, layout.contentWidth); height = layout.height;
     // Oblique glyphs extend right above the baseline and slightly left below it.
-    if (drawing.textStyle?.italic) { const overhang = Math.tan(-DRAWING_TEXT_SKEW_DEGREES * Math.PI / 180) * size; x -= overhang * .25; width += overhang * 1.25; }
+    if (drawingTextRuns(drawing).some(run=>run.textStyle?.italic)) { const overhang = Math.tan(-DRAWING_TEXT_SKEW_DEGREES * Math.PI / 180) * size; x -= overhang * .25; width += overhang * 1.25; }
   }
   if (drawing.kind === 'number') width = height = drawing.fontSize ?? 28;
   const margin = ['number', 'mosaic', 'rich', 'mark'].includes(drawing.kind) ? 0 : drawing.strokeWidth / 2;
@@ -97,9 +144,8 @@ export function drawingResizeHandles(drawing: Drawing): DrawingPoint[] {
   if (drawing.kind === 'text' && (drawing.points.length === 1 || drawing.points.length === 2)) {
     const first = drawing.points[0], layout = drawingTextLayout(drawing);
     if (![first.x, first.y, layout.width, layout.height].every(Number.isFinite) || layout.width <= 0 || layout.height <= 0) return [];
-    // Keep the text origin fixed. Side handles adjust width/height independently;
-    // the lower-right handle adjusts both, without scaling the font.
-    return [{ x: first.x + layout.width, y: first.y + layout.height / 2 }, { x: first.x + layout.width / 2, y: first.y + layout.height }, { x: first.x + layout.width, y: first.y + layout.height }];
+    const left=first.x,top=first.y,right=left+layout.width,bottom=top+layout.height,mx=(left+right)/2,my=(top+bottom)/2;
+    return [{x:left,y:top},{x:mx,y:top},{x:right,y:top},{x:right,y:my},{x:right,y:bottom},{x:mx,y:bottom},{x:left,y:bottom},{x:left,y:my}];
   }
   if (drawing.points.length !== 2 || !['line', 'arrow', 'rect', 'ellipse', 'mark'].includes(drawing.kind)) return [];
   const [a, b] = drawing.points;
@@ -115,13 +161,14 @@ export function resizedDrawingPoints(drawing: Drawing, handle: number, pointer: 
   const clamp = (value: number, low: number, high: number) => Math.max(low, Math.min(high, value));
   const end = { x: clamp(pointer.x, region.x, region.x + region.width), y: clamp(pointer.y, region.y, region.y + region.height) };
   if (drawing.kind === 'text') {
-    const layout = drawingTextLayout(drawing), first = drawing.points[0];
-    if (first.x >= region.x + region.width || first.y >= region.y + region.height) return;
-    const right = handle === 1 ? first.x + layout.width : Math.max(first.x + 1, end.x);
-    const bottom = handle === 0 ? first.y + layout.height : Math.max(first.y + 1, end.y);
-    // The box is a minimum height. Wrapped text always remains in the document
-    // and is painted at its natural height, even when the box is shortened.
-    return [{ ...first }, { x: clamp(right, first.x + 1, region.x + region.width), y: clamp(bottom, first.y + 1, region.y + region.height) }];
+    const layout=drawingTextLayout(drawing),first=drawing.points[0];
+    let left=first.x,top=first.y,right=Math.min(region.x+region.width,first.x+layout.width),bottom=Math.min(region.y+region.height,first.y+layout.height);
+    if([0,6,7].includes(handle))left=Math.min(end.x,right-1);
+    if([0,1,2].includes(handle))top=Math.min(end.y,bottom-1);
+    if([2,3,4].includes(handle))right=Math.max(end.x,left+1);
+    if([4,5,6].includes(handle))bottom=Math.max(end.y,top+1);
+    if(right-left<1||bottom-top<1)return;
+    return [{x:left,y:top},{x:right,y:bottom}];
   }
   if (drawing.kind === 'line' || drawing.kind === 'arrow') {
     const anchor = handle === 0 ? b : a;

@@ -247,7 +247,7 @@ fn drawing(kind: DrawingKind) -> Drawing {
         ],
         text: None,
         font_size: None, text_style: None,
-    }
+     text_runs: None, }
 }
 fn add(store: &mut Store, target: &OcrTarget, object: Drawing) {
     store

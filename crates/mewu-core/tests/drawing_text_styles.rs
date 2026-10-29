@@ -32,7 +32,7 @@ fn text() -> Drawing {
         text_style: None,
         origin: None,
         rich: None,
-    }
+     text_runs: None, }
 }
 fn all_styles() -> DrawingTextStyle {
     DrawingTextStyle {
@@ -300,4 +300,57 @@ fn drawing_text_box_resize_persists_reopens_and_undo_restores_legacy_anchor() {
         assert!(store.apply(command(&store, &target, invalid, false)).is_err());
         assert_eq!(serde_json::to_value(store.snapshot()).unwrap(), before);
     }
+}
+
+#[test]
+fn literal_text_runs_validate_exact_unicode_and_closed_fields() {
+    let runs = vec![DrawingTextRun { text: "中文 ".into(), color: Some("#3366CC".into()), text_style: Some(all_styles()) }, DrawingTextRun { text: "é 👨‍👩‍👧".into(), color: None, text_style: Some(DrawingTextStyle::default()) }];
+    validate_text_runs("中文 é 👨‍👩‍👧", Some(&runs)).unwrap();
+    for invalid in [vec![], vec![DrawingTextRun { text: "".into(), color: None, text_style: None }], vec![DrawingTextRun { text: "错文".into(), color: None, text_style: None }], vec![DrawingTextRun { text: "中文 é 👨‍👩‍👧".into(), color: Some("red;url(x)".into()), text_style: None }]] {
+        assert!(validate_text_runs("中文 é 👨‍👩‍👧", Some(&invalid)).is_err());
+    }
+    for invalid in [r#"{"text":"a","html":"<b>a</b>"}"#, r#"{"text":"a","textStyle":{"bold":"true"}}"#, r#"{"text":"a","textStyle":{"fontFamily":"url(x)"}}"#] {
+        assert!(serde_json::from_str::<DrawingTextRun>(invalid).is_err());
+    }
+}
+
+#[test]
+fn literal_text_runs_persist_migrate_reopen_and_undo_as_one_document() {
+    let file = TestDb::new();
+    let mut store = Store::open(&file.0).unwrap();
+    let target = setup(&mut store);
+    let original = text();
+    store.apply(command(&store, &target, original.clone(), true)).unwrap();
+    drop(store);
+    // Simulate the immediately preceding writer. The upgrade must not rewrite
+    // its payload, history or IDs. Migration advances CAS once so an old writer
+    // cannot commit over a document using the new rich-text schema.
+    let db = Connection::open(&file.0).unwrap();
+    db.pragma_update(None, "user_version", 13).unwrap();
+    let before: (String, i64) = db.query_row("SELECT payload,revision FROM app_state WHERE id=1", [], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
+    drop(db);
+    let mut store = Store::open(&file.0).unwrap();
+    let db = Connection::open(&file.0).unwrap();
+    let after: (String, i64) = db.query_row("SELECT payload,revision FROM app_state WHERE id=1", [], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
+    assert_eq!(before.0, after.0);
+    assert_eq!(before.1 + 1, after.1);
+    assert_eq!(db.pragma_query_value::<u32, _>(None, "user_version", |row| row.get(0)).unwrap(), STORAGE_SCHEMA_VERSION);
+    drop(db);
+    let mut styled = original.clone();
+    styled.text_runs = Some(vec![DrawingTextRun { text: "中文".into(), color: Some("#3366CC".into()), text_style: Some(all_styles()) }, DrawingTextRun { text: " Abc\n第二行".into(), color: None, text_style: None }]);
+    styled.points = vec![DrawingPoint { x: 20., y: 30. }, DrawingPoint { x: 280., y: 150. }];
+    store.apply(command(&store, &target, styled.clone(), false)).unwrap();
+    drop(store);
+    let mut store = Store::open(&file.0).unwrap();
+    assert_eq!(region(&store, &target).drawings, vec![styled.clone()]);
+    for (redo, expected) in [(false, original), (true, styled.clone())] {
+        let (scene_id, region_id, background_id) = target.clone();
+        let expected_revision = region(&store, &target).drawing_revision;
+        store.apply(if redo { SceneCommand::RedoDrawing { scene_id, region_id, background_id, expected_revision } } else { SceneCommand::UndoDrawing { scene_id, region_id, background_id, expected_revision } }).unwrap();
+        assert_eq!(region(&store, &target).drawings, vec![expected]);
+    }
+    let before = serde_json::to_value(store.snapshot()).unwrap();
+    styled.text_runs.as_mut().unwrap()[0].text = "被替换".into();
+    assert!(store.apply(command(&store, &target, styled, false)).is_err());
+    assert_eq!(serde_json::to_value(store.snapshot()).unwrap(), before);
 }

@@ -62,7 +62,7 @@ fn rich(layout: &VerifiedRichLayout, points: [(f64, f64); 2]) -> Drawing {
             target_handle: id(),
             manifest_sha256: "b".repeat(64),
         }),
-    }
+     text_runs: None, }
 }
 fn line(color: &str, y: f64) -> Drawing {
     Drawing {
@@ -75,7 +75,7 @@ fn line(color: &str, y: f64) -> Drawing {
         font_size: None, text_style: None,
         origin: None,
         rich: None,
-    }
+     text_runs: None, }
 }
 fn region(drawings: Vec<Drawing>, x: f64, y: f64, width: f64, height: f64) -> Region {
     Region {
@@ -326,7 +326,7 @@ fn protected_highlights_use_repaired_and_lifted_pixels_instead_of_original_text_
             font_size: None, text_style: None,
             origin: None,
             rich: None,
-        };
+         text_runs: None, };
         let area = region(vec![repair.clone(), marker.clone()], 20., 10., 140., 90.);
         let mut calls = 0;
         let once = crop_region_with_layouts(&original, &area, None, |reference| {

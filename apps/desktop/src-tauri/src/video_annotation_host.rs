@@ -253,6 +253,7 @@ fn move_mutation(
 /// Cheap, literal-text admission precedes the renderer and its shared slot.
 /// These are render_text's existing public content limits, not a second layout.
 pub(crate) fn validate_content(content: &VideoTextContent) -> Result<(), String> {
+    mewu_core::validate_text_runs(&content.text,content.text_runs.as_deref()).map_err(|e|e.to_string())?;
     if content.version != 1
         || content.text.trim().is_empty()
         || content.text.len() > 4096
@@ -785,7 +786,7 @@ mod manual_edit_tests {
             text: text.into(),
             color: "#1357b9".into(),
             font_size: 24.,
-        }
+         text_runs: None, }
     }
     struct Db(PathBuf);
     impl Db {
@@ -1380,7 +1381,7 @@ mod manual_edit_media_gate {
             text: s.into(),
             color: "#ffffff".into(),
             font_size: 80.,
-        }
+         text_runs: None, }
     }
     fn xy(x: f64, y: f64) -> VideoPixelPoint {
         VideoPixelPoint { x, y }

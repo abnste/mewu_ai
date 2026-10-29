@@ -296,6 +296,15 @@
             },
             "textStyle": {
               "$ref": "#/$defs/TextStyle"
+            },
+            "textRuns": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 2000,
+              "items": {
+                "$ref": "#/$defs/TextRun"
+              },
+              "description": "Literal fragments must concatenate exactly to text. Omitted styles inherit the drawing; an empty textStyle clears effects."
             }
           },
           "required": [
@@ -1105,17 +1114,87 @@
           "additionalProperties": false
         }
       ]
+    },
+    "TextRun": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "color": {
+          "type": "string",
+          "pattern": "^#[0-9A-Fa-f]{6}$"
+        },
+        "textStyle": {
+          "$ref": "#/$defs/TextStyle"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "additionalProperties": false
     }
   },
   "commands": [
     {
-      "method": "capture.quick", "title": "快速交互", "description": "唤起临时截图与语音交互。独立于普通截图，成功复制或贴图后关闭；通过控制台打开时保持到完成操作。长按与松开由原生快捷键规则拥有。",
-      "execution": "operation", "asyncOperation": true,
-      "inputSchema": { "type": "object", "properties": { "context": { "$ref": "#/$defs/Context" } }, "required": [], "additionalProperties": false },
-      "resultSchema": { "type": "object", "properties": { "sceneId": { "$ref": "#/$defs/Uuid" }, "revision": { "$ref": "#/$defs/Revision" }, "backgroundId": { "anyOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }] } }, "required": ["sceneId", "revision", "backgroundId"], "additionalProperties": false },
-      "acceptedSchema": { "$ref": "#/$defs/AsyncAccepted" },
+      "method": "capture.quick",
+      "title": "快速交互",
+      "description": "唤起临时截图与语音交互。独立于普通截图，成功复制或贴图后关闭；通过控制台打开时保持到完成操作。长按与松开由原生快捷键规则拥有。",
+      "execution": "operation",
+      "asyncOperation": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "context": {
+            "$ref": "#/$defs/Context"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "resultSchema": {
+        "type": "object",
+        "properties": {
+          "sceneId": {
+            "$ref": "#/$defs/Uuid"
+          },
+          "revision": {
+            "$ref": "#/$defs/Revision"
+          },
+          "backgroundId": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "sceneId",
+          "revision",
+          "backgroundId"
+        ],
+        "additionalProperties": false
+      },
+      "acceptedSchema": {
+        "$ref": "#/$defs/AsyncAccepted"
+      },
       "completion": "Poll operation.get; never replay an unknown capture invocation.",
-      "examples": [{ "description": "Open quick interaction through the same application action bus.", "request": { "id": "example-capture-quick", "method": "capture.quick", "params": {} } }]
+      "examples": [
+        {
+          "description": "Open quick interaction through the same application action bus.",
+          "request": {
+            "id": "example-capture-quick",
+            "method": "capture.quick",
+            "params": {}
+          }
+        }
+      ]
     },
     {
       "method": "capture.open",

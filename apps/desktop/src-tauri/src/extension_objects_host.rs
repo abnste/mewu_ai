@@ -213,7 +213,7 @@ mod tests {
             ],
             text: None, font_size: None, text_style: Default::default(),
             origin: None, rich: None,
-        };
+         text_runs: None, };
         let image = drawing_image(100,100,vec![drawing],std::path::Path::new("unused-for-vector")).unwrap().into_rgba8();
         assert!(image.width()<60 && image.height()<60);
         assert!(image.pixels().any(|pixel|pixel[3]==0));

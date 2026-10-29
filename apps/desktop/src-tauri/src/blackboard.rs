@@ -534,7 +534,7 @@ mod tests {
             font_size: None, text_style: None,
             origin: None,
             rich: None,
-        });
+         text_runs: None, });
         let original = board.clone();
         let (_, preview_file) = prepare_preview(&root, &board, &work).unwrap();
         let pixels = image::open(&preview_file.path).unwrap().to_rgba8();
@@ -692,7 +692,7 @@ mod tests {
                     font_size: None, text_style: None,
                     origin: None,
                     rich: None,
-                },
+                 text_runs: None, },
             })
             .unwrap();
         let original = store.snapshot().scenes[0].clone();
@@ -772,7 +772,7 @@ mod tests {
                     font_size: None, text_style: None,
                     origin: None,
                     rich: None,
-                },
+                 text_runs: None, },
             })
             .unwrap();
         let state = store.snapshot();
@@ -900,7 +900,7 @@ mod tests {
                     font_size: None, text_style: None,
                     origin: None,
                     rich: None,
-                },
+                 text_runs: None, },
             })
             .unwrap();
         let snapshot = store.snapshot();

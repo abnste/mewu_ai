@@ -1573,7 +1573,7 @@ mod tests {
             text_style: None,
             origin: None,
             rich: None,
-        };
+         text_runs: None, };
         let add = SceneCommand::AddDrawing {
             scene_id: "s".into(),
             background_id: "b".into(),
@@ -1638,7 +1638,7 @@ mod tests {
             text_style: None,
             origin: None,
             rich: None,
-        };
+         text_runs: None, };
         let command = |action, revision| SceneCommand::EditImageAnnotations {
             scene_id: scene_id.clone(),
             item_id: image.id.clone(),

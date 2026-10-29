@@ -1042,7 +1042,7 @@ mod tests {
                 text_style: None,
                 origin: None,
                 rich: None,
-            })
+             text_runs: None, })
             .collect();
         let rendered = crate::drawing_render::crop_region(
             &image,

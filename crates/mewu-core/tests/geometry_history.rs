@@ -217,7 +217,7 @@ fn add_drawing(store: &mut Store, scene_id: &str, id: &str) {
                 ],
                 text: None,
                 font_size: None, text_style: None,
-            },
+             text_runs: None, },
         })
         .unwrap();
 }

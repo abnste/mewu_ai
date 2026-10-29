@@ -11,11 +11,17 @@
   "dependencies": {
     "@tauri-apps/api": "2.12.1",
     "compare-versions": "6.1.1",
-    "dompurify": "3.4.16",
+    "dompurify": "3.4.17",
     "entities": "6.0.1",
     "katex": "0.19.0",
     "lucide-solid": "1.52.0",
     "marked": "18.1.0",
+    "prosemirror-commands": "1.7.2",
+    "prosemirror-history": "1.5.1",
+    "prosemirror-keymap": "1.2.3",
+    "prosemirror-model": "1.25.12",
+    "prosemirror-state": "1.4.4",
+    "prosemirror-view": "1.42.8",
     "solid-js": "1.9.17"
   },
   "devDependencies": {

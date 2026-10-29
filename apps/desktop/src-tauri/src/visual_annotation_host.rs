@@ -1123,7 +1123,7 @@ fn parse_plan_with_wire_diagnosed(
                 font_size: object.font_size.map(|s| s * scale), text_style: None,
                 origin: None,
                 rich: None,
-            };
+             text_runs: None, };
             validate_vector(&drawing, &object_root)?;
             drawings.push(ParsedObject::Vector(drawing));
         }
@@ -1366,7 +1366,7 @@ async fn render_plan(
                         font_size: None, text_style: None,
                         origin: None,
                         rich: Some(layout.reference().clone()),
-                    });
+                     text_runs: None, });
                     layouts.push(layout);
                 }
             }

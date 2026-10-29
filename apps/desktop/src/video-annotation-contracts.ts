@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
-import type { DrawingTextStyle, VideoRange } from './contracts';
+import type { DrawingTextRun, DrawingTextStyle, VideoRange } from './contracts';
 import type { VideoVectorLayoutRef } from './video-drawing-contracts';
 
 export interface VideoPixelPoint { x: number; y: number }
@@ -26,7 +26,7 @@ export interface VideoAnnotationPlan {
 export interface VideoAnnotationPreviewTarget { target: VideoAnnotationTarget; documentSha256: string; annotationId: string; reference: VideoAnnotationRasterRef }
 export interface VideoAnnotationPreview extends VideoAnnotationPreviewTarget { dataUrl: string }
 export type VideoAnnotationAction = { type: 'duplicate'; annotationIds: string[]; offset: VideoPixelPoint } | { type: 'remove'; annotationId: string } | { type: 'undo' | 'redo'; operationId: string } | { type: 'move'; annotationId: string; fromTopLeft: VideoPixelPoint; toTopLeft: VideoPixelPoint };
-export interface VideoTextContent { version: 1; text: string; color: string; fontSize: number; textStyle?: DrawingTextStyle; textBox?: { width: number; height: number } }
+export interface VideoTextContent { version: 1; text: string; color: string; fontSize: number; textStyle?: DrawingTextStyle; textRuns?: DrawingTextRun[]; textBox?: { width: number; height: number } }
 export interface VideoTextRead { requestId: string; target: VideoAnnotationTarget; annotationId: string; reference: VideoTextLayoutRef; content: VideoTextContent }
 export interface VideoAnswerAction { target: VideoAnnotationTarget; annotationId: string; runId: string; toolEventId: string; interval: VideoRange }
 export interface VideoPlayerPort { sourceIdentity: string; jump: (action: VideoAnswerAction, active: () => boolean) => Promise<void> }

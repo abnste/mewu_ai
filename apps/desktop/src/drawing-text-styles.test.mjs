@@ -10,6 +10,7 @@ import { transformSync } from '@babel/core';
 import solidPreset from 'babel-preset-solid';
 import * as solid from 'solid-js';
 import * as web from 'solid-js/web';
+const prosemirror = new Map(await Promise.all(['prosemirror-model','prosemirror-state','prosemirror-view','prosemirror-commands','prosemirror-keymap','prosemirror-history'].map(async name=>[name,await import(name)])));
 
 const plain = source => stripTypeScriptTypes(source, { mode: 'transform' });
 const synthetic = values => new SyntheticModule(Object.keys(values), function () { for (const [key, value] of Object.entries(values)) this.setExport(key, value); });
@@ -24,6 +25,7 @@ async function load(url) {
   const code = url.pathname.endsWith('.tsx') ? transformSync(source, { filename: 'text-style.tsx', parserOpts: { plugins: ['typescript', 'jsx'] }, presets: [[solidPreset, { generate: 'ssr', hydratable: false }]], configFile: false, babelrc: false }).code : source;
   const result = new SourceTextModule(plain(code)); modules.set(url.href, result);
   await result.link(name => {
+    if(prosemirror.has(name))return synthetic(prosemirror.get(name));
     if (name === 'solid-js') return synthetic(solid);
     if (name === 'solid-js/web') return synthetic(web);
     const target = new URL(name, url);
@@ -37,6 +39,30 @@ const geometry = (await load(new URL('./components/drawing-geometry.ts', import.
 const wire = (await load(new URL('./video-drawing-wire.ts', import.meta.url))).namespace;
 const video = (await load(new URL('./video-manual-edit.ts', import.meta.url))).namespace;
 const text = { id: 'text', kind: 'text', color: '#EE4848', strokeWidth: 2, fontSize: 40, points: [{ x: 40, y: 20 }], text: '中文 <&>\nAbc' };
+
+test('the real live-render port keeps literal run color and weight after editing and replacing the saved drawing',async()=>{
+  const pointer=(await load(new URL('./components/drawing-pointer.ts',import.meta.url))).namespace;
+  let current={...text,text:'Red Blue',textRuns:[{text:'Red ',color:'#EE4848',textStyle:{}},{text:'Blue',color:'#348BF1',textStyle:{bold:true}}]};
+  const live=pointer.liveDrawing(current.id,()=>current);
+  for(const color of ['#348BF1','#112233']){
+    current={...current,textRuns:current.textRuns.map((run,index)=>index?{...run,color}:run)};
+    const html=web.renderToString(()=>drawing.DrawingShape({drawing:live}));
+    assert.ok(html.includes(`fill="${color}" font-weight="700"`),html);
+    assert.ok(html.includes('fill="#EE4848" font-weight="400"'),html);
+    assert.equal((html.match(/<text /g)??[]).length,2);
+  }
+});
+
+test('video run wire roundtrips literal fragments and rejects malformed, partial or split-Unicode spans',()=>{
+  const value={...text,text:'中文 😀',textRuns:[{text:'中文 ',color:'#EE4848',textStyle:{}},{text:'😀',color:'#348BF1',textStyle:{bold:true}}]};
+  const source=wire.drawingToVideoSource(value);
+  assert.deepEqual(source.content.textRuns,value.textRuns);assert.notEqual(source.content.textRuns,value.textRuns);
+  assert.ok(wire.validVideoSourceDrawing(source));assert.ok(video.validateVideoTextContent(source.content));
+  for(const textRuns of [[],[{text:'中文'}],[{text:'错误'}],[{text:'中文 😀',color:'red'}],[{text:'中文 😀',textStyle:{css:'bad'}}],[{text:'中文 \uD83D'},{text:'\uDE00'}]]){
+    const invalid={...source,content:{...source.content,textRuns}};
+    assert.equal(wire.validVideoSourceDrawing(invalid),false);assert.equal(video.validateVideoTextContent(invalid.content),false);
+  }
+});
 
 test('actual production SVG combines all sixteen text styles with individually aligned CJK and Latin lines', () => {
   const rust = readFile(new URL('../src-tauri/src/drawing_render.rs', import.meta.url), 'utf8');
@@ -60,18 +86,20 @@ test('actual production SVG combines all sixteen text styles with individually a
   return rust.then(source => assert.ok(source.includes(`const DRAWING_TEXT_SKEW_DEGREES: i32 = ${geometry.DRAWING_TEXT_SKEW_DEGREES};`)));
 });
 
-test('actual inline caret measures the same normal/bold advance without opening a second editor', async () => {
+test('inline editor is transparent HTML text rather than a native bordered textarea', async () => {
   const fonts = [];
   const previous = globalThis.document;
   globalThis.document = { createElement: () => ({ getContext: () => ({ set font(value) { fonts.push(value); }, measureText(value) { return { width: value.length * 20, fontBoundingBoxAscent: 30, fontBoundingBoxDescent: 10 }; } }) }) };
   try {
     const Inline = (await load(new URL('./components/InlineDrawingText.tsx', import.meta.url))).namespace.default;
     const html = web.renderToString(() => Inline({ drawing: { ...text, textStyle: { bold: true, italic: true, underline: true, strikethrough: true } }, disabled: false, ref() {}, onInput() {}, onConfirm() {}, onBlur() {} }));
-    assert.ok(fonts.length >= 1); assert.ok(fonts.every(font => font === 'normal 700 40px "Segoe UI", "Microsoft YaHei", sans-serif'));
-    assert.equal((html.match(/<textarea/g) ?? []).length, 1);
-    assert.ok(html.includes('font-weight:700;'));
-    assert.ok(html.includes('font-style:normal;'));
-    assert.ok(html.includes('aria-label="绘制文字"'));
+    assert.ok(fonts.includes('normal 400 40px "Segoe UI", "Microsoft YaHei", sans-serif'));
+    assert.ok(fonts.every(font => /^normal (400|700) 40px /.test(font)));
+    assert.equal((html.match(/<textarea/g) ?? []).length, 0);
+    assert.ok(html.includes('class="drawing-rich-text"'));
+    const css=await readFile(new URL('./components/drawing.css',import.meta.url),'utf8');
+    assert.match(css,/\.drawing-rich-text-content[^}]*border:\s*0\s*!important/s);
+    assert.match(css,/\.drawing-rich-text-content[^}]*box-shadow:\s*none\s*!important/s);
   } finally { globalThis.document = previous; }
 });
 

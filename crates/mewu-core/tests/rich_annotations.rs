@@ -67,7 +67,7 @@ fn drawing(layout: &VerifiedRichLayout) -> Drawing {
         font_size: None, text_style: None,
         origin: None,
         rich: Some(layout.reference().clone()),
-    }
+     text_runs: None, }
 }
 fn vector() -> Drawing {
     Drawing {
@@ -83,7 +83,7 @@ fn vector() -> Drawing {
         font_size: None, text_style: None,
         origin: None,
         rich: None,
-    }
+     text_runs: None, }
 }
 struct Fixture {
     scene: String,

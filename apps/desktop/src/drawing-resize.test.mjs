@@ -81,8 +81,8 @@ test('shape geometry handles preserve old primitives; text adds width/height han
 test('real text resize converts a legacy anchor into a box in one update, preserves styled text and font, and retains overflowing content', async () => {
   const drawing = { ...shape('text', [{ x: 140, y: 240 }]), text: '中文 abcd\n第二行 e\u0301 👨‍👩‍👧', fontSize: 24, textStyle: { bold: true, italic: true, underline: true, strikethrough: true } };
   const fixture = setup(drawing), handles = geometry.drawingResizeHandles(drawing);
-  assert.equal(handles.length, 3);
-  fixture.beginResize(event('pointerdown', handles[2].x, handles[2].y), 2);
+  assert.equal(handles.length, 8);
+  fixture.beginResize(event('pointerdown', handles[4].x, handles[4].y), 4);
   fire(fixture, 'pointermove', 195, 250); fire(fixture, 'pointerup', 195, 250); await settled();
   assert.equal(fixture.commands.length, 1);
   const result = fixture.commands[0].drawing;
@@ -93,8 +93,21 @@ test('real text resize converts a legacy anchor into a box in one update, preser
   assert.ok(layout.lines.some(line => line.includes('e\u0301')));
   assert.ok(layout.lines.some(line => line.includes('👨‍👩‍👧')));
   const framed = { ...drawing, text: 'abc', points: [{ x: 140, y: 240 }, { x: 260, y: 320 }] };
-  assert.deepEqual(plain(geometry.resizedDrawingPoints(framed, 0, { x: 200, y: 400 }, false, region)), [{ x: 140, y: 240 }, { x: 200, y: 320 }]);
-  assert.deepEqual(plain(geometry.resizedDrawingPoints(framed, 1, { x: 410, y: 400 }, false, region)), [{ x: 140, y: 240 }, { x: 260, y: 400 }]);
+  assert.deepEqual(plain(geometry.resizedDrawingPoints(framed, 3, { x: 200, y: 400 }, false, region)), [{ x: 140, y: 240 }, { x: 200, y: 320 }]);
+  assert.deepEqual(plain(geometry.resizedDrawingPoints(framed, 5, { x: 410, y: 400 }, false, region)), [{ x: 140, y: 240 }, { x: 260, y: 400 }]);
+});
+
+test('text has eight corner/edge handles and each resize fixes the opposite source edge without changing font or literal runs', () => {
+  const drawing = { ...shape('text', [{x:140,y:240},{x:260,y:320}]), text:'abc', fontSize:24, textRuns:[{text:'abc',color:'#3366CC',textStyle:{bold:true}}] };
+  const positions = [{x:140,y:240},{x:200,y:240},{x:260,y:240},{x:260,y:280},{x:260,y:320},{x:200,y:320},{x:140,y:320},{x:140,y:280}];
+  assert.deepEqual(plain(geometry.drawingResizeHandles(drawing)), positions);
+  const destinations = [{x:120,y:220},{x:200,y:220},{x:280,y:220},{x:280,y:280},{x:280,y:340},{x:200,y:340},{x:120,y:340},{x:120,y:280}];
+  const boxes = [[120,220,260,320],[140,220,260,320],[140,220,280,320],[140,240,280,320],[140,240,280,340],[140,240,260,340],[120,240,260,340],[120,240,260,320]];
+  for(let handle=0;handle<8;handle++) {
+    const [left,top,right,bottom]=boxes[handle];
+    assert.deepEqual(plain(geometry.resizedDrawingPoints(drawing,handle,destinations[handle],false,region)),[{x:left,y:top},{x:right,y:bottom}]);
+  }
+  assert.equal(drawing.fontSize,24); assert.equal(drawing.textRuns[0].color,'#3366CC');
 });
 
 test('all four corners fix their diagonal source anchor, preserve orientation and prevent flipping', () => {

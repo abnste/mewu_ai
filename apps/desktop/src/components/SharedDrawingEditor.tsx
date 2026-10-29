@@ -4,7 +4,7 @@ import { nativeSelectOwnsEscape } from '../native-select-escape';
 import { batch, createEffect, createMemo, createSignal, For, on, onCleanup, onMount, Show, untrack } from 'solid-js';
 import { ArrowUpRight, BrushCleaning, Check, Circle, Copy, Eraser, Grid2X2, Hash, Highlighter, LoaderCircle, Minus, MousePointer2, Pencil, Pin, Redo2, RotateCcw, Scissors, Square, Trash2, Type, Undo2, X } from 'lucide-solid';
 import type { Drawing, DrawingKind, DrawingPoint, DrawingTextStyle, ImageExportVariant, ManualDrawingKind } from '../contracts';
-import { constrainedEnd, drawingBounds, drawingMoveDelta, drawingOrder, drawingResizeHandles, resizedDrawingPoints, validNextNumber } from "./drawing-geometry";
+import { constrainedEnd, drawingBounds, drawingMoveDelta, drawingOrder, drawingResizeHandles, drawingTextRuns, resizedDrawingPoints, validNextNumber } from "./drawing-geometry";
 import { finishDrawing, outputDrawing } from "../capture-completion";
 import { clipEraserSweep, eraserCursor, eraserHit, eraserStrokeHits, ObjectEraser, PixelEraser, type EraserMode } from "./drawing-eraser";
 import { changeProperty, drawingDraftKey, drawingDrafts, drawingPropertyCommand, propertyDraft, settleDrawingEdit, strokeKinds, type DrawingPropertyDraft } from "./drawing-properties";
@@ -20,7 +20,8 @@ import {blackboardImage} from '../blackboard-image';
 import {objectTrash} from '../object-trash';
 import { beginObjectDrag, type ObjectDrag } from '../extension-object-drag';
 import DrawingWidthSlider from './DrawingWidthSlider';
-import InlineDrawingText from './InlineDrawingText';
+import InlineDrawingText, { type InlineDrawingTextController } from './InlineDrawingText';
+import type { LiteralTextDocument, TextSelectionStyle } from '../drawing-text-model';
 import DrawingTextStylePicker from './DrawingTextStylePicker';
 import ImageExportButton from './ImageExportButton';
 import { boardDockAt, boardDockPreview, dockBoardToolbar, type BoardToolbarPosition, type BoardDock } from '../board-toolbar-dock';
@@ -40,7 +41,8 @@ export default function SharedDrawingEditor(props: Props) {
   const objectWheel=(event:WheelEvent)=>{if(props.onObjectWheel?.(event)){event.preventDefault();event.stopImmediatePropagation();}};
   onMount(()=>{editorShell.addEventListener('wheel',objectWheel,{capture:true,passive:false});});
   onCleanup(()=>editorShell.removeEventListener('wheel',objectWheel,true));
-  let svg!: SVGSVGElement, toolbar!: HTMLDivElement, toolsRow!: HTMLDivElement, trashButton!:HTMLButtonElement, textarea: HTMLTextAreaElement | undefined;
+  let svg!: SVGSVGElement, toolbar!: HTMLDivElement, toolsRow!: HTMLDivElement, trashButton!:HTMLButtonElement, textInput: InlineDrawingTextController | undefined;
+  const [textSelection,setTextSelection]=createSignal<TextSelectionStyle|undefined>(undefined,{equals:(a,b)=>JSON.stringify(a)===JSON.stringify(b)});
   let cancelGesture: (() => void) | undefined, refreshConstraint: ((shift: boolean) => void) | undefined, disposed = false, serial = 0, numberPreference = 0;
   const drawingInput = new DrawingMouseInput();
   onMount(() => { const detach = drawingInput.attach(document); onCleanup(detach); });
@@ -134,13 +136,17 @@ export default function SharedDrawingEditor(props: Props) {
   const selectedDrawing = () => drawingIndex().get(selected());
   const propertyTarget = () => selectedIds().length>1?undefined:edit()?.drawing ?? (tool() === 'select' && selectedDrawing() && props.port.canStyle(selectedDrawing()!) ? selectedDrawing() : undefined);
   const propertyKind = () => propertyTarget()?.kind ?? tool();
-  const propertyColor = () => propertyTarget()?.color ?? color();
+  const propertyColor = () => textEditor()&&textSelection()?.color || propertyTarget()?.textRuns?.[0]?.color || propertyTarget()?.color || color();
   const brushWidth = () => tool()==='highlighter'||(tool()==='eraser'&&wideBrush()) ? highlightWidth() : width();
   const propertyWidth = () => propertyTarget()?.strokeWidth ?? brushWidth();
   const eraseWidth = () => wideBrush() ? highlightWidth() : width();
   const eraseCursor = () => eraserCursor(eraseWidth()*surfaceSize().width/props.port.frame().width,eraseWidth()*surfaceSize().height/props.port.frame().height);
   const propertySize = () => propertyTarget()?.fontSize ?? (tool() === 'number' ? numberDiameter() : fontSize());
-  const propertyTextStyle = () => { const drawing = propertyTarget(); return drawing ? drawing.textStyle ?? {} : textStyle(); };
+  const propertyTextStyle = () => {
+    if(textEditor()&&textSelection())return textSelection()!.textStyle;
+    const drawing=propertyTarget();if(!drawing)return textStyle();
+    const runs=drawingTextRuns(drawing);return Object.fromEntries((['bold','italic','underline','strikethrough'] as const).filter(key=>runs.every(run=>run.textStyle?.[key])).map(key=>[key,true])) as DrawingTextStyle;
+  };
   const options = (defaults: number[], current: number) => [...new Set([...defaults, current])].sort((a, b) => a - b);
   const controlsLocked = () => props.busy || props.inputLocked || finishing() || imageZooming();
   const disabled = () => pending() || controlsLocked() || historyPending();
@@ -267,7 +273,7 @@ export default function SharedDrawingEditor(props: Props) {
   }
   function cancelEdit() { const value = edit(); if (value) drawingDrafts.delete(editCacheKey ?? cacheKey(), value); editCacheKey = undefined; setEdit(undefined); setDraft(undefined); }
   function cancelUserEdit(){if(!disabled()){releaseFailedStrokes();cancelEdit();restoreStrokeDraft();}}
-  const setText = (value: string) => { if(disabled())return; const current = textEditor(); if (current) storeEdit(changeProperty(current, { text: value })); };
+  const setText = (value: LiteralTextDocument) => { if(disabled())return; const current = textEditor(); if (current) storeEdit(changeProperty(current, { text: value.text,textRuns:value.textRuns })); };
   function commit(command: EditorDrawingAction, controlled = false, active: () => boolean = () => true, persisted: () => void = () => {}): Promise<boolean> {
     if (strokeQueue?.pending() || historyLane?.pending() || pending() || (!controlled && (props.busy || props.inputLocked)) || !active()) return Promise.resolve(false);
     if (!props.port.allows(command)) return Promise.resolve(false);
@@ -298,7 +304,7 @@ export default function SharedDrawingEditor(props: Props) {
     if (disabled() || edit()) return;
     if (!storeEdit(propertyDraft(value, props.port.revision(), 'text', existing))) return;
     setSelected(value.id); setTool('text');
-    queueMicrotask(() => { if (!disposed && textEditor()?.drawing.id === value.id) textarea?.focus(); });
+    queueMicrotask(() => { if (!disposed && textEditor()?.drawing.id === value.id) textInput?.focus(); });
   }
   function loadLatest() {
     const value = edit(); if (!value || disabled()) return;
@@ -316,9 +322,18 @@ export default function SharedDrawingEditor(props: Props) {
     const selectedObject = propertyTarget();
     if (selectedObject && !props.port.canStyle(selectedObject)) return;
     if (patch.textStyle !== undefined) setTextStyle({ ...patch.textStyle });
+    if(textEditor()&&textInput&&(patch.color!==undefined||patch.textStyle!==undefined)){
+      textInput.format(patch);return;
+    }
     if (selectedObject) {
       const value = edit() ?? propertyDraft(selectedObject, props.port.revision());
-      if (storeEdit(changeProperty(value, patch)) && submit && value.mode !== 'text') void saveText();
+      const next=changeProperty(value,patch);
+      if(selectedObject.textRuns&&patch.textStyle){
+        const current=propertyTextStyle(),changed=(['bold','italic','underline','strikethrough'] as const).filter(key=>!!current[key]!==!!patch.textStyle?.[key]);
+        next.drawing.textRuns=drawingTextRuns(selectedObject).map(run=>({...run,textStyle:{...run.textStyle,...Object.fromEntries(changed.map(key=>[key,!!patch.textStyle?.[key]]))}}));
+        if(patch.color!==undefined)next.drawing.textRuns.forEach(run=>run.color=patch.color);
+      }
+      if (storeEdit(next) && submit && value.mode !== 'text') void saveText();
     } else {
       if (patch.color !== undefined) setColor(patch.color);
       if (patch.strokeWidth !== undefined) (tool() === 'highlighter'||(tool()==='eraser'&&wideBrush()) ? setHighlightWidth : setWidth)(patch.strokeWidth);
@@ -1033,9 +1048,9 @@ export default function SharedDrawingEditor(props: Props) {
     const render = () => <>{props.port.render(drawing, interactive(), isSelected(), isPreview())}</>;
     const storedBounds = createMemo(() => storedPreviewId() === item.id ? storedDraft()?.bounds : undefined);
     const stored = createMemo(() => storedIndex().has(item.id) ? props.port.renderStored?.(item.id, copyModifier() || ['select', 'eraser', 'text'].includes(tool()), isSelected(), storedBounds()) : undefined);
-    return <Show when={storedIndex().has(item.id)} fallback={<Show when={value()}>{_ => render()}</Show>}>
+    return <g visibility={edit()?.mode==='text'&&edit()?.drawing.id===item.id?'hidden':undefined}><Show when={storedIndex().has(item.id)} fallback={<Show when={value()}>{_ => render()}</Show>}>
       {_ => <Show when={isPreview()} fallback={stored()}>{_ => render()}</Show>}
-    </Show>;
+    </Show></g>;
   }
   // Render callbacks create owners. Calling one in a reactive JSX expression
   // recreates every media element when a snapshot supplies a fresh callback.
@@ -1048,10 +1063,10 @@ export default function SharedDrawingEditor(props: Props) {
     <svg ref={svg} tabindex={0} class="drawing-edit-surface" classList={{ 'drawing-select-mode': tool() === 'select', 'drawing-text-mode': tool() === 'text', 'drawing-eraser-mode': tool() === 'eraser'||erasing() }} style={{ left: `${props.box.x}px`, top: `${props.box.y}px`, width: `${props.box.width}px`, height: `${props.box.height}px`,'pointer-events':props.blackboard&&tool()==='select'?'none':undefined,cursor:tool()==='eraser'||erasing()?eraseCursor():undefined }} viewBox={`${props.port.frame().x} ${props.port.frame().y} ${props.port.frame().width} ${props.port.frame().height}`} preserveAspectRatio="none" onPointerDown={pointerBegin} onMouseDown={mouseBegin} onPointerMove={event => drawingInput.observe(event)} onContextMenu={event=>event.preventDefault()} onDblClick={doubleClick} aria-label={t("绘制区域")}>
       <For each={drawingIds()}>{id => <DrawingItem id={id} />}</For>
       <Show when={storedCopy()}>{copy=><g pointer-events="none" opacity=".7" transform={`translate(${copy().dx} ${copy().dy})`}>{props.port.renderStored?.(copy().id,false,false)}</g>}</Show>
-      <Show when={textEditor()}>{value => <InlineDrawingText drawing={value().drawing} disabled={pending() || !!props.inputLocked} ref={element => {textarea=element;}} onInput={setText} onConfirm={confirmText} onBlur={textBlur}/>}</Show>
+      <Show when={textEditor()}>{value => <InlineDrawingText drawing={value().drawing} disabled={pending() || !!props.inputLocked} ref={control => {textInput=control;if(!control)setTextSelection(undefined);}} onSelection={setTextSelection} onError={props.onError} onInput={setText} onConfirm={confirmText} onBlur={textBlur}/>}</Show>
       <Show when={marquee()}>{box=><rect class="drawing-marquee" {...box()} fill="#348bf1" fill-opacity=".07" stroke="#348bf1" stroke-width="1" vector-effect="non-scaling-stroke" pointer-events="none"/>}</Show>
       <Show when={rasterPreview()}>{value=> <Show when={value().mode==='extract'} fallback={<polyline points={value().points.map(p=>`${p.x},${p.y}`).join(' ')} fill="none" stroke="#428fff" stroke-opacity=".38" stroke-width={value().width} stroke-linecap="round" stroke-linejoin="round" pointer-events="none" />}><rect x={Math.min(value().points[0].x,value().points.at(-1)!.x)} y={Math.min(value().points[0].y,value().points.at(-1)!.y)} width={Math.abs(value().points.at(-1)!.x-value().points[0].x)} height={Math.abs(value().points.at(-1)!.y-value().points[0].y)} fill="none" stroke="#428fff" stroke-width="1" vector-effect="non-scaling-stroke" pointer-events="none" /></Show>}</Show>
-      <For each={resizeHandles()}>{(point, index) => <ellipse class="drawing-resize-handle" cx={point.x} cy={point.y} rx={handleSize().x / 2} ry={handleSize().y / 2} vector-effect="non-scaling-stroke" style={{ cursor: resizeDrawing()?.kind === 'text' ? ['ew-resize', 'ns-resize', 'nwse-resize'][index()] : resizeDrawing()?.kind === 'line' || resizeDrawing()?.kind === 'arrow' ? 'move' : index() % 2 ? 'nesw-resize' : 'nwse-resize' }} aria-label={resizeDrawing()?.kind === 'line' || resizeDrawing()?.kind === 'arrow' ? t('调整端点') : t('缩放图形')} onPointerDown={event => beginResize(event, index())} />}</For>
+      <For each={resizeHandles()}>{(point, index) => <ellipse class="drawing-resize-handle" cx={point.x} cy={point.y} rx={handleSize().x / 2} ry={handleSize().y / 2} vector-effect="non-scaling-stroke" style={{ cursor: resizeDrawing()?.kind === 'text' ? ['nwse-resize','ns-resize','nesw-resize','ew-resize','nwse-resize','ns-resize','nesw-resize','ew-resize'][index()] : resizeDrawing()?.kind === 'line' || resizeDrawing()?.kind === 'arrow' ? 'move' : index() % 2 ? 'nesw-resize' : 'nwse-resize' }} aria-label={resizeDrawing()?.kind === 'line' || resizeDrawing()?.kind === 'arrow' ? t('调整端点') : t('缩放图形')} onPointerDown={event => beginResize(event, index())} />}</For>
     </svg>
     <Show when={dockPreview()}>{hint=><div class="board-toolbar-dock-preview" aria-hidden="true" data-edge={hint().edge} style={{left:`${hint().x}px`,top:`${hint().y}px`,width:`${hint().width}px`,height:`${hint().height}px`}}/>}</Show>
     <div ref={toolbar} class="drawing-toolbar" data-controls-locked={controlsLocked()} classList={{ 'drawing-dock-right': rightDocked(), 'board-toolbar-vertical':boardVertical(),'board-toolbar-dragging':toolbarDragging() }} data-board-edge={props.blackboard?boardDock().edge:undefined} onClick={boardToolClick} role="toolbar" aria-label={t("绘制工具")} style={position()}>
