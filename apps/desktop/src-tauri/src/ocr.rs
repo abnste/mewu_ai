@@ -34,7 +34,7 @@ pub fn recognize(bitmap: PixelBuffer, cancel: Arc<AtomicBool>) -> Result<OcrDocu
     }
     #[cfg(target_os = "macos")]
     {
-        macos::recognize_impl(bitmap, cancel)
+        crate::ocr_worker::recognize(bitmap, cancel)
     }
     #[cfg(target_os = "linux")]
     {
@@ -45,6 +45,13 @@ pub fn recognize(bitmap: PixelBuffer, cancel: Arc<AtomicBool>) -> Result<OcrDocu
         let _ = (bitmap, cancel);
         Err("当前系统尚未支持本机文字识别；此插件需要 Windows 10 或更新版本".into())
     }
+}
+
+/// Only the same-executable OCR helper enters Vision. It has no Host, scene,
+/// capture, credential, clipboard or network access, and cannot recurse.
+#[cfg(target_os = "macos")]
+pub(crate) fn recognize_native(bitmap: PixelBuffer, cancel: Arc<AtomicBool>) -> Result<OcrDocument, String> {
+    macos::recognize_impl(bitmap, cancel)
 }
 
 #[cfg(target_os = "macos")]

@@ -120,6 +120,8 @@ mod mosaic_preview;
 mod network_policy;
 mod ocr;
 mod ocr_host;
+#[cfg(any(target_os = "macos", test))]
+mod ocr_worker;
 mod optional_authorizations;
 mod optional_capabilities;
 mod owned_process;
@@ -3313,6 +3315,10 @@ fn main() {
     }
     if std::env::args().nth(1).as_deref() == Some("--code-worker") {
         std::process::exit(code_worker::worker_main());
+    }
+    #[cfg(target_os = "macos")]
+    if std::env::args().nth(1).as_deref() == Some("--ocr-worker") {
+        std::process::exit(ocr_worker::worker_main());
     }
     if std::env::args().nth(1).as_deref() == Some("--application-snapshot-worker") {
         std::process::exit(application_snapshot_worker::worker_main());
