@@ -29,20 +29,20 @@
   <br /><sub>截图、提问、原位标注。</sub>
 </p>
 
-内置 Agent 使用本地文件工具和自动发现的 Shell／PowerShell，以当前系统账户权限读写、修改、检索文件及运行命令；标准技能可携带脚本，普通本机任务无需先制作插件。它按需读取图片标注、视频标注与任务检查技能；上下文压缩保留原始会话，可分页回读，长期记忆继续通过独立接口提供。参见 [Agent 运行时](./docs/agent-runtime.md)与[验收流程](./docs/agent-evaluation.md)。
-
 ## 功能
 
-- **个人 Agent**：选择角色、模型、工具与记忆；引用图片、视频和文件继续对话，保留会话历史，支持 Markdown、公式与可折叠的公开思考。官方 Agent 提供本地持久记忆，也可连接独立记忆服务。
-- **AI 创意画布**：整理图片、视频、文字与生成对象，移动、缩放、置顶或收藏。用自然语言生成 HTML / SVG / Canvas 内容，直接使用计算器、实验面板或小游戏，再继续提出修改要求。
+- **个人 Agent**：选择角色、模型、工具与记忆，引用图片、视频和文件继续对话。支持 Markdown、公式与模型返回的思考内容；长对话整理上下文时保留原始历史，可按需回读。官方 Agent 提供本地持久记忆，也可连接独立记忆服务。
+- **本机工具与技能**：内置 Agent 可读写、修改和检索文件，通过 Shell / PowerShell 运行命令与脚本，并在任务中途停止执行。支持标准 `SKILL.md` 技能及其脚本、参考文件，内置图片标注、视频标注、交互对象生成与任务检查技能；普通本机任务无需先制作插件。
+- **AI 创意画布**：整理图片、视频、文字与生成对象，移动、缩放、置顶或收藏。用自然语言生成 HTML / SVG / Canvas 交互内容，在空间中使用计算器、实验面板或小游戏，再继续提出修改要求。
 - **截图与多选区**：单区、多区、长截图和受支持的窗口截图。框选后自动加入对话引用，非选区压暗；同时对照多个来源，无需再手动点击“引用”。
-- **绘制与标注**：画笔、箭头、形状、文字、序号、高亮和马赛克，配合撤销、重做及对象编辑。可以手工标注，也可以让 AI 对着试卷、代码等具体内容解释、圈出重点。
+- **快速交互**：通过可配置的长按快捷键唤起，直接选择、复制识别到的文字，框选截图或贴图；成功复制截图、录屏或贴图后自动收起。启用语音插件后，也可从语音入口发起任务。入口与快捷键见 [Hooks](./docs/hooks.md)。
+- **绘制与 AI 批注**：画笔、箭头、形状、文字、序号、高亮和马赛克，配合撤销、重做及对象编辑。手工标注或让 AI 在试卷、代码等图片上添加辅助线、公式、表格与说明，生成的批注仍可编辑。
 - **文字与表格**：本地 OCR、截图翻译、图表理解与表格提取。Windows/macOS 还支持链接、邮箱、电话号码、二维码与条码的可操作识别。
-- **录屏与视频标注**：录制电脑声音与麦克风，暂停、继续、裁剪并导出 MP4 / MP3 / GIF；对指定时间段添加框线和文字，点击对话中的时间定位画面。音频能力取决于系统。
-- **电子黑板**：在全屏黑板上手绘、推导和讲解，将题目、公式和 AI 分析放在一起；共享演示时可允许共享软件看到选区与标注。
+- **录屏与视频标注**：录制电脑声音与麦克风，暂停、继续、裁剪并导出 MP4 / MP3 / GIF。手动标注或让 AI 根据视频帧为指定时间段添加框线、文字，继续编辑或撤销；点击对话中的时间定位画面。音频能力取决于系统。
+- **电子黑板**：在全屏黑板上手绘、推导和讲解，将题目、公式和 AI 分析放在一起；工具条可停靠四边。共享演示时可允许共享软件看到选区与标注。
 - **CLI 与区域 AI 操作**：本机 Agent 可通过命令行读取场景、截图、添加选区、绘制和导出；区域操作插件让模型观察指定区域、执行动作，再根据新截图继续。
-- **插件与事件触发器**：独立扩展 Agent、记忆、工具与界面。官方 Hooks 支持定时、提示词、AI 回复、全局快捷键和应用／插件事件，串联 Mewu 操作、MCP、命令与键鼠动作。
-- **技能与自制插件**：内置 Agent 可读取标准 `SKILL.md` 技能，创建、校验插件工程并打包，在“已安装 → 自制”中审核权限后安装。插件可通过[通用布局服务](./docs/plugin-toolbar-layout.md)调整原截图工具条顺序；详见[技能与插件制作](./docs/agent-skills.md)。
+- **插件与事件触发器**：独立扩展 Agent、记忆、工具与界面。官方 Hooks 支持定时、提示词、AI 回复、全局快捷键的按下或长按，以及应用／插件事件，串联 Mewu 操作、MCP、命令与键鼠动作。
+- **自制插件**：向内置 Agent 描述需求，创建、校验插件工程并打包，在 **插件 → 已安装 → 自制** 中审核权限后安装。插件可通过[通用布局服务](./docs/plugin-toolbar-layout.md)调整原截图工具条顺序；详见[技能与插件制作](./docs/agent-skills.md)。
 
 截图、绘制和录屏可以直接使用；AI 对话、翻译及生成结果需要配置相应服务。
 
@@ -127,7 +127,7 @@
 ## 开始使用
 
 1. **安装并打开。** 选择顶部对应平台的安装包。Windows 使用 WebView2；macOS 将应用移入“应用程序”；Linux 为 AppImage 添加执行权限后启动。全部下载跟随[最新正式发行](https://github.com/abnste/mewu_ai/releases/latest)。
-2. **进入空间。** 从托盘或截图快捷键唤起 Mewu，框选、绘制、保存，或打开黑板。截图快捷键在 **Hooks** 中配置；按系统提示授予截图、录屏等权限。
+2. **进入空间。** 从托盘或截图快捷键唤起 Mewu，框选、绘制、保存，或打开黑板。在 **设置 → 截图与录屏** 配置截图快捷键，在 **设置 → 事件触发器** 调整快速交互与自动化规则；按系统提示授予截图、录屏等权限。
 3. **连接 AI。** 在 **设置 → Agent 与连接** 添加模型，选择角色与记忆，或通过外部 Agent 插件连接已有客户端。框选会自动成为引用，在底部对话条发送任务。
 
 Linux 的系统依赖与桌面权限见 [AppImage 使用说明](./docs/linux-appimage-permissions.md)及[录屏说明](./docs/linux-native-recording.md)。区域 AI 操作支持 Windows、macOS 与符合条件的 GNOME 50 Wayland x64；Linux 还需 [Desktop Witness](./tools/linux-desktop-witness/README.md) 和 Portal 授权。
@@ -136,12 +136,12 @@ Linux 的系统依赖与桌面权限见 [AppImage 使用说明](./docs/linux-app
 
 | 接入方式 | 如何使用 |
 | --- | --- |
-| 模型 API | 配置 Chat Completions、OpenAI Responses 或 Anthropic Messages 服务，保存多个独立连接，选择所需模型。 |
+| 模型 API | 配置 Chat Completions、OpenAI Responses 或 Anthropic Messages 服务，保存多个独立连接，选择所需模型；高级设置可指定上下文窗口与思考强度。 |
 | 外部 Agent | 通过[独立插件](https://github.com/abnste/mewu-plugin-agent-connectors)连接 Codex、MiniMax Code、WorkBuddy / CodeBuddy、Hermes，沿用相应客户端的登录和配置。 |
 | 记忆 | Agent 与记忆独立选择；使用官方本地持久记忆，或通过插件连接 Hindsight 等记忆服务。 |
 | MCP 与工具 | 在 **Agent 与连接 → MCP** 添加服务，或启用插件工具，让当前 Agent 在对话中调用。 |
 
-图片、视频与工具调用能力、费用和额度由所选服务决定。外部 Agent 需安装并登录对应客户端，各平台的支持范围以插件文档为准。
+图片、视频、工具调用与思考强度的支持范围，以及费用和额度，由所选服务决定。不指定思考强度时沿用服务商默认设置。外部 Agent 需安装并登录对应客户端，各平台的支持范围以插件文档为准。
 
 ## 插件市场
 
@@ -149,7 +149,7 @@ Linux 的系统依赖与桌面权限见 [AppImage 使用说明](./docs/linux-app
 
 | 插件 | 用途 |
 | --- | --- |
-| [Hooks · 事件触发器](./docs/hooks.md) | 官方自带、默认启用。组合触发条件与动作，每条规则可独立开关、编辑和查看运行记录。 |
+| [Hooks · 事件触发器](./docs/hooks.md) | 官方自带、默认启用。配置截图与快速交互快捷键，组合定时、消息等触发条件与动作；每条规则可独立开关、编辑和查看运行记录。 |
 | [外部 Agent](https://github.com/abnste/mewu-plugin-agent-connectors) | 将已配置的客户端接入 Mewu 的角色与对话。 |
 | [区域 AI 操作](https://github.com/abnste/mewu-plugin-region-agent) | 框选目标并描述任务，模型根据连续观察执行区域内操作。 |
 | [Hindsight 记忆](https://github.com/abnste/mewu-plugin-hindsight) | 连接自己的 Hindsight 服务与记忆库。 |
@@ -167,6 +167,7 @@ mewu                         # 进入 Agent 对话
 mewu status                  # 查看应用与当前场景
 mewu schema                  # 查询操作与参数
 mewu call capture.open --json '{}' --wait
+mewu call capture.quick --json '{}' --wait
 ```
 
 普通 `mewu chat` 默认发送文字；截图与文件需显式提供引用。命令安装、平台要求和完整参数见 [CLI 文档](./docs/cli.md)与[操作目录](./apps/desktop/control/catalog.json)。
@@ -181,6 +182,20 @@ mewu call capture.open --json '{}' --wait
 </details>
 
 <details>
+<summary>最小化后，AI 还会继续生成吗？</summary>
+
+内置 Agent 会继续处理当前任务，结果保存在原会话中；恢复窗口后可查看回复并使用生成对象。最小化不等于退出应用。区域操作的临时授权会在最小化等操作后失效，需要重新授权才能继续控制屏幕。
+
+</details>
+
+<details>
+<summary>可以导入其他 Agent 的技能吗？</summary>
+
+将包含 `SKILL.md` 的完整技能文件夹放入 Mewu 数据目录的 `skills/`，保留其中的脚本、参考文件和素材；默认路径为 `~/.mewu/skills`。Agent 按需读取技能，内置技能更新也会保留你修改过的文件。其他 Agent 的专有工具不会随技能文件一起导入，相关任务仍需具备对应能力。详见[技能说明](./docs/agent-skills.md)。
+
+</details>
+
+<details>
 <summary>为什么会议共享看不到截图和标注？</summary>
 
 在 **设置 → 通用 → 允许屏幕共享看到框选和标注** 调整。实际可见性也取决于系统与共享软件。
@@ -190,7 +205,7 @@ mewu call capture.open --json '{}' --wait
 <details>
 <summary>截图和对话会发到哪里？</summary>
 
-截图与手工绘制在本机完成。使用 AI 时，引用内容与相关上下文发送给你选择的服务；插件使用你授予的权限，外部 Agent 沿用其自己的运行配置。
+截图与手工绘制在本机完成。使用 AI 时，引用内容、相关上下文与工具结果发送给你选择的服务。本机文件工具和命令按当前系统账户权限访问文件、运行程序；插件使用你授予的权限，外部 Agent 沿用其自己的运行配置。
 
 </details>
 
@@ -208,6 +223,8 @@ mewu call capture.open --json '{}' --wait
 欢迎反馈问题、分享场景，贡献代码、插件和文档。桌面应用采用 **Rust + Tauri 2 + SolidJS / TypeScript + SQLite**，通过系统 WebView 呈现界面。
 
 [桌面开发指南](./apps/desktop/README.md) · [扩展 SDK](./packages/sdk/README.md) · [扩展接口](./docs/extensions.md) · [插件打包与投稿](./tools/extension-market/README.md) · [发行指南](./docs/releasing.md)
+
+[Agent 运行时](./docs/agent-runtime.md) · [技能与插件制作](./docs/agent-skills.md) · [交互对象运行环境](./docs/document-runtime.md) · [Agent 验收流程](./docs/agent-evaluation.md)
 
 浏览器预览用于界面开发；原生截图、录屏与系统输入需在桌面环境中运行。
 
