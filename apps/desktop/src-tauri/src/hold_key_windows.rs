@@ -37,6 +37,35 @@ static THRESHOLD: AtomicU32 = AtomicU32::new(400);
 static STOPPING: AtomicBool = AtomicBool::new(false);
 static EDITING: AtomicBool = AtomicBool::new(false);
 static FAULT: AtomicBool = AtomicBool::new(false);
+type TraceRecord = (u64, &'static str, bool, bool);
+static TRACE: OnceLock<Option<std::sync::mpsc::SyncSender<TraceRecord>>> = OnceLock::new();
+fn initialize_trace() {
+    TRACE.get_or_init(|| {
+        let path = std::env::var_os("MEWU_HOLD_TRACE")?;
+        let (sender, receiver) = std::sync::mpsc::sync_channel::<TraceRecord>(32);
+        std::thread::Builder::new()
+            .name("mewu-hold-diagnostics".into())
+            .spawn(move || {
+                use std::io::Write;
+                let Ok(mut file) = std::fs::File::create(path) else { return };
+                // Explicit opt-in, bounded output, no ordinary key codes,
+                // typed text, screen contents or foreground application data.
+                // All file I/O stays off the hook/message-pump thread.
+                for (at, event, owned, suppressed) in receiver.into_iter().take(512) {
+                    if writeln!(file, "{{\"at\":{at},\"event\":\"{event}\",\"owned\":{owned},\"suppressed\":{suppressed}}}").is_err() {
+                        break;
+                    }
+                }
+            })
+            .ok()?;
+        Some(sender)
+    });
+}
+fn trace(event: &'static str, owned: bool, suppressed: bool) {
+    if let Some(Some(sender)) = TRACE.get() {
+        let _ = sender.try_send((clock(), event, owned, suppressed));
+    }
+}
 pub fn warning() -> Option<&'static str> {
     FAULT
         .load(Ordering::Acquire)
@@ -181,12 +210,31 @@ fn fault() {
     FAULT.store(true, Ordering::Release);
     ENABLED.store(false, Ordering::Release);
 }
+fn suppress_foreign_modifier(
+    event: &KBDLLHOOKSTRUCT,
+    sequence: &crate::hold_sequence::Sequence,
+) -> bool {
+    event.flags & (LLKHF_INJECTED | LLKHF_LOWER_IL_INJECTED) != 0
+        && matches!(event.vkCode, 0x5b | 0x5c)
+        && sequence.owns_modifier(event.vkCode)
+}
 unsafe extern "system" fn keyboard(code: i32, w: WPARAM, l: LPARAM) -> LRESULT {
     if code < 0 || l == 0 {
         return CallNextHookEx(null_mut(), code, w, l);
     }
     let event = &*(l as *const KBDLLHOOKSTRUCT);
     if let Some(route) = tagged_route(event) {
+        if matches!(event.vkCode, 0x5b | 0x5c) {
+            trace(
+                if event.dwExtraInfo == STATE_TAG {
+                    "state-reset"
+                } else {
+                    "replay"
+                },
+                false,
+                route == TaggedRoute::Suppress,
+            );
+        }
         return match route {
             TaggedRoute::Forward => CallNextHookEx(null_mut(), code, w, l),
             TaggedRoute::Suppress => 1,
@@ -205,6 +253,31 @@ unsafe extern "system" fn keyboard(code: i32, w: WPARAM, l: LPARAM) -> LRESULT {
     }
     let key = physical_key(event);
     if event.flags & (LLKHF_INJECTED | LLKHF_LOWER_IL_INJECTED) != 0 {
+        if matches!(event.vkCode, 0x5b | 0x5c) {
+            let owned = KEYS.with(|cell| cell.borrow().owns_modifier(key));
+            trace(
+                if down { "foreign-down" } else { "foreign-up" },
+                owned,
+                owned,
+            );
+        }
+        // Keeping physical ownership is not enough: forwarding a foreign
+        // synthetic Win-up still lets the shell open Start during our hold.
+        // Our own short-tap/chord replay was handled by TAG above. Only a
+        // modifier currently owned by this gesture is suppressed here.
+        if KEYS.with(|cell| suppress_foreign_modifier(event, &cell.borrow())) {
+            if down
+                && PostThreadMessageW(
+                    THREAD.load(Ordering::Acquire),
+                    CLEAR_STATE,
+                    key as WPARAM,
+                    0,
+                ) == 0
+            {
+                fault();
+            }
+            return 1;
+        }
         if up && KEYS.with(|cell| cell.borrow_mut().observed_release(key)) {
             post(RELEASE);
         }
@@ -255,6 +328,13 @@ unsafe extern "system" fn keyboard(code: i32, w: WPARAM, l: LPARAM) -> LRESULT {
         fault();
         false
     });
+    if matches!(key, 0x5b | 0x5c) {
+        trace(
+            if down { "physical-down" } else { "physical-up" },
+            KEYS.with(|cell| cell.borrow().has_owned_modifiers()),
+            consumed,
+        );
+    }
     if consumed {
         1
     } else {
@@ -333,6 +413,7 @@ pub async fn drain(timeout: std::time::Duration) -> Result<(), String> {
     }
 }
 pub fn configure(app: &AppHandle, milliseconds: u32) -> Result<(), String> {
+    initialize_trace();
     let mut worker = worker().lock().map_err(|_| "长按快捷键不可用")?;
     THRESHOLD.store(milliseconds, Ordering::Release);
     FAULT.store(false, Ordering::Release);
@@ -516,6 +597,39 @@ pub fn disable() {
 #[cfg(test)]
 mod modifier_tests {
     use super::*;
+    #[test]
+    fn foreign_win_events_cannot_escape_an_owned_hold_but_normal_chords_still_pass() {
+        for win in [0x5b, 0x5c] {
+            let mut sequence = crate::hold_sequence::Sequence::default();
+            let mut event = KBDLLHOOKSTRUCT {
+                vkCode: win,
+                scanCode: 0,
+                flags: LLKHF_INJECTED | LLKHF_EXTENDED,
+                time: 0,
+                dwExtraInfo: 0,
+            };
+            assert!(!suppress_foreign_modifier(&event, &sequence));
+            sequence.key(win, true, 0, 400);
+            assert!(suppress_foreign_modifier(&event, &sequence));
+            event.flags |= LLKHF_UP;
+            assert!(suppress_foreign_modifier(&event, &sequence));
+            assert!(!sequence.observed_release(win));
+            event.vkCode = 0x45;
+            assert!(!suppress_foreign_modifier(&event, &sequence));
+            event.vkCode = win;
+            sequence.key(0x45, true, 100, 400);
+            assert!(!suppress_foreign_modifier(&event, &sequence));
+            sequence.key(win, false, 150, 400);
+            sequence.key(0x45, false, 150, 400);
+            sequence.key(win, true, 200, 400);
+            event.flags = LLKHF_UP;
+            assert!(!suppress_foreign_modifier(&event, &sequence));
+            event.flags |= LLKHF_INJECTED;
+            assert!(suppress_foreign_modifier(&event, &sequence));
+            assert!(sequence.key(win, false, 800, 400).replay.is_empty());
+            assert!(!suppress_foreign_modifier(&event, &sequence));
+        }
+    }
     #[test]
     fn actual_hook_consumes_private_resets_before_any_shell_or_physical_key_handling() {
         // Invoke the real callback with a private message in memory. This test
