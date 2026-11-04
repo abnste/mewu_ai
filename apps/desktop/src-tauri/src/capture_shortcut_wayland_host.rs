@@ -148,7 +148,9 @@ pub(crate) fn open_system_settings(app:&AppHandle,window:&WebviewWindow)->Result
 
 #[cfg(test)]mod tests{
     use super::*;
-    #[test]fn real_gtk_hide_and_unrealize_cancel_without_focus_loss_dependency(){
+    #[test]
+    #[ignore = "requires an isolated GTK process and a display; run by the Linux native GUI gate"]
+    fn real_gtk_hide_and_unrealize_cancel_without_focus_loss_dependency(){
         use std::{cell::Cell,rc::Rc};
         gtk::init().expect("requires isolated xvfb-run GTK gate");
         let window=gtk::Window::new(gtk::WindowType::Toplevel);window.set_default_size(160,120);

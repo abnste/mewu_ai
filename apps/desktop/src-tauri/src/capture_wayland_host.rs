@@ -816,7 +816,9 @@ async fn capture_inner(app: AppHandle, window: WebviewWindow, work: Arc<Work>, t
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test] fn mapped_window_is_hidden_before_the_wayland_sync_barrier() {
+    #[test]
+    #[ignore = "requires an isolated GTK process and a display; run by the Linux native GUI gate"]
+    fn mapped_window_is_hidden_before_the_wayland_sync_barrier() {
         gtk::init().expect("GTK display required for native unmap regression");
         let window=gtk::Window::new(gtk::WindowType::Toplevel);
         window.show_all();

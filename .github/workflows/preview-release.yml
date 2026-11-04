@@ -66,6 +66,17 @@ jobs:
       - name: Verify native Windows VBR, audio timeline and clip export
         if: runner.os == 'Windows'
         run: cargo test -p mewu-desktop --locked recording_backend::native -- --ignored --nocapture --test-threads=1
+      - name: Test Linux GTK regressions in isolated display processes
+        if: runner.os == 'Linux' && !cancelled()
+        shell: bash
+        run: |
+          set -euo pipefail
+          for regression in \
+            capture_wayland_host::tests::mapped_window_is_hidden_before_the_wayland_sync_barrier \
+            capture_shortcut_wayland_host::tests::real_gtk_hide_and_unrealize_cancel_without_focus_loss_dependency \
+            save_dialog::linux::tests::gtk_inline_formats_keep_owned_filter_identity_and_filename_contract; do
+            xvfb-run -a env -u WAYLAND_DISPLAY GDK_BACKEND=x11 cargo test -p mewu-desktop --bin mewu-desktop --locked "$regression" -- --exact --ignored --nocapture --test-threads=1
+          done
       - name: Test Linux window visibility on a real X server
         if: runner.os == 'Linux' && !cancelled()
         shell: bash

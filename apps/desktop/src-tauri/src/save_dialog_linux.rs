@@ -211,6 +211,7 @@ mod tests {
     // Run this exact GTK gate under Xvfb in the whole Docker image. It proves
     // public GTK semantics and format identity, not Wayland popup GUI acceptance.
     #[test]
+    #[ignore = "requires an isolated GTK process and a display; run by the Linux native GUI gate"]
     fn gtk_inline_formats_keep_owned_filter_identity_and_filename_contract() {
         gtk::init().expect("GTK gate requires its test display");
         let spec = DialogSpec {
