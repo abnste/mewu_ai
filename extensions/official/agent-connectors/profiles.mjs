@@ -39,6 +39,13 @@ async function nodeLauncher(ctx,profile,platform){
   return null;
 }
 export async function detectProfile(ctx,profile){
+  // Desktop WorkBuddy and CodeBuddy CLI have separate credential stores.
+  // Prefer the installed desktop bundle for this profile, even when a CLI is on PATH.
+  if(profile.id==='workbuddy'){
+    const {platform}=await ctx.processes.resolve([]);
+    const desktop=await detectWorkBuddyDesktop(ctx,platform);
+    if(desktop.executable)return desktop;
+  }
   let found=await ctx.processes.resolve(profile.candidates.filter(p=>!p.startsWith('/')));
   if(!found.executables.length&&found.platform!=='windows'){
     const unix=profile.candidates.filter(p=>p.startsWith('/'));
@@ -52,23 +59,28 @@ export async function detectProfile(ctx,profile){
   if(['codex','minimax'].includes(profile.id)){
     const launch=await nodeLauncher(ctx,profile,found.platform);if(launch)return launch;
   }
-  if(profile.id!=='workbuddy')return {executable:'',args:profile.args,platform:found.platform};
-  const roots=found.platform==='windows'?['${programFiles}/WorkBuddy','${localAppData}/Programs/WorkBuddy','${localAppData}/WorkBuddy']
-    :found.platform==='macos'?['/Applications/WorkBuddy.app/Contents']:[];
-  if(!roots.length)return {executable:'',args:profile.args,platform:found.platform};
-  const candidates=roots.flatMap(root=>root.startsWith('/Applications')?[root+'/MacOS/WorkBuddy',root+'/MacOS/Electron']:[root+'/WorkBuddy.exe']);
-  const scripts=roots.flatMap(root=>['bin/codebuddy','dist/codebuddy.js'].map(name=>root+(root.startsWith('/Applications')?'/Resources':'/resources')+'/app.asar.unpacked/cli/'+name));
-  const bundle=await ctx.processes.resolve(candidates,scripts);
-  for(const executable of bundle.executables){
-    const root=executable.replaceAll('\\','/').replace(/\/(?:MacOS\/(?:WorkBuddy|Electron)|WorkBuddy\.exe)$/i,'').toLowerCase();
-    const script=(bundle.files??[]).find(path=>path.replaceAll('\\','/').toLowerCase().startsWith(root+'/'));
-    if(script)return {executable,args:[script],transport:'workbuddy-http',env:{ELECTRON_RUN_AS_NODE:'1',CODEBUDDY_FORCE_LITE_WB_BUNDLE:'1',CODEBUDDY_CONFIG_DIR:'${home}/.workbuddy'},platform:bundle.platform};
-  }
   return {executable:'',args:profile.args,platform:found.platform};
+}
+async function detectWorkBuddyDesktop(ctx,platform){
+  const roots=platform==='windows'?['${programFiles}/WorkBuddy','${localAppData}/Programs/WorkBuddy','${localAppData}/WorkBuddy']
+    :platform==='macos'?['/Applications/WorkBuddy.app/Contents','${home}/Applications/WorkBuddy.app/Contents']:[];
+  if(!roots.length)return {executable:'',platform};
+  const candidates=roots.flatMap(root=>platform==='macos'?[root+'/MacOS/WorkBuddy',root+'/MacOS/Electron']:[root+'/WorkBuddy.exe']);
+  const scripts=roots.flatMap(root=>['bin/codebuddy','dist/codebuddy.js'].map(name=>root+(platform==='macos'?'/Resources':'/resources')+'/app.asar.unpacked/cli/'+name));
+  const bundle=await ctx.processes.resolve(candidates,scripts);
+  const comparable=value=>{const path=scriptPath(value).replaceAll('\\','/');return platform==='windows'?path.toLowerCase():path;};
+  for(const executable of bundle.executables){
+    const root=comparable(executable).replace(/\/(?:MacOS\/(?:WorkBuddy|Electron)|WorkBuddy\.exe)$/i,'');
+    const script=(bundle.files??[]).find(path=>comparable(path).startsWith(root+'/'));
+    if(script)return {executable,args:[scriptPath(script)],launchMode:'auto',transport:'workbuddy-http',env:{ELECTRON_RUN_AS_NODE:'1',CODEBUDDY_FORCE_LITE_WB_BUNDLE:'1',CODEBUDDY_CONFIG_DIR:'${home}/.workbuddy'},platform:bundle.platform};
+  }
+  return {executable:'',platform};
 }
 export async function resolveConfig(ctx,config,profile){
   if(config.launchMode!=='auto')return config;
   const found=await detectProfile(ctx,profile);
   if(!found.executable)throw Error('未找到已安装的官方客户端，请在外部 Agent 设置中重新检测');
-  return {...config,executable:found.executable,args:found.args,...(found.transport?{transport:found.transport}:{}),env:{...config.env,...found.env}};
+  const env={...config.env};
+  if(config.transport==='workbuddy-http')for(const key of ['ELECTRON_RUN_AS_NODE','CODEBUDDY_FORCE_LITE_WB_BUNDLE','CODEBUDDY_CONFIG_DIR'])delete env[key];
+  return {...config,executable:found.executable,args:found.args,transport:found.transport??'stdio',env:{...env,...found.env}};
 }

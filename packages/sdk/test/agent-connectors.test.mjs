@@ -147,15 +147,15 @@ test('WorkBuddy discovery sends only absolute candidates for the actual host pla
     f.ctx.processes.resolve=async(candidates,files=[])=>{
       calls++;
       if(calls===1)return {platform,executables:[]};
-      const expand=value=>value.replace('${programFiles}','C:/Program Files').replace('${localAppData}','C:/Users/Test/AppData/Local');
+      const expand=value=>value.replace('${programFiles}','C:/Program Files').replace('${localAppData}','C:/Users/Test/AppData/Local').replace('${home}',platform==='windows'?'C:/Users/Test':'/Users/Test');
       const isAbsolute=platform==='windows'?path.win32.isAbsolute:path.posix.isAbsolute;
-      assert.ok(candidates.every(value=>isAbsolute(expand(value))));
+      if(files.length)assert.ok(candidates.every(value=>isAbsolute(expand(value))));
       assert.ok(files.every(value=>isAbsolute(expand(value))));
-      assert.equal(candidates.some(value=>value.startsWith('/Applications')),platform==='macos');
+      if(files.length)assert.equal(candidates.some(value=>value.startsWith('/Applications')),platform==='macos');
       return {platform,executables:[],files:[]};
     };
     assert.equal((await detectProfile(f.ctx,profiles.find(p=>p.id==='workbuddy'))).executable,'');
-    assert.equal(calls,platform==='linux'?1:2);
+    assert.equal(calls,platform==='linux'?2:3);
   }
 });
 

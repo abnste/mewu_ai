@@ -41,7 +41,7 @@ function render(){
  $('executable').value=value.executable||'';$('args').value=JSON.stringify(value.args||profile.args);$('env').value=JSON.stringify(value.env||{});$('model').value=value.model||'';$('cwd').value=value.cwd||'';$('effort').value=value.effort||'';
  transport=value.transport||'stdio';launchMode=value.launchMode||'manual';drawTransport();
  $('effort-field').hidden=selected!=='codex';models=[];hideModels();$('models').replaceChildren();$('status').textContent='';$('error').textContent='';
- $('hint').textContent=selected==='minimax'?'使用已安装并登录的 MiniMax Code CLI（mcode acp）。':selected==='workbuddy'?'自动检测可接入 WorkBuddy 桌面内置 ACP，也可指定 CodeBuddy CLI。':selected==='hermes'?'使用已配置 ACP 支持的 Hermes；记忆与技能沿用 Hermes 的设置。':'使用本机 Codex 登录；无需复制 API Key。';
+ $('hint').textContent=selected==='minimax'?'使用已安装并登录的 MiniMax Code CLI（mcode acp）。':selected==='workbuddy'?'优先连接已登录的 WorkBuddy 桌面客户端，无需另装 CLI；也可手动指定 CodeBuddy CLI。':selected==='hermes'?'使用已配置 ACP 支持的 Hermes；记忆与技能沿用 Hermes 的设置。':'使用本机 Codex 登录；无需复制 API Key。';
  document.querySelector('nav').replaceChildren(...data.profiles.map(p=>{const b=document.createElement('button');b.type='button';b.role='tab';b.textContent=p.name;b.setAttribute('aria-selected',String(selected===p.id));b.onclick=()=>{try{drafts.set(selected,config());selected=p.id;render();}catch(e){$('error').textContent=e.message;}};return b;}));controls();
 }
 async function perform(type){
@@ -49,7 +49,7 @@ async function perform(type){
  try{
    const result=await mewu.call({type,provider:selected,...(type==='detect'?{}:{config:config(),expected:data.connections[selected]||null})});
    if(disposed)return;
-   if(type==='detect'){if(!result.executable)throw Error('未找到可用程序，请先安装官方 CLI，或填写运行程序及启动参数。');$('executable').value=result.executable;$('args').value=JSON.stringify(result.args);$('env').value=JSON.stringify(result.env||{});transport=result.transport||'stdio';launchMode=result.launchMode||'manual';drawTransport();$('status').textContent='已找到';}
+   if(type==='detect'){if(!result.executable)throw Error(selected==='workbuddy'?'未找到 WorkBuddy 桌面客户端或 CodeBuddy CLI，请检查安装位置或手动填写。':'未找到可用程序，请先安装官方 CLI，或填写运行程序及启动参数。');$('executable').value=result.executable;$('args').value=JSON.stringify(result.args);$('env').value=JSON.stringify(result.env||{});transport=result.transport||'stdio';launchMode=result.launchMode||'manual';drawTransport();$('status').textContent='已找到';}
    if(type==='test'){if(!result.ok)throw Error(result.error||'连接失败');models=result.models.map(m=>({id:m.id,name:m.name||m.id}));if(!$('model').value&&result.models.some(m=>m.default))$('model').value=result.models.find(m=>m.default).id;$('status').textContent='服务可连接'+(result.image?' · 支持图片':'');}
    if(type==='save'){data.connections[selected]=result.config;drafts.delete(selected);$('status').textContent='已保存';}
  }catch(e){$('status').textContent='';$('error').textContent=e.message||'操作失败';}finally{busy=false;controls();}
