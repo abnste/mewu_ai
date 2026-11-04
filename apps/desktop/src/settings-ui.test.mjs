@@ -113,7 +113,64 @@ const normalize = value => JSON.parse(JSON.stringify(value));
     assert.equal(data.status().availableVersion, '1.0.7');
     activate(false); activate(true); await tick(); assert.deepEqual(calls, ['check_app_update']); dispose();
   }
-  checks.push('Actual update effects admit Windows installers, Mac bundles and Linux AppImages, refuse manual or unknown platforms, and fence a receipt after disposal');
+  {
+    let data, dispose, attempts = 0, statusAttempts = 0;
+    reactive.createRoot(cleanup => {
+      dispose = cleanup;
+      data = mod.namespace.createAppUpdateSettings(() => true, { native: () => true,
+        info: () => { if (++attempts === 1) throw Error('Information temporarily unavailable'); return Promise.resolve(info({ updateSupport: 'signed_installer' })); },
+        status: async () => { if (++statusAttempts === 1) throw Error('Disconnected'); return status(); },
+        perform: async () => { throw Error('Read recovery must not perform an update'); } });
+    });
+    await tick(); assert.equal(data.mode(), 'loading'); assert.match(data.readError(), /temporarily unavailable/);
+    await data.refresh(); assert.equal(data.mode(), 'signed'); assert.match(data.readError(), /无法读取更新状态/);
+    await data.refresh(); assert.equal(data.readError(), ''); assert.equal(data.status().phase, 'idle');
+    assert.equal(attempts, 2); assert.equal(statusAttempts, 2); dispose();
+  }
+  for (const inFlightPhase of ['idle', 'downloading']) {
+    const older = deferred(), calls = []; let data, dispose, reads = 0, next = status();
+    reactive.createRoot(cleanup => { dispose = cleanup;
+      data = mod.namespace.createAppUpdateSettings(() => true, { native: () => true,
+        info: async () => info({ updateSupport: 'signed_installer' }),
+        status: async () => { calls.push('read'); if (++reads === 2) return older.promise; return next; },
+        perform: async command => { calls.push(command); next = status({ phase: 'available', availableVersion: '1.0.9' }); } });
+    });
+    await tick(); const first = data.refresh(), joined = data.refresh();
+    assert.equal(first, joined, 'Concurrent readers must wait for the same receipt');
+    await tick(); const command = data.perform('check_app_update'); await tick();
+    assert.deepEqual(calls, ['read', 'read'], 'A command must not race an older receipt');
+    older.resolve(status({ phase: inFlightPhase })); await Promise.all([first, joined, command]);
+    if (inFlightPhase === 'idle') {
+      assert.deepEqual(calls, ['read', 'read', 'check_app_update', 'read']);
+      assert.equal(data.status().availableVersion, '1.0.9');
+    } else {
+      assert.deepEqual(calls, ['read', 'read'], 'Discovering a running download must not issue a duplicate operation');
+      assert.equal(data.status().phase, 'downloading');
+    }
+    dispose();
+  }
+  {
+    const originalInterval = globalThis.setInterval, originalClear = globalThis.clearInterval, timers = new Set();
+    globalThis.setInterval = (...args) => { const timer = originalInterval(...args); timers.add(timer); return timer; };
+    globalThis.clearInterval = timer => { timers.delete(timer); originalClear(timer); };
+    let data, dispose, activate, next = status();
+    try {
+      reactive.createRoot(cleanup => { dispose = cleanup; const [active, setActive] = reactive.createSignal(true); activate = setActive;
+        data = mod.namespace.createAppUpdateSettings(active, { native: () => true, info: async () => info({ updateSupport: 'signed_installer' }),
+          status: async () => next, perform: async () => { throw 'update_network'; } });
+      });
+      await tick(); assert.equal(timers.size, 0, 'Idle settings must not wake a poll timer');
+      await data.perform('check_app_update'); assert.equal(data.error(), '无法连接 GitHub');
+      await data.refresh(); assert.equal(data.error(), '无法连接 GitHub', 'A successful status read must not hide the failed command');
+      next = status({ phase: 'downloading' }); await data.refresh(); assert.equal(timers.size, 1);
+      activate(false); assert.equal(timers.size, 0, 'Hidden settings stop polling without cancelling the host download');
+      activate(true); await tick(); assert.equal(timers.size, 1);
+      next = status({ phase: 'available' }); await data.refresh(); assert.equal(timers.size, 0);
+      next = status({ phase: 'checking' }); await data.refresh(); assert.equal(timers.size, 1);
+      dispose(); assert.equal(timers.size, 0);
+    } finally { dispose?.(); for (const timer of timers) originalClear(timer); globalThis.setInterval = originalInterval; globalThis.clearInterval = originalClear; }
+  }
+  checks.push('Actual update effects admit native installers, fence disposal, recover read failures, serialize commands with reads and poll only visible running operations');
 }
 {
   const calls = [], task = deferred(); let receive, stopped = 0;

@@ -102,6 +102,28 @@ function frozenSource(source: PointerSource): PointerSource {
   return Object.freeze({ ...source, captureCoordinates: source.captureCoordinates && Object.freeze({ ...source.captureCoordinates }) });
 }
 
+/** Coalesce visual pointer work; explicit copy flushes the latest position. */
+export function pointerPreviewScheduler(update: (point: { x: number; y: number }) => void,
+  schedule: (callback: FrameRequestCallback) => number = requestAnimationFrame,
+  cancelFrame: (id: number) => void = cancelAnimationFrame) {
+  let pending: { x: number; y: number } | undefined, frame: number | undefined, disposed = false;
+  const cancel = () => { if (frame !== undefined) cancelFrame(frame); frame = undefined; pending = undefined; };
+  const flush = () => {
+    const point = pending;
+    cancel();
+    if (!disposed && point) update(point);
+  };
+  return {
+    move(point: { x: number; y: number }) {
+      if (disposed) return;
+      pending = point;
+      frame ??= schedule(flush);
+    },
+    flush, cancel,
+    dispose() { disposed = true; cancel(); },
+  };
+}
+
 export class PointerInspector {
   private current?: Slot;
   private running?: Slot;

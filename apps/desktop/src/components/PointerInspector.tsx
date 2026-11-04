@@ -3,7 +3,7 @@ import { createEffect, createMemo, createSignal, on, onCleanup, Show } from 'sol
 import type { Asset } from '../contracts';
 import { getPointerSample } from '../pointer-bridge';
 import { writeClipboardText } from '../clipboard-text';
-import { PointerInspector as SampleGate, PointerSampleCanceledError, pointerImagePoint, pointerInspectorSize, pointerPopupPosition, pointerSourceKey, pointerCoordinatesLabel, type PointerImageBox, type PointerSample, type PointerSampleRequest } from '../pointer-inspector';
+import { PointerInspector as SampleGate, PointerSampleCanceledError, pointerPreviewScheduler, pointerImagePoint, pointerInspectorSize, pointerPopupPosition, pointerSourceKey, pointerCoordinatesLabel, type PointerImageBox, type PointerSample, type PointerSampleRequest } from '../pointer-inspector';
 import './pointer-inspector.css';
 
 export interface PointerInspectorHandle { copy: () => boolean }
@@ -36,9 +36,10 @@ export default function PointerInspector(props: Props) {
     const target = document.elementFromPoint(point.x, point.y);
     return Boolean(target?.closest('.capture-surface') && !target.closest(blockedElements));
   }
-  function hide() { if (!pointer && !request && !sample()) return; version++; pointer = undefined; request = undefined; gate.cancel(); }
-  function move(event: PointerEvent) {
-    const point = { x: event.clientX, y: event.clientY };
+  const preview = pointerPreviewScheduler(updatePointer);
+  function hide() { preview.cancel(); if (!pointer && !request && !sample()) return; version++; pointer = undefined; request = undefined; gate.cancel(); }
+  const move = (event: PointerEvent) => preview.move({ x: event.clientX, y: event.clientY });
+  function updatePointer(point: { x: number; y: number }) {
     if (!allowed(point)) { hide(); return; }
     const pixel = pointerImagePoint(point.x, point.y, props.imageBox, { width: props.background.width ?? 0, height: props.background.height ?? 0 });
     if (!pixel) { hide(); return; }
@@ -47,6 +48,7 @@ export default function PointerInspector(props: Props) {
     gate.request(request);
   }
   function copy(): boolean {
+    preview.flush();
     const target = request, point = pointer;
     if (!target || !point || !allowed(point)) { hide(); return false; }
     if (copying) return true;
@@ -77,7 +79,7 @@ export default function PointerInspector(props: Props) {
   document.documentElement.addEventListener('pointerleave', hide); document.addEventListener('focusin', focus); document.addEventListener('visibilitychange', visibility);
   props.onReady({ copy });
   onCleanup(() => {
-    disposed = true; version++; gate.dispose(); observer?.disconnect(); mutations.disconnect(); props.onReady(undefined);
+    disposed = true; version++; preview.dispose(); gate.dispose(); observer?.disconnect(); mutations.disconnect(); props.onReady(undefined);
     window.removeEventListener('pointermove', move); window.removeEventListener('pointerdown', recheck, true); window.removeEventListener('blur', hide); window.removeEventListener('resize', resize);
     document.documentElement.removeEventListener('pointerleave', hide); document.removeEventListener('focusin', focus); document.removeEventListener('visibilitychange', visibility);
   });

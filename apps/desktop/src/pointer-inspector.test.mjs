@@ -6,7 +6,7 @@ import { stripTypeScriptTypes } from 'node:module';
 import { SourceTextModule } from 'node:vm';
 const module = new SourceTextModule(stripTypeScriptTypes(await readFile(new URL('./pointer-inspector.ts', import.meta.url), 'utf8'), { mode: 'transform' }));
 await module.link(() => { throw Error('Unexpected runtime dependency'); }); await module.evaluate();
-const { PointerInspector, PointerSampleCanceledError, pointerImagePoint, pointerPopupPosition, pointerSelectionDimensions, pointerInspectorSize, pointerCoordinatesLabel } = module.namespace;
+const { PointerInspector, PointerSampleCanceledError, pointerPreviewScheduler, pointerImagePoint, pointerPopupPosition, pointerSelectionDimensions, pointerInspectorSize, pointerCoordinatesLabel } = module.namespace;
 const plain = value => JSON.parse(JSON.stringify(value));
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
@@ -14,6 +14,22 @@ const request = (x = 10, sceneId = 'scene', backgroundId = 'background') => ({ s
   source: { width: 256, height: 144, captureCoordinates: { space: 'physicalPixels', originX: -1920, originY: 0, width: 256, height: 144 } } });
 const sample = value => ({ ...value, globalX: value.x - 1920, globalY: value.y, hex: '#1234AB', dataUrl: 'data:image/png;base64,AAAA' });
 const checks = [];
+
+{
+  const frames = new Map(), seen = []; let nextFrame = 0;
+  const preview = pointerPreviewScheduler(point => seen.push(point), callback => { const id = ++nextFrame; frames.set(id, callback); return id; }, id => frames.delete(id));
+  for (let x = 0; x < 500; x++) preview.move({ x, y: 20 });
+  assert.equal(frames.size, 1); assert.equal(seen.length, 0);
+  [...frames.values()][0](); assert.deepEqual(plain(seen), [{ x: 499, y: 20 }]); assert.equal(frames.size, 0);
+  preview.move({ x: 501, y: 30 }); preview.flush();
+  assert.equal(seen.at(-1).x, 501, 'Copy must immediately use the newest pixel, not the displayed preview');
+  assert.equal(frames.size, 0);
+  preview.move({ x: 600, y: 30 }); const late = [...frames.values()][0]; preview.cancel(); late();
+  assert.equal(seen.length, 2, 'Blur/source cancellation must not resurrect a scheduled sample');
+  preview.move({ x: 700, y: 30 }); preview.dispose(); preview.move({ x: 800, y: 30 }); preview.flush();
+  assert.equal(frames.size, 0); assert.equal(seen.length, 2);
+  checks.push('High-rate pointer events coalesce to one visual update; exact copy flushes and cancellation/disposal prevent stale previews');
+}
 
 const box = { x: 100, y: 40, width: 800, height: 600 }, image = { width: 1600, height: 900 };
 assert.equal(pointerImagePoint(500, 100, box, image), undefined); // top letterbox is 75 CSS px

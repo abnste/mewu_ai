@@ -977,6 +977,7 @@
   "正在下载": "Downloading",
   "正在保存并更新": "Saving and updating",
   "检查更新失败": "Could not check for updates",
+  "无法读取更新状态，请重试": "Could not read update status. Please try again.",
   "更新未完成，请重试": "Update failed; retry",
   "网络代理设置不可用": "Proxy settings unavailable",
   "更新信息无效": "Invalid update information",
