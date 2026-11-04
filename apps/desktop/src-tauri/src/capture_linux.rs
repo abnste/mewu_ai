@@ -119,6 +119,14 @@ fn supported_session(
     Ok(())
 }
 
+fn valid_capture_displays(displays: &[&str]) -> bool {
+    // Space always exists; the minimized-session widget is created lazily.
+    // Validate every existing owner without requiring an unused widget.
+    (1..=2).contains(&displays.len())
+        && !displays[0].is_empty()
+        && displays.iter().all(|display| *display == displays[0])
+}
+
 // The X11 client is pure Rust: keep its API and result assembly type-checked
 // alongside decoder tests on other hosts, without opening an X11 connection.
 #[cfg(any(target_os = "linux", test))]
@@ -562,7 +570,9 @@ mod native {
         witnesses: &[crate::window_witness_linux::CaptureWitness],
         allowed: CaptureCheck,
     ) -> Result<PendingCapture, String> {
-        if witnesses.len() != 2 || witnesses[0].display() != witnesses[1].display() {
+        if !valid_capture_displays(
+            &witnesses.iter().map(|witness| witness.display()).collect::<Vec<_>>(),
+        ) {
             return Err("截图窗口不属于同一个完整桌面会话".into());
         }
         for witness in witnesses {
@@ -799,6 +809,15 @@ pub(crate) use native::RecordingCapture;
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn capture_accepts_space_without_an_unused_frozen_widget() {
+        assert!(super::valid_capture_displays(&[":99"]));
+        assert!(super::valid_capture_displays(&[":99", ":99"]));
+        assert!(!super::valid_capture_displays(&[]));
+        assert!(!super::valid_capture_displays(&[""]));
+        assert!(!super::valid_capture_displays(&[":99", ":100"]));
+        assert!(!super::valid_capture_displays(&[":99", ":99", ":99"]));
+    }
     use super::*;
     fn rgb(bits: u8, little_endian: bool) -> PixelFormat {
         PixelFormat {
