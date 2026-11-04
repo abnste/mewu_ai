@@ -29,6 +29,8 @@ const STOP: u32 = WM_APP + 0x503;
 const TAG: usize = 0x4d455755;
 const STATE_TAG: usize = 0x4d455756;
 const CLEAR_STATE: u32 = WM_APP + 0x505;
+const IDLE_STATE_INTERVAL: u32 = 500;
+const OWNED_STATE_INTERVAL: u32 = 16;
 static ENABLED: AtomicBool = AtomicBool::new(false);
 static THREAD: AtomicU32 = AtomicU32::new(0);
 static THRESHOLD: AtomicU32 = AtomicU32::new(400);
@@ -386,7 +388,8 @@ pub fn configure(app: &AppHandle, milliseconds: u32) -> Result<(), String> {
                     let _ = tx.send(false);
                     return;
                 }
-                let state_timer = SetTimer(null_mut(), 0, 500, None);
+                let mut state_interval = IDLE_STATE_INTERVAL;
+                let mut state_timer = SetTimer(null_mut(), 0, state_interval, None);
                 if state_timer == 0 {
                     UnhookWindowsHookEx(keyboard_hook);
                     UnhookWindowsHookEx(mouse_hook);
@@ -400,6 +403,19 @@ pub fn configure(app: &AppHandle, milliseconds: u32) -> Result<(), String> {
                 while GetMessageW(&mut message, null_mut(), 0, 0) > 0 {
                     match message.message {
                         WM_TIMER if message.wParam == state_timer => {
+                            // Suppression is not a one-shot operation: a later
+                            // native repeat/state update can land after CLEAR_STATE.
+                            // Keep the system neutral for the duration of our own
+                            // physical hold, without touching forwarded Win chords.
+                            let reasserted = KEYS.with(|cell| {
+                                cell.borrow()
+                                    .reasserted_modifiers(|key| GetAsyncKeyState(key as i32) < 0)
+                            });
+                            for key in reasserted {
+                                if !release_os_modifier(key) {
+                                    fault();
+                                }
+                            }
                             let released = KEYS.with(|cell| {
                                 cell.borrow_mut()
                                     .reconcile_releases(|key| GetAsyncKeyState(key as i32) < 0)
@@ -447,6 +463,20 @@ pub fn configure(app: &AppHandle, milliseconds: u32) -> Result<(), String> {
                         _ => {
                             TranslateMessage(&message);
                             DispatchMessageW(&message);
+                        }
+                    }
+                    let wanted_interval = if KEYS.with(|keys| keys.borrow().has_owned_modifiers()) {
+                        OWNED_STATE_INTERVAL
+                    } else {
+                        IDLE_STATE_INTERVAL
+                    };
+                    if wanted_interval != state_interval {
+                        let timer = SetTimer(null_mut(), state_timer, wanted_interval, None);
+                        if timer == 0 {
+                            fault();
+                        } else {
+                            state_timer = timer;
+                            state_interval = wanted_interval;
                         }
                     }
                 }

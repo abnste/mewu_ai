@@ -28,6 +28,15 @@ impl Sequence {
     pub fn has_owned_modifiers(&self) -> bool {
         self.owned_modifier().is_some() || !self.suppressed_wins.is_empty()
     }
+    /// The OS may reassert a suppressed modifier after its hook callback has
+    /// returned. Repair only our owned keys; ordinary Win chords and keys held
+    /// before registration belong to the OS and must never be reset here.
+    pub fn reasserted_modifiers(&self, is_down: impl Fn(u32) -> bool) -> Vec<u32> {
+        [0x5b, 0x5c]
+            .into_iter()
+            .filter(|key| self.owns_modifier(*key) && is_down(*key))
+            .collect()
+    }
     /// An editor/gesture cancellation must not forget a physically held Win.
     /// Its OS state has already been reset, so reseeding from GetAsyncKeyState
     /// would lose it and turn a subsequent repeat into a second tap.
@@ -192,6 +201,47 @@ impl Sequence {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn repairing_reasserted_os_state_preserves_taps_and_normal_chords() {
+        for win in [0x5b, 0x5c] {
+            let mut tap = Sequence::default();
+            tap.key(win, true, 0, 400);
+            assert_eq!(tap.reasserted_modifiers(|_| true), vec![win]);
+            assert!(tap.reasserted_modifiers(|_| false).is_empty());
+            assert_eq!(
+                tap.key(win, false, 100, 400).replay,
+                vec![(win, false), (win, true)]
+            );
+            assert!(tap.reasserted_modifiers(|_| true).is_empty());
+
+            for other in [0x45, 0x09, 0x44] {
+                let mut chord = Sequence::default();
+                chord.key(win, true, 0, 400);
+                chord.key(other, true, 100, 400);
+                assert!(chord.reasserted_modifiers(|_| true).is_empty());
+                assert!(!chord.key(win, false, 800, 400).consume);
+            }
+            let mut preexisting = Sequence::default();
+            preexisting.seed_down(win, 0);
+            assert!(preexisting.reasserted_modifiers(|_| true).is_empty());
+        }
+    }
+    #[test]
+    fn repairing_a_long_hold_does_not_release_ownership_or_reopen_start() {
+        let mut held = Sequence::default();
+        held.key(0x5b, true, 0, 400);
+        held.key(0x5b, true, 500, 400);
+        held.key(0x5c, true, 510, 400);
+        for _ in 0..20 {
+            assert_eq!(held.reasserted_modifiers(|_| true), vec![0x5b, 0x5c]);
+            held.cancel_owned();
+            held.reconcile_releases(|_| false);
+        }
+        assert!(held.key(0x5b, false, 900, 400).replay.is_empty());
+        assert_eq!(held.reasserted_modifiers(|_| true), vec![0x5c]);
+        assert!(held.key(0x5c, false, 950, 400).consume);
+        assert!(held.reasserted_modifiers(|_| true).is_empty());
+    }
     #[test]
     fn deferred_state_clear_cannot_intercept_a_chord_or_an_already_released_key() {
         let mut keys = Sequence::default();
