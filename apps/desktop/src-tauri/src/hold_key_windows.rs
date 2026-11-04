@@ -28,6 +28,10 @@ const RELEASE: u32 = WM_APP + 0x502;
 const STOP: u32 = WM_APP + 0x503;
 const TAG: usize = 0x4d455755;
 const STATE_TAG: usize = 0x4d455756;
+// PowerToys uses this non-character virtual key to cancel the shell's pending
+// lone-modifier action. Do not substitute Ctrl/Alt/Shift (real user chords).
+const MENU_MASK_KEY: u16 = 0xff;
+const MASK_TAG: usize = 0x4d455757;
 const CLEAR_STATE: u32 = WM_APP + 0x505;
 const IDLE_STATE_INTERVAL: u32 = 500;
 const OWNED_STATE_INTERVAL: u32 = 16;
@@ -151,8 +155,29 @@ fn modifier_release_input(key: u32) -> INPUT {
         },
     }
 }
+fn masked_modifier_release(key: u32) -> [INPUT; 3] {
+    let mask = |up| INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: MENU_MASK_KEY,
+                wScan: 0,
+                dwFlags: if up { KEYEVENTF_KEYUP } else { 0 },
+                time: 0,
+                dwExtraInfo: MASK_TAG,
+            },
+        },
+    };
+    // A suppressed Win-down can already arm the shell's lone-Win action.
+    // Resetting only its low-level state is therefore insufficient: the shell
+    // can open Start on our synthetic release while the physical key is held.
+    // Send the balanced, non-character mask BEFORE the private state reset in
+    // one batch. The mask is visible; the Win-up itself remains suppressed.
+    // https://github.com/microsoft/PowerToys/blob/main/doc/devdocs/modules/keyboardmanager/keyboardmanager.md#dummy-key-events
+    [mask(false), mask(true), modifier_release_input(key)]
+}
 unsafe fn release_os_modifier(key: u32) -> bool {
-    let inputs = [modifier_release_input(key)];
+    let inputs = masked_modifier_release(key);
     SendInput(
         inputs.len() as u32,
         inputs.as_ptr(),
@@ -174,7 +199,9 @@ fn tagged_route(event: &KBDLLHOOKSTRUCT) -> Option<TaggedRoute> {
         // https://github.com/microsoft/PowerToys/blob/main/doc/devdocs/modules/keyboardmanager/keyboardmanager.md#modifier-caps-lock-interaction-on-japanese-ime-keyboards
         return Some(TaggedRoute::Suppress);
     }
-    (event.dwExtraInfo == TAG).then_some(TaggedRoute::Forward)
+    (event.dwExtraInfo == TAG
+        || (event.dwExtraInfo == MASK_TAG && event.vkCode == u32::from(MENU_MASK_KEY)))
+    .then_some(TaggedRoute::Forward)
 }
 unsafe fn replay_keys(keys: &[(u32, bool)]) -> bool {
     if keys.is_empty() {
@@ -597,6 +624,78 @@ pub fn disable() {
 #[cfg(test)]
 mod modifier_tests {
     use super::*;
+    #[test]
+    fn menu_cancellation_precedes_private_release_without_replaying_win_down() {
+        for win in [0x5b, 0x5c] {
+            let inputs = masked_modifier_release(win);
+            let keys = inputs.map(|input| unsafe { input.Anonymous.ki });
+            assert_eq!(
+                keys.map(|key| key.wVk),
+                [MENU_MASK_KEY, MENU_MASK_KEY, win as u16]
+            );
+            assert_eq!(
+                keys.map(|key| key.dwFlags),
+                [0, KEYEVENTF_KEYUP, KEYEVENTF_KEYUP | KEYEVENTF_EXTENDEDKEY]
+            );
+            let routes = keys.map(|key| {
+                tagged_route(&KBDLLHOOKSTRUCT {
+                    vkCode: key.wVk.into(),
+                    scanCode: key.wScan.into(),
+                    flags: LLKHF_INJECTED
+                        | if key.dwFlags & KEYEVENTF_KEYUP != 0 {
+                            LLKHF_UP
+                        } else {
+                            0
+                        },
+                    time: 0,
+                    dwExtraInfo: key.dwExtraInfo,
+                })
+            });
+            assert_eq!(
+                routes,
+                [
+                    Some(TaggedRoute::Forward),
+                    Some(TaggedRoute::Forward),
+                    Some(TaggedRoute::Suppress)
+                ]
+            );
+            assert!(keys
+                .iter()
+                .all(|key| key.dwFlags & KEYEVENTF_KEYUP != 0 || key.wVk == MENU_MASK_KEY));
+        }
+    }
+    #[test]
+    fn menu_mask_does_not_convert_owned_holds_into_chords_or_replace_short_taps() {
+        for win in [0x5b, 0x5c] {
+            let mut sequence = crate::hold_sequence::Sequence::default();
+            sequence.key(win, true, 0, 400);
+            for input in masked_modifier_release(win) {
+                let key = unsafe { input.Anonymous.ki };
+                let event = KBDLLHOOKSTRUCT {
+                    vkCode: key.wVk.into(),
+                    scanCode: key.wScan.into(),
+                    flags: LLKHF_INJECTED,
+                    time: 0,
+                    dwExtraInfo: key.dwExtraInfo,
+                };
+                // All private events are routed before the physical state machine.
+                assert!(tagged_route(&event).is_some());
+            }
+            assert_eq!(sequence.owned_modifier(), Some(win));
+            assert!(sequence.key(win, false, 800, 400).replay.is_empty());
+            sequence.key(win, true, 1000, 400);
+            assert_eq!(
+                sequence.key(win, false, 1100, 400).replay,
+                vec![(win, false), (win, true)]
+            );
+            sequence.key(win, true, 2000, 400);
+            assert_eq!(
+                sequence.key(0x45, true, 2100, 400).replay,
+                vec![(win, false)]
+            );
+            assert!(!sequence.key(win, false, 2200, 400).consume);
+        }
+    }
     #[test]
     fn foreign_win_events_cannot_escape_an_owned_hold_but_normal_chords_still_pass() {
         for win in [0x5b, 0x5c] {
