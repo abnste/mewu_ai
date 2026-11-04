@@ -36,14 +36,14 @@ WorkBuddy 桌面优先复用已登录客户端的受管运行时，不要求安�
 - 选择 ACP 模型时先由客户端确认；拒绝的选择不会覆盖原模型。对话中的登录、额度和服务错误使用不含敏感信息的提示，不将客户端连接成功等同于模型可用。
 - 单次执行预算最多 300 秒。进程/协议错误会关闭进程并报告失败，不自动重发已发送的任务。
 - 普通对话、图片和公开思考流已接入；未实现第三方专用视频上传和完整原生工具审批界面。
-- Windows 已实测 Codex、MiniMax Code 的原对话条发送、动态模型选择和实际回复；真实进程测试另覆盖两轮图像输入与会话恢复。macOS、Ubuntu 已实测 MiniMax Code 原对话条发送与实际回复，macOS 另验证了模型权限失败提示。Hermes 与 WorkBuddy 的既有覆盖范围保持原样：Hermes 在 Windows 通过两轮图像及恢复；WorkBuddy 桌面 HTTP ACP 已连通，但当前测试账号未完成模型登录，不能据此声称完整对话通过。
+- Windows 已实测 Codex、MiniMax Code 的原对话条发送、动态模型选择和实际回复；真实进程测试另覆盖两轮图像输入与会话恢复。macOS、Ubuntu 已实测 MiniMax Code 原对话条发送与实际回复，macOS 另验证了模型权限失败提示。Hermes 与 WorkBuddy 的既有覆盖范围保持原样：Hermes 在 Windows 通过两轮图像及恢复；本轮 WorkBuddy 5.9.3 在 Windows、macOS 均通过原对话条模型选择与实际回复，Ubuntu WSL 的 CodeBuddy CLI 2.179.3 通过同项验收及重启续聊。Linux 图形测试使用 WSL 内的独立 X11 会话，不代表完整 Wayland 桌面的截图、录屏和全局快捷键验收。
 
 ## 开发与打包
 
 入口为 `index.mjs`，无需 Node 依赖随插件安装。使用项目 SDK 打包器生成安装 ZIP，README 和测试文件不放入运行包。
 
 ```sh
-node tools/extension-market/cli.mjs pack extensions/official/agent-connectors --out out/agent-connectors-0.1.6.zip --file profiles.mjs --file rpc.mjs --file adapters.mjs --file view.mjs --file workbuddy.mjs --file catalog.mjs --validator /path/to/mewu-plugin-validator
+node tools/extension-market/cli.mjs pack extensions/official/agent-connectors --out out/agent-connectors-0.1.8.zip --file profiles.mjs --file rpc.mjs --file adapters.mjs --file view.mjs --file workbuddy.mjs --file catalog.mjs --validator /path/to/mewu-plugin-validator
 ```
 
 一手参考：[ACP v1](https://agentclientprotocol.com/protocol/v1/overview)、[Codex App Server](https://developers.openai.com/codex/app-server)、[MiniMax Code](https://github.com/MiniMax-AI/minimax-code)、[CodeBuddy ACP](https://www.codebuddy.ai/docs/cli/acp)、[Hermes ACP](https://hermes-agent.nousresearch.com/docs/user-guide/features/acp/)。
