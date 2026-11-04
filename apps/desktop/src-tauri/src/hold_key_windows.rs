@@ -12,7 +12,7 @@ use std::{
 };
 use tauri::AppHandle;
 use windows_sys::Win32::{
-    Foundation::{LPARAM, LRESULT, WPARAM},
+    Foundation::{GetLastError, SetLastError, LPARAM, LRESULT, WPARAM},
     System::{LibraryLoader::GetModuleHandleW, Threading::GetCurrentThreadId},
     UI::{
         Input::KeyboardAndMouse::{
@@ -41,7 +41,7 @@ static THRESHOLD: AtomicU32 = AtomicU32::new(400);
 static STOPPING: AtomicBool = AtomicBool::new(false);
 static EDITING: AtomicBool = AtomicBool::new(false);
 static FAULT: AtomicBool = AtomicBool::new(false);
-type TraceRecord = (u64, &'static str, bool, bool);
+type TraceRecord = (u64, &'static str, bool, bool, u32, u32);
 static TRACE: OnceLock<Option<std::sync::mpsc::SyncSender<TraceRecord>>> = OnceLock::new();
 fn initialize_trace() {
     TRACE.get_or_init(|| {
@@ -55,8 +55,8 @@ fn initialize_trace() {
                 // Explicit opt-in, bounded output, no ordinary key codes,
                 // typed text, screen contents or foreground application data.
                 // All file I/O stays off the hook/message-pump thread.
-                for (at, event, owned, suppressed) in receiver.into_iter().take(512) {
-                    if writeln!(file, "{{\"at\":{at},\"event\":\"{event}\",\"owned\":{owned},\"suppressed\":{suppressed}}}").is_err() {
+                for (at, event, owned, suppressed, inserted, error) in receiver.into_iter().take(512) {
+                    if writeln!(file, "{{\"at\":{at},\"event\":\"{event}\",\"owned\":{owned},\"suppressed\":{suppressed},\"inserted\":{inserted},\"error\":{error}}}").is_err() {
                         break;
                     }
                 }
@@ -67,7 +67,7 @@ fn initialize_trace() {
 }
 fn trace(event: &'static str, owned: bool, suppressed: bool) {
     if let Some(Some(sender)) = TRACE.get() {
-        let _ = sender.try_send((clock(), event, owned, suppressed));
+        let _ = sender.try_send((clock(), event, owned, suppressed, 0, 0));
     }
 }
 pub fn warning() -> Option<&'static str> {
@@ -178,11 +178,20 @@ fn masked_modifier_release(key: u32) -> [INPUT; 3] {
 }
 unsafe fn release_os_modifier(key: u32) -> bool {
     let inputs = masked_modifier_release(key);
-    SendInput(
+    SetLastError(0);
+    let inserted = SendInput(
         inputs.len() as u32,
         inputs.as_ptr(),
         std::mem::size_of::<INPUT>() as i32,
-    ) == inputs.len() as u32
+    );
+    let complete = inserted == inputs.len() as u32;
+    if !complete {
+        let error = GetLastError();
+        if let Some(Some(sender)) = TRACE.get() {
+            let _ = sender.try_send((clock(), "reset-failed", true, true, inserted, error));
+        }
+    }
+    complete
 }
 #[derive(Debug, PartialEq)]
 enum TaggedRoute {
@@ -235,7 +244,39 @@ unsafe fn replay_keys(keys: &[(u32, bool)]) -> bool {
 }
 fn fault() {
     FAULT.store(true, Ordering::Release);
-    ENABLED.store(false, Ordering::Release);
+    // An injection failure does not disable our keyboard hook. The physical
+    // Win-down has already been consumed: forwarding its later repeats/up
+    // would hand half a gesture to the shell and reopen Start. Only explicit
+    // configure/disable owns ENABLED; keep receiving physical releases here.
+    trace("transport-fault", true, true);
+}
+
+fn deliver_decision(
+    decision: crate::hold_sequence::Decision,
+    key: u32,
+    down: bool,
+    mut clear: impl FnMut(u32, bool) -> bool,
+    mut notify: impl FnMut(u32) -> bool,
+    mut replay: impl FnMut(&[(u32, bool)]) -> bool,
+    mut failed: impl FnMut(),
+) -> bool {
+    if let Some(key) = decision.clear_os_modifier.filter(|_| !decision.pressed) {
+        if !clear(key, down) {
+            failed();
+        }
+    }
+    if (decision.pressed && !notify(PRESS)) || (decision.released && !notify(RELEASE)) {
+        failed();
+    }
+    if !replay(&decision.replay) {
+        failed();
+        // Only an actual tap/chord replay may have inserted Win-down. Its
+        // physical key-up is the fallback release for a partial replay batch.
+        if !down && matches!(key, 0x5b | 0x5c) && !decision.replay.is_empty() {
+            return false;
+        }
+    }
+    decision.consume
 }
 fn suppress_foreign_modifier(
     event: &KBDLLHOOKSTRUCT,
@@ -315,45 +356,40 @@ unsafe extern "system" fn keyboard(code: i32, w: WPARAM, l: LPARAM) -> LRESULT {
             let decision =
                 cell.borrow_mut()
                     .key(key, down, clock(), THRESHOLD.load(Ordering::Acquire));
-            // All physical downs, including auto-repeat, are cleared on this
-            // same hook thread after the callback returns. Resetting within
-            // the callback can be overtaken by the original down. A delayed
-            // reset rechecks ownership so it cannot release a real Win chord.
-            if let Some(key) = decision.clear_os_modifier.filter(|_| !decision.pressed) {
-                let cleared = if down {
-                    PostThreadMessageW(
-                        THREAD.load(Ordering::Acquire),
-                        CLEAR_STATE,
-                        key as WPARAM,
-                        0,
-                    ) != 0
-                } else {
-                    release_os_modifier(key)
-                };
-                if !cleared {
-                    cell.borrow_mut().forwarded = true;
+            deliver_decision(
+                decision,
+                key,
+                down,
+                |key, down| {
+                    // Defer down-state resets until the callback returns and
+                    // recheck ownership before touching a possible Win chord.
+                    if down {
+                        PostThreadMessageW(
+                            THREAD.load(Ordering::Acquire),
+                            CLEAR_STATE,
+                            key as WPARAM,
+                            0,
+                        ) != 0
+                    } else {
+                        release_os_modifier(key)
+                    }
+                },
+                post,
+                |keys| replay_keys(keys),
+                || {
+                    cell.borrow_mut().cancel_owned();
                     fault();
-                    return false;
-                }
-            }
-            if (decision.pressed && !post(PRESS)) || (decision.released && !post(RELEASE)) {
-                fault();
-                return false;
-            }
-            if !replay_keys(&decision.replay) {
-                fault();
-                // Preserve the physical release if a replay batch was only
-                // partly inserted; never leave an injected Win-down stuck.
-                if up && matches!(event.vkCode, 0x5b | 0x5c) {
-                    return false;
-                }
-            }
-            decision.consume
+                },
+            )
         })
     })
     .unwrap_or_else(|_| {
         fault();
-        false
+        KEYS.with(|cell| {
+            let mut keys = cell.borrow_mut();
+            keys.cancel_owned();
+            keys.has_owned_modifiers()
+        })
     });
     if matches!(key, 0x5b | 0x5c) {
         trace(
@@ -546,7 +582,7 @@ pub fn configure(app: &AppHandle, milliseconds: u32) -> Result<(), String> {
                                 let owned = KEYS.with(|keys| keys.borrow().owned_modifier());
                                 let Some(key) = owned else { continue };
                                 if !release_os_modifier(key) {
-                                    KEYS.with(|keys| keys.borrow_mut().forwarded = true);
+                                    KEYS.with(|keys| keys.borrow_mut().cancel_owned());
                                     fault();
                                     continue;
                                 }
@@ -624,6 +660,100 @@ pub fn disable() {
 #[cfg(test)]
 mod modifier_tests {
     use super::*;
+    #[test]
+    fn reset_delivery_failure_keeps_repeat_and_release_consumed_then_allows_next_tap() {
+        for win in [0x5b, 0x5c] {
+            let mut sequence = crate::hold_sequence::Sequence::default();
+            sequence.key(win, true, 0, 400);
+            let mut failures = 0;
+            let mut notifications = Vec::new();
+            for (down, at) in [(true, 500), (true, 600), (false, 800)] {
+                let decision = sequence.key(win, down, at, 400);
+                assert!(deliver_decision(
+                    decision,
+                    win,
+                    down,
+                    |_, _| false,
+                    |message| {
+                        notifications.push(message);
+                        true
+                    },
+                    |keys| {
+                        assert!(keys.is_empty());
+                        true
+                    },
+                    || {
+                        failures += 1;
+                        sequence.cancel_owned();
+                    }
+                ));
+            }
+            assert_eq!(failures, 3);
+            assert_eq!(notifications, vec![RELEASE]);
+            assert!(!sequence.has_owned_modifiers());
+            sequence.key(win, true, 1000, 400);
+            assert_eq!(
+                sequence.key(win, false, 1100, 400).replay,
+                vec![(win, false), (win, true)]
+            );
+        }
+    }
+    #[test]
+    fn failed_hold_dispatch_cannot_forward_half_a_gesture_or_replay_it_as_a_tap() {
+        let mut sequence = crate::hold_sequence::Sequence::default();
+        let decision = sequence.key(0x5b, true, 0, 400);
+        assert!(deliver_decision(
+            decision,
+            0x5b,
+            true,
+            |_, _| true,
+            |_| false,
+            |_| true,
+            || sequence.cancel_owned()
+        ));
+        assert_eq!(sequence.owned_modifier(), Some(0x5b));
+        let decision = sequence.key(0x5b, false, 100, 400);
+        assert!(decision.replay.is_empty());
+        assert!(deliver_decision(
+            decision,
+            0x5b,
+            false,
+            |_, _| false,
+            |_| true,
+            |_| true,
+            || {}
+        ));
+        assert!(!sequence.has_owned_modifiers());
+    }
+    #[test]
+    fn only_failed_real_replay_can_forward_physical_up_as_fallback() {
+        for duration in [100, 800] {
+            let mut sequence = crate::hold_sequence::Sequence::default();
+            sequence.key(0x5b, true, 0, 400);
+            let decision = sequence.key(0x5b, false, duration, 400);
+            let consume = deliver_decision(
+                decision,
+                0x5b,
+                false,
+                |_, _| false,
+                |_| true,
+                |_| false,
+                || {},
+            );
+            assert_eq!(consume, duration >= 400);
+        }
+    }
+    #[test]
+    fn reporting_transport_failure_does_not_disable_the_registered_hook() {
+        let previous_enabled = ENABLED.swap(true, Ordering::AcqRel);
+        let previous_fault = FAULT.load(Ordering::Acquire);
+        fault();
+        let still_enabled = ENABLED.load(Ordering::Acquire);
+        let warned = FAULT.load(Ordering::Acquire);
+        ENABLED.store(previous_enabled, Ordering::Release);
+        FAULT.store(previous_fault, Ordering::Release);
+        assert!(still_enabled && warned);
+    }
     #[test]
     fn menu_cancellation_precedes_private_release_without_replaying_win_down() {
         for win in [0x5b, 0x5c] {
