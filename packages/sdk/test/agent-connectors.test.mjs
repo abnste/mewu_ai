@@ -147,7 +147,7 @@ test('WorkBuddy discovery sends only absolute candidates for the actual host pla
     f.ctx.processes.resolve=async(candidates,files=[])=>{
       calls++;
       if(calls===1)return {platform,executables:[]};
-      const expand=value=>value.replace('${programFiles}','C:/Program Files').replace('${localAppData}','C:/Users/Test/AppData/Local').replace('${home}',platform==='windows'?'C:/Users/Test':'/Users/Test');
+      const expand=value=>value.replace('${programFiles}','C:/Program Files').replace('${localAppData}','C:/fixture/home/AppData/Local').replace('${home}',platform==='windows'?'C:/fixture/home':'/Users/Test');
       const isAbsolute=platform==='windows'?path.win32.isAbsolute:path.posix.isAbsolute;
       if(files.length)assert.ok(candidates.every(value=>isAbsolute(expand(value))));
       assert.ok(files.every(value=>isAbsolute(expand(value))));
@@ -210,7 +210,7 @@ test('official Node CLI layouts resolve on Windows, macOS and Linux without shel
  for(const platform of ['windows','macos','linux'])for(const provider of ['codex','minimax']){
   const f=fixture(()=>{}),profile=profiles.find(p=>p.id===provider);
   const node=platform==='windows'?String.raw`\\?\C:\Custom Node\node.exe`:'/opt/custom/bin/node';
-  const script=platform==='windows'?String.raw`\\?\C:\Users\Other User\CLI\entry.js`:'/home/other/CLI/entry.js';
+  const script=platform==='windows'?String.raw`\\?\C:\CLI Fixtures\Other User\entry.js`:'/home/other/CLI/entry.js';
   f.ctx.processes.resolve=async(candidates,files=[])=>{
    if(platform==='windows')assert.ok(candidates.every(p=>!p.startsWith('/')));
    if(candidates.includes('node'))return {platform,executables:[node]};
