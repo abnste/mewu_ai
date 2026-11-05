@@ -13,6 +13,18 @@ mod x11_stream;
 #[path = "capture_linux_visibility.rs"]
 mod x11_visibility;
 
+/// A surviving DISPLAY may refer to a separate Xorg session. In that case
+/// its windows cannot present the screen that the Wayland portal approved.
+pub(crate) fn is_xwayland_server(display: &str) -> bool {
+    use x11rb::protocol::xproto::ConnectionExt;
+    let deadline = Instant::now() + Duration::from_millis(200);
+    let Ok((connection, _)) = x11_stream::connect_display_until(Some(display), deadline) else {
+        return false;
+    };
+    let Ok(cookie) = connection.query_extension(b"XWAYLAND") else { return false };
+    cookie.reply().is_ok_and(|reply| reply.present)
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Identity { widget: usize, drawable: usize }
 #[derive(Clone, Debug)]

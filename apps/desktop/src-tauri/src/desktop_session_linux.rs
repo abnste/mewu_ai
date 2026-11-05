@@ -32,7 +32,22 @@ pub(crate) fn initialize() {
     // another display, and never switch the global display around callbacks.
     // X11 permits precise positioning of independent desktop objects. On a
     // compositor without XWayland, retain Wayland and report that limitation.
-    gtk::gdk::set_allowed_backends("x11,wayland");
+    let session = std::env::var("XDG_SESSION_TYPE").ok();
+    let wayland = std::env::var("WAYLAND_DISPLAY").ok();
+    let display = std::env::var("DISPLAY").ok();
+    gtk::gdk::set_allowed_backends(backend_order(
+        wayland_session(wayland.as_deref(), session.as_deref()),
+        display.as_deref(),
+        crate::capture_wayland_host::is_xwayland_server,
+    ));
+}
+
+fn backend_order(portal: bool, display: Option<&str>, is_xwayland: impl FnOnce(&str) -> bool) -> &'static str {
+    if portal && !display.filter(|s| !s.is_empty()).is_some_and(is_xwayland) {
+        "wayland,x11"
+    } else {
+        "x11,wayland"
+    }
 }
 
 #[cfg(test)]
@@ -50,5 +65,13 @@ mod tests {
     #[test]
     fn desktop_detection_is_safe_on_background_workers_without_gtk() {
         std::thread::spawn(uses_portal).join().unwrap();
+    }
+
+    #[test]
+    fn a_leftover_xorg_display_does_not_take_the_wayland_capture_window() {
+        assert_eq!(backend_order(true, Some(":9"), |_| false), "wayland,x11");
+        assert_eq!(backend_order(true, Some(":0"), |_| true), "x11,wayland");
+        assert_eq!(backend_order(true, None, |_| unreachable!()), "wayland,x11");
+        assert_eq!(backend_order(false, Some(":9"), |_| unreachable!()), "x11,wayland");
     }
 }
