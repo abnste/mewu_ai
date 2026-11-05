@@ -18,6 +18,11 @@ const deferred = () => { let resolve; const promise = new Promise(r => { resolve
 
 function fixture(block) {
   const pending = deferred(), stops = [], errors = [], accepted = [], registrations = [];
+  const timers = new Map(), windowEvents = new Map(), documentEvents = new Map();
+  const events = map => ({
+    addEventListener: (name, callback) => map.set(name, callback),
+    removeEventListener: name => map.delete(name),
+  });
   const stop = name => () => stops.push(name);
   const response = async name => block === name ? pending.promise : stop(name);
   const context = vm.createContext({
@@ -52,11 +57,37 @@ function fixture(block) {
     attachAppControl: async () => stop('control'), scene: () => undefined,
     snapshot: () => undefined, draft() {}, refs() {}, exitPreparing: () => false,
     flushControl() {}, executeControl() {}, AppControlError: Error,
-    document: { dispatchEvent() {} }, KeyboardEvent: class {},
+    document: { dispatchEvent() {}, ...events(documentEvents) }, window: events(windowEvents),
+    setTimeout: (fn, ms) => { timers.set(ms, fn); return ms; }, clearTimeout: id => timers.delete(id),
+    onCleanup() {}, setStartupError: e => errors.push(e), t: s => s, KeyboardEvent: class {},
   });
   const tasks = mounts.map(code => vm.runInContext(stripTypeScriptTypes(`(${code})()`, { mode: 'transform' }), context));
-  return { context, pending, tasks, stops, errors, accepted, registrations };
+  return { context, pending, tasks, stops, errors, accepted, registrations, timers, windowEvents };
 }
+
+test('a slow listener does not strand the visible space and registration catches up missed publications', async () => {
+  const f = fixture('snapshot');
+  await tick();
+  f.timers.get(250)();
+  await tick();
+  assert.deepEqual(f.accepted.map(s => s.revision), [4]);
+  f.context.bridge.getSnapshot = async () => ({ revision: 5 });
+  f.pending.resolve(() => {});
+  await Promise.all(f.tasks);
+  assert.deepEqual(f.accepted.map(s => s.revision), [4, 5]);
+});
+
+test('showing a space whose first read failed obtains its current scene without restarting', async () => {
+  const f = fixture('snapshot');
+  f.context.bridge.getSnapshot = async () => { throw Error('session unavailable'); };
+  f.pending.resolve(() => {});
+  await Promise.all(f.tasks);
+  assert.equal(f.accepted.length, 0);
+  f.context.bridge.getSnapshot = async () => ({ revision: 6, activeSceneId: 'recovered' });
+  f.windowEvents.get('focus')();
+  await tick();
+  assert.equal(f.accepted.at(-1).activeSceneId, 'recovered');
+});
 
 test('actual App obtains its initial scene and registers control without waiting for unrelated startup IPC', async () => {
   for (const blocked of ['pins', 'language', 'pinEscape', 'translation', 'plugins', 'recording', 'scroll', 'exit', 'extensions', 'extensionCatalog']) {

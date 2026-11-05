@@ -645,6 +645,7 @@
   "重新读取后需重选工具。": "Select tools again after reloading.",
   "重新读取文本": "Reload text",
   "重新载入": "Reload",
+  "未收到截图空间状态": "The capture workspace has not responded.",
   "重新载入内容": "Reload content",
   "重试": "Retry",
   "重试译文图层": "Retry translation layer",

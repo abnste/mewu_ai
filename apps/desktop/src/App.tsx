@@ -117,6 +117,7 @@ export default function App() {
   let drawingDraftScope: string | undefined;
   const [pendingDrawingDrafts, setPendingDrawingDrafts] = createSignal<PendingDrawingDraft[]>([]);
   const [snapshot, setSnapshot] = createSignal<Snapshot>();
+  const [startupError, setStartupError] = createSignal('');
   const [pluginSnapshot, setPluginSnapshot] = createSignal<PluginSnapshot>({ revision: -1, plugins: [] });
   const capabilities = createOptionalFeatureState(() => snapshot()?.connections ?? [], pluginSnapshot, () => ({
     activeSceneId: snapshot()?.activeSceneId ?? null,
@@ -551,12 +552,47 @@ export default function App() {
     } catch (error) { showError(error); }
   });
   onMount(async () => {
-    try {
-      stopEvents = await bridge.subscribe(accept, runEvent, showError);
-      if (disposed) { stopEvents(); return; }
-      accept(await bridge.getSnapshot());
-      try { const info = await bridge.runtimeInfo(); if (!disposed) setHotkey(info.hotkey); } catch { /* A missing status query does not block the space. */ }
-    } catch (error) { showError(error); }
+    const refresh = async () => {
+      try {
+        const value = await bridge.getSnapshot();
+        if (!disposed) accept(value);
+      } catch (cause) {
+        if (!disposed && !scene()) setStartupError(String(cause));
+      }
+    };
+    let subscribing = false;
+    const connect = async () => {
+      if (disposed || stopEvents || subscribing) return;
+      subscribing = true;
+      try {
+        const stop = await bridge.subscribe(accept, runEvent, showError);
+        if (disposed) { stop(); return; }
+        stopEvents = stop;
+        // Cover publications between an eager read and listener registration.
+        await refresh();
+      } catch (cause) {
+        if (!disposed) showError(cause);
+      } finally { subscribing = false; }
+    };
+    const recover = () => {
+      if (disposed || document.hidden) return;
+      if (!stopEvents) void connect();
+      if (!scene() || !stopEvents) void refresh();
+    };
+    window.addEventListener('focus', recover);
+    document.addEventListener('visibilitychange', recover);
+    const slowStart = setTimeout(recover, 250);
+    const stalled = setTimeout(() => {
+      if (!disposed && !scene()) setStartupError(t('未收到截图空间状态'));
+    }, 8000);
+    onCleanup(() => {
+      clearTimeout(slowStart); clearTimeout(stalled);
+      window.removeEventListener('focus', recover);
+      document.removeEventListener('visibilitychange', recover);
+    });
+    await connect();
+    if (disposed) return;
+    void bridge.runtimeInfo().then(info => { if (!disposed) setHotkey(info.hotkey); }).catch(() => {});
     if (bridge.native && !disposed) {
       // A development WebView can be connected to an older native process.
       // Missing optional control commands must not break ordinary screenshot UI.
@@ -1658,7 +1694,7 @@ export default function App() {
 
   return <div class="app" inert={exitPreparing()} classList={{ 'recording-active': Boolean(recording()), 'scroll-active': Boolean(scroll()), 'reduce-motion': preferences().reduceMotion, 'text-small': preferences().textSize === 'small', 'text-large': preferences().textSize === 'large' }}>
     <div class="capture-scene-surface" classList={{ 'capture-background-only': captureSceneBackgroundOnly() }} inert={Boolean(recording() || scroll())} style={{ display: captureSceneHidden() ? 'none' : 'contents' }}>
-    <Show when={scene()?.id} keyed fallback={<div class="startup-state"><Show when={!error()} fallback={<><CircleAlert size={19} /><span>{error()}</span><button onClick={() => location.reload()}>{t("重新载入")}</button></>}><LoaderCircle size={20} class="spin" /></Show></div>}>
+    <Show when={scene()?.id} keyed fallback={<div class="startup-state"><Show when={!startupError() && !error()} fallback={<><CircleAlert size={19} /><span>{startupError() || error()}</span><button onClick={() => location.reload()}>{t("重新载入")}</button></>}><LoaderCircle size={20} class="spin" /></Show></div>}>
       {currentId => {
         // A keyed subtree owns this scene, even while activeSceneId changes.
         // Cleanup must not make its existing media read the next scene's items.

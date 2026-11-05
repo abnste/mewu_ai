@@ -13,6 +13,7 @@ const REMOTE_DESKTOP: &str = "org.freedesktop.portal.RemoteDesktop";
 const SESSION: &str = "org.freedesktop.portal.Session";
 const REQUEST: &str = "org.freedesktop.portal.Request";
 const TRANSPORT_TIMEOUT: Duration = Duration::from_secs(5);
+const PORTAL_NAME: &str = "org.freedesktop.portal.Desktop";
 
 fn token() -> String { format!("mewu_{}", uuid::Uuid::new_v4().simple()) }
 fn error() -> String { "系统屏幕共享服务不可用".into() }
@@ -147,10 +148,25 @@ impl PortalSession {
             // GetNameOwner alone never activates an idle desktop portal. This
             // explicit user operation may start the installed portal service,
             // then pin all permission calls/signals to its unique bus owner.
-            let _: u32 = transport(bus.call("StartServiceByName", &("org.freedesktop.portal.Desktop", 0u32)), expires, allowed).await?;
-            let owner: String = transport(bus.call("GetNameOwner", &("org.freedesktop.portal.Desktop",)), expires, allowed).await?;
+            let mut changes = transport(bus.receive_signal_with_args("NameOwnerChanged", &[(0, PORTAL_NAME)]), expires, allowed).await?;
+            let _: u32 = transport(bus.call("StartServiceByName", &(PORTAL_NAME, 0u32)), expires, allowed).await?;
+            let owner: String = transport(bus.call("GetNameOwner", &(PORTAL_NAME,)), expires, allowed).await?;
             if !owner.starts_with(':') { return Err(error()); }
-            drop(bus);
+            // A replaced owner can never answer its old chooser. Release the
+            // capture slot immediately; the next gesture obtains fresh consent.
+            let replaced = async {
+                while let Some(message) = changes.next().await {
+                    let (name, old, new): (String, String, String) =
+                        message.body().deserialize().map_err(|_| error())?;
+                    if name == PORTAL_NAME && old == owner && new != owner { break; }
+                }
+                Err("桌面共享服务已切换，请重新发起操作".to_string())
+            };
+            futures_lite::future::race(replaced, Self::open_owned(connection.clone(), owner.clone(), parent, control, expires, allowed)).await
+    }
+
+    async fn open_owned(connection: Connection, owner: String, parent: &str, control: bool,
+                        expires: Instant, allowed: &mut impl FnMut() -> bool) -> Result<Self, String> {
             let desktop = transport(Proxy::new(&connection, owner.as_str(), DESKTOP, SCREENCAST), expires, allowed).await?;
             let version: u32 = transport(desktop.get_property("version"), expires, allowed).await?;
             let types: u32 = transport(desktop.get_property("AvailableSourceTypes"), expires, allowed).await?;
