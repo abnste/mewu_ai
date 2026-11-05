@@ -26,7 +26,7 @@ if (surface !== 'pin' && surface !== 'extension-object') await Promise.all([impo
 // import expression can collapse several windows into one preload list.
 const loaders = import.meta.glob<{ default: Component }>([
   './PinView.tsx', './FrozenWidget.tsx', './RecordingSurface.tsx',
-  './ScrollSurface.tsx', './SettingsSurface.tsx', './App.tsx',
+  './ScrollSurface.tsx', './SettingsSurface.tsx', './App.tsx', './SpaceStartup.tsx',
   './ExtensionObjectView.tsx',
 ]);
 const paths: Record<string, string> = {
@@ -34,6 +34,7 @@ const paths: Record<string, string> = {
   scroll: './ScrollSurface.tsx', settings: './SettingsSurface.tsx',
   'extension-object':'./ExtensionObjectView.tsx',
 };
-const { default: Surface } = await loaders[paths[surface ?? ''] ?? './App.tsx']();
+const spaceEntry = new URLSearchParams(location.search).get('resume') === '1' ? './SpaceStartup.tsx' : './App.tsx';
+const { default: Surface } = await loaders[paths[surface ?? ''] ?? spaceEntry]();
 await initializeAppearance();
 render(() => <Surface />, root);

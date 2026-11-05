@@ -3389,6 +3389,12 @@ fn main() {
     // WebKit writes its browser data as soon as a webview is constructed.
     // Resolve the business data root before it can populate the legacy path.
     #[cfg(target_os = "linux")]
+    if session_handoff_linux::is_activation() {
+        if let Some(space) = context.config_mut().app.windows.iter_mut().find(|w| w.label == "space") {
+            space.url = tauri::WebviewUrl::App("index.html?resume=1".into());
+        }
+    }
+    #[cfg(target_os = "linux")]
     let deferred_windows = startup_webviews::defer(context.config_mut());
     #[cfg(target_os = "linux")]
     let mut startup_capture =

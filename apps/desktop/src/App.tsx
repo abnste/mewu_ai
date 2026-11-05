@@ -96,7 +96,7 @@ function withoutScene<T>(values: Record<string, T>, sceneId: string): Record<str
   const next = { ...values }; delete next[sceneId]; return next;
 }
 
-export default function App() {
+export default function App(props: { initialSnapshot?: Snapshot } = {}) {
   const releaseToolbarLayouts=startToolbarLayouts();
   onCleanup(releaseToolbarLayouts);
   const drawingFlush = new DrawingFlushRegistry();
@@ -116,7 +116,7 @@ export default function App() {
   let videoDrawingFlushDepth = 0;
   let drawingDraftScope: string | undefined;
   const [pendingDrawingDrafts, setPendingDrawingDrafts] = createSignal<PendingDrawingDraft[]>([]);
-  const [snapshot, setSnapshot] = createSignal<Snapshot>();
+  const [snapshot, setSnapshot] = createSignal<Snapshot | undefined>(props.initialSnapshot);
   const [startupError, setStartupError] = createSignal('');
   const [pluginSnapshot, setPluginSnapshot] = createSignal<PluginSnapshot>({ revision: -1, plugins: [] });
   const capabilities = createOptionalFeatureState(() => snapshot()?.connections ?? [], pluginSnapshot, () => ({
