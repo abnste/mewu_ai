@@ -361,6 +361,51 @@ fn check(deadline: Instant, stop: &AtomicBool) -> Result<(), FrameError> {
     }
     Ok(())
 }
+fn wait_io(
+    wire: &Wire,
+    writing: bool,
+    deadline: Instant,
+    stop: &AtomicBool,
+) -> Result<(), FrameError> {
+    #[cfg(windows)]
+    {
+        let _ = (wire, writing);
+        wait(deadline, stop)
+    }
+    #[cfg(unix)]
+    {
+        use std::os::fd::{AsFd, AsRawFd};
+        let Stream::UdSocket(socket) = &wire.0;
+        loop {
+            check(deadline, stop)?;
+            let remaining = deadline.saturating_duration_since(Instant::now()).min(TICK);
+            // Wake when the socket is ready rather than imposing a timer tick
+            // on every full buffer. Keep stop checks and the original absolute
+            // deadline even for idle, interrupted or malicious peers.
+            let timeout = remaining.as_millis().max(1) as i32;
+            let mut descriptor = libc::pollfd {
+                fd: socket.as_fd().as_raw_fd(),
+                events: if writing { libc::POLLOUT } else { libc::POLLIN },
+                revents: 0,
+            };
+            let result = unsafe { libc::poll(&mut descriptor, 1, timeout) };
+            let failure = (result < 0).then(io::Error::last_os_error);
+            check(deadline, stop)?;
+            if result >= 0 {
+                if descriptor.revents & libc::POLLNVAL != 0 {
+                    return Err(FrameError::Io(io::ErrorKind::InvalidInput.into()));
+                }
+                // HUP/ERR must be observed by the next read/write, preserving
+                // buffered bytes and the transport's existing outcome rules.
+                return Ok(());
+            }
+            let error = failure.expect("negative poll result has an OS error");
+            if error.kind() != io::ErrorKind::Interrupted {
+                return Err(FrameError::Io(error));
+            }
+        }
+    }
+}
 fn read_exact(
     wire: &mut Wire,
     mut bytes: &mut [u8],
@@ -372,7 +417,9 @@ fn read_exact(
         match wire.read_available(bytes) {
             Ok(0) => return Err(FrameError::Io(io::ErrorKind::UnexpectedEof.into())),
             Ok(count) => bytes = &mut bytes[count..],
-            Err(error) if error.kind() == io::ErrorKind::WouldBlock => wait(deadline, stop)?,
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                wait_io(wire, false, deadline, stop)?
+            }
             Err(error) if error.kind() == io::ErrorKind::Interrupted => (),
             Err(error) => return Err(FrameError::Io(error)),
         }
@@ -423,7 +470,7 @@ pub(crate) fn write_frame(
                     rest = &rest[count..];
                 }
                 Err(FrameError::Io(error)) if error.kind() == io::ErrorKind::WouldBlock => {
-                    wait(deadline, stop)?
+                    wait_io(wire, true, deadline, stop)?
                 }
                 #[cfg(unix)]
                 Err(FrameError::Io(error)) if error.kind() == io::ErrorKind::Interrupted => (),

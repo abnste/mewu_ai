@@ -233,7 +233,8 @@ fn child(
         .env(DIRECTORY, &fixture.0)
         .env(NAMESPACE, namespace)
         .env(EXPECT_SUCCESS, if success { "1" } else { "0" })
-        .env_remove("XDG_RUNTIME_DIR")
+        // The parent lifetime probe and both children must resolve the same
+        // private endpoint root, including on WSL with XDG_RUNTIME_DIR set.
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     if let Some(image) = appimage {
