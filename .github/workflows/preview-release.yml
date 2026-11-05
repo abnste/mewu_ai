@@ -89,7 +89,7 @@ jobs:
         run: |
           set -e
           node scripts/check-glib-backport.mjs
-          cargo test -p mewu-desktop --locked --release --test glib_variant_iter -- --nocapture
+          cargo test -p mewu-desktop --locked --release --features tauri/custom-protocol --test glib_variant_iter -- --nocapture
       - name: Test Linux credentials on an isolated real session bus
         if: runner.os == 'Linux' && !cancelled()
         shell: bash

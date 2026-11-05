@@ -381,6 +381,10 @@ mod native {
 
     impl Writer {
         fn new(config: &Config) -> Result<Self, String> {
+            Self::new_with_hardware(config, true)
+        }
+
+        fn new_with_hardware(config: &Config, hardware: bool) -> Result<Self, String> {
             // Hardware transforms can default to CBR even though Microsoft's
             // software encoder defaults to VBR. Keep the existing bitrate target
             // and request VBR explicitly, so static screens do not get padding
@@ -389,7 +393,7 @@ mod native {
             // https://learn.microsoft.com/windows/win32/medfound/h-264-video-encoder
             let encoding = unsafe {
                 let mut encoding = None;
-                MFCreateAttributes(&mut encoding, 1).map_err(|e| failure("无法配置录屏编码", e))?;
+                MFCreateAttributes(&mut encoding, 2).map_err(|e| failure("无法配置录屏编码", e))?;
                 let encoding = encoding.ok_or("无法配置录屏编码")?;
                 encoding
                     .SetUINT32(
@@ -397,14 +401,22 @@ mod native {
                         eAVEncCommonRateControlMode_UnconstrainedVBR.0 as u32,
                     )
                     .map_err(|e| failure("无法配置录屏码率", e))?;
+                // The software encoder can quantize thin screen strokes away
+                // even at 8 Mbps. Supply this static property before streaming,
+                // through the sink writer's encoder configuration (not a late
+                // CodecAPI mutation that BeginWriting can overwrite).
+                // https://learn.microsoft.com/windows/win32/medfound/codecapi-avencvideomaxqp
+                encoding.SetUINT32(&CODECAPI_AVEncVideoMaxQP, 10)
+                    .map_err(|e| failure("无法配置录屏清晰度", e))?;
                 encoding
             };
-            Self::new_with_encoding(config, Some(&encoding))
+            Self::new_with_encoding(config, Some(&encoding), hardware)
         }
 
         fn new_with_encoding(
             config: &Config,
             encoding: Option<&IMFAttributes>,
+            hardware: bool,
         ) -> Result<Self, String> {
             let create = || -> windows::core::Result<Self> {
                 unsafe {
@@ -413,7 +425,7 @@ mod native {
                     let attributes = attributes.ok_or_else(windows::core::Error::from_thread)?;
                     attributes
                         .SetGUID(&MF_TRANSCODE_CONTAINERTYPE, &MFTranscodeContainerType_MPEG4)?;
-                    attributes.SetUINT32(&MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS, 1)?;
+                    attributes.SetUINT32(&MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS, u32::from(hardware))?;
                     // Keep the default synchronous throttling. Do not set an async
                     // callback or MF_SINK_WRITER_DISABLE_THROTTLING.
                     let path = HSTRING::from(config.output.as_os_str());
@@ -710,7 +722,7 @@ mod native {
                     let _ = fs::remove_file(&self.0);
                 }
             }
-            for (width, height) in [(628u32, 290u32), (1920, 1080)] {
+            for (hardware, width, height) in [(true, 628u32, 290u32), (true, 1920, 1080), (false, 628, 290), (false, 1920, 1080)] {
                 let mut lengths = Vec::new();
                 let mut modes = Vec::new();
                 for variable_rate in [false, true] {
@@ -731,9 +743,9 @@ mod native {
                     };
                     unsafe {
                         let writer = if variable_rate {
-                            Writer::new(&config)
+                            Writer::new_with_hardware(&config, hardware)
                         } else {
-                            Writer::new_with_encoding(&config, None)
+                            Writer::new_with_encoding(&config, None, hardware)
                         }
                         .unwrap();
                         let mut codec = std::ptr::null_mut();
@@ -756,7 +768,7 @@ mod native {
                             )
                             .unwrap(),
                         );
-                        println!("NATIVE_ENCODER_PROPERTIES explicit_unconstrained_vbr={variable_rate} mode={:?}", codec.GetValue(&CODECAPI_AVEncCommonRateControlMode));
+                        println!("NATIVE_ENCODER_PROPERTIES hardware_allowed={hardware} explicit_unconstrained_vbr={variable_rate} mode={:?} mean_bitrate={:?} quality_speed={:?}", codec.GetValue(&CODECAPI_AVEncCommonRateControlMode), codec.GetValue(&CODECAPI_AVEncCommonMeanBitRate), codec.GetValue(&CODECAPI_AVEncCommonQualityVsSpeed));
                         if variable_rate {
                             assert_eq!(
                                 u32::try_from(
@@ -931,9 +943,13 @@ mod native {
                         println!("NATIVE_SCREEN_H264_COMPARE width={width} height={height} explicit_unconstrained_vbr={variable_rate} target_bitrate=8000000 bytes={} decoded_frames={count} maximum_screen_error={maximum_screen_error} product_contrast_verified={variable_rate} moving_frames=verified", lengths.last().unwrap());
                     }
                 }
-                // Microsoft's software encoder already defaults to VBR. Only
-                // a real CBR baseline can prove this avoids CBR padding.
-                if modes[0] == eAVEncCommonRateControlMode_CBR.0 as u32 {
+                // Some CBR encoders do not pad static content. Only a baseline
+                // approaching the nominal two-second target proves padding;
+                // every shipping output must still stay well below that target.
+                let nominal_bytes = u64::from(crate::video_clip_contract::H264_SCREEN_BITRATE) * 2 / 8;
+                assert!(lengths[1] < nominal_bytes / 4, "static video is padded: {lengths:?}");
+                if modes[0] == eAVEncCommonRateControlMode_CBR.0 as u32
+                    && lengths[0] > nominal_bytes / 2 {
                     assert!(
                         lengths[1] * 2 < lengths[0],
                         "CBR padding was not reduced: {lengths:?}"

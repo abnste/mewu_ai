@@ -239,6 +239,12 @@ fn failure_controller(case: &str) {
         case,
         "cancel-before-exec"
             | "expiry-before-exec"
+            // These fixtures send no receipt and return normally after NACK
+            // or EOF. The actual bwrap wait plus clean bridge EOF proves that
+            // the unadmitted namespace is gone; this is not an unknown owner.
+            | "cancel-during-receipt"
+            | "missing-receipt"
+            | "bridge-eof"
             | "owner-early-exit"
             | "owner-dead-before-ack"
             | "post-ack-exec-error"
@@ -389,7 +395,10 @@ fn resource_fixtures() {
         "usr/lib/gstreamer-1.0",
         "usr/lib/gstreamer1.0",
         "usr/lib/gstreamer1.0/gstreamer-1.0",
+        "usr/lib/pipewire-0.3",
+        "usr/lib/spa-0.2",
         "usr/share",
+        "usr/share/pipewire",
         "usr/share/glib-2.0",
         "usr/share/glib-2.0/schemas",
     ];
