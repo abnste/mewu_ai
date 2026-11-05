@@ -21,6 +21,11 @@ use tauri::{AppHandle, Manager};
 use uuid::Uuid;
 
 const ARG: &str = "--resume-desktop-session";
+const FOLLOW: &str = "--follow-desktop-session";
+const WATCH: &str = "--observe-desktop-session";
+const LOGIN: &str = "org.freedesktop.login1";
+const MANAGER: &str = "/org/freedesktop/login1";
+const SESSION: &str = "org.freedesktop.login1.Session";
 const ENTRY: &str = "dev.mewu.remake-session.desktop";
 static OWNER: OnceLock<(File, Record)> = OnceLock::new();
 
@@ -73,9 +78,83 @@ fn lock(name: &str) -> io::Result<File> {
 fn address(instance: Uuid) -> io::Result<SocketAddr> {
     SocketAddr::from_abstract_name(format!("mewu-session-{instance}"))
 }
-pub(crate) fn is_activation() -> bool {
-    std::env::args_os().nth(1).is_some_and(|a| a == ARG)
+fn action() -> Option<String> {
+    std::env::args().nth(1)
 }
+pub(crate) fn is_activation() -> bool {
+    matches!(action().as_deref(), Some(ARG | FOLLOW | WATCH))
+}
+
+async fn session_path(manager: &zbus::Proxy<'_>) -> zbus::Result<zbus::zvariant::OwnedObjectPath> {
+    let id = std::env::var("XDG_SESSION_ID").unwrap_or_else(|_| "auto".into());
+    manager.call("GetSession", &(id,)).await
+}
+
+// logind drives reactivation of an already logged-in desktop. This observer
+// never creates a GTK window, holds user storage, or polls the seat.
+async fn observe() -> Result<(), Box<dyn std::error::Error>> {
+    use futures_util::{FutureExt, StreamExt};
+    let bus = zbus::Connection::system().await?;
+    let manager = zbus::Proxy::new(&bus, LOGIN, MANAGER, "org.freedesktop.login1.Manager").await?;
+    let path = session_path(&manager).await?;
+    let session = zbus::Proxy::new(&bus, LOGIN, path.clone(), SESSION).await?;
+    let kind: String = session.get_property("Type").await?;
+    let expected = if crate::desktop_session_linux::uses_portal() {
+        "wayland"
+    } else {
+        "x11"
+    };
+    if kind != expected {
+        return Err("缺少对应的图形登录会话".into());
+    }
+    let id: String = session.get_property("Id").await?;
+    if !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') {
+        return Err("无法识别登录会话".into());
+    }
+    let observer = lock(&format!("seat-{id}.lock"))?;
+    match observer.try_lock() {
+        Ok(()) => {}
+        Err(std::fs::TryLockError::WouldBlock) => return Ok(()),
+        Err(std::fs::TryLockError::Error(e)) => return Err(e.into()),
+    }
+    let launcher = desktop::current_launcher()?;
+    let mut removed = manager.receive_signal("SessionRemoved").await?;
+    let mut changes = session.receive_property_changed::<bool>("Active").await;
+    let mut previous = false;
+    let mut current: bool = session.get_property("Active").await?;
+    loop {
+        if current && !previous {
+            let mut child = std::process::Command::new(&launcher)
+                .arg(ARG)
+                .env("XDG_SESSION_ID", &id)
+                .spawn()?;
+            std::thread::spawn(move || {
+                let _ = child.wait();
+            });
+        }
+        previous = current;
+        futures_util::select! {
+            change = changes.next().fuse() => match change {
+                Some(v) => current = v.get().await?,
+                None => return Ok(()),
+            },
+            signal = removed.next().fuse() => match signal {
+                Some(m) => {
+                    let (removed_id, _): (String, zbus::zvariant::OwnedObjectPath) = m.body().deserialize()?;
+                    if removed_id == id { return Ok(()); }
+                }
+                None => return Ok(()),
+            },
+        }
+    }
+}
+async fn seat_active() -> zbus::Result<bool> {
+    let bus = zbus::Connection::system().await?;
+    let manager = zbus::Proxy::new(&bus, LOGIN, MANAGER, "org.freedesktop.login1.Manager").await?;
+    let session = zbus::Proxy::new(&bus, LOGIN, session_path(&manager).await?, SESSION).await?;
+    session.get_property("Active").await
+}
+
 fn valid_display(portal: bool) -> bool {
     use gtk::prelude::*;
     if gtk::init().is_err() {
@@ -98,6 +177,13 @@ pub(crate) fn admit() -> io::Result<Option<File>> {
     if !is_activation() {
         return Ok(None);
     }
+    // Standalone compositors (including WSL) may have no graphical logind
+    // seat. Their XDG activation still receives the correct desktop environment.
+    if matches!(action().as_deref(), Some(WATCH | FOLLOW)) {
+        if futures_lite::future::block_on(observe()).is_ok() || action().as_deref() == Some(WATCH) {
+            return Ok(None);
+        }
+    }
     let claim = lock("activation.lock")?;
     claim.lock()?;
     let Some(old) = record()? else {
@@ -112,6 +198,12 @@ pub(crate) fn admit() -> io::Result<Option<File>> {
     }
     let lifetime = lock("owner.lock")?;
     loop {
+        if action().as_deref() == Some(ARG)
+            && std::env::var_os("XDG_SESSION_ID").is_some()
+            && !futures_lite::future::block_on(seat_active()).unwrap_or(false)
+        {
+            return Ok(None);
+        }
         if record()?.as_ref() != Some(&old) {
             return Ok(None);
         }
@@ -151,7 +243,7 @@ fn install_entry() -> Result<(), String> {
     let previous = desktop::read(&path)?;
     let prefix = "[Desktop Entry]\nType=Application\nName=MewuAI\nX-Mewu-Session-Activation=1\n";
     let exec = desktop::quote_launcher(&desktop::current_launcher()?)?;
-    let entry = format!("{prefix}Exec={exec} {ARG}\nTerminal=false\nNoDisplay=true\n");
+    let entry = format!("{prefix}Exec={exec} {FOLLOW}\nTerminal=false\nNoDisplay=true\n");
     if previous.as_deref() == Some(entry.as_bytes()) {
         return Ok(());
     }
@@ -229,6 +321,17 @@ pub(crate) fn register(app: &AppHandle) -> Result<(), String> {
             }
         })
         .map_err(|e| e.to_string())?;
+    if !is_activation() {
+        // The application can be installed or started after this login's
+        // autostart phase. Observe its original seat as well as later logins.
+        let mut child = std::process::Command::new(desktop::current_launcher()?)
+            .arg(WATCH)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        std::thread::spawn(move || {
+            let _ = child.wait();
+        });
+    }
     Ok(())
 }
 pub(crate) fn disarm() {
