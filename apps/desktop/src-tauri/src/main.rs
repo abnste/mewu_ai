@@ -55,6 +55,8 @@ mod control_run_stream;
 mod credentials;
 #[cfg(target_os = "linux")]
 mod desktop_session_linux;
+#[cfg(target_os = "linux")]
+mod session_handoff_linux;
 mod drawing_diagnostics;
 mod drawing_render;
 mod export_variant_dialog;
@@ -3342,6 +3344,13 @@ fn main() {
     }
     #[cfg(target_os = "linux")]
     desktop_session_linux::initialize();
+    #[cfg(target_os = "linux")]
+    let admission = match session_handoff_linux::admit() {
+        Ok(Some(permit)) => Some(permit),
+        Ok(None) if session_handoff_linux::is_activation() => return,
+        Ok(None) => None,
+        Err(error) => { eprintln!("[desktop-session] {error}"); return; }
+    };
     let quit_only = lifecycle::launch_action(&std::env::args().collect::<Vec<_>>())
         == lifecycle::LaunchAction::Quit;
     // A cold --quit may initialize the single-instance plugin, but never opens
@@ -3386,7 +3395,7 @@ fn main() {
             |app, args, _| match lifecycle::launch_action(&args) {
                 lifecycle::LaunchAction::Quit => {
                     if app.try_state::<Host>().is_some() {
-                        lifecycle::request_shutdown(app);
+                        lifecycle::request_user_shutdown(app);
                     } else {
                         EARLY_QUIT.store(true, Ordering::Release);
                     }
@@ -4024,7 +4033,7 @@ fn main() {
                             }
                         });
                     }
-                    "quit" => lifecycle::request_shutdown(app),
+                    "quit" => lifecycle::request_user_shutdown(app),
                     _ => {}
                 });
             if let Some(icon) = app.default_window_icon() {
@@ -4040,6 +4049,13 @@ fn main() {
                 storage_root::mark_initialized(&storage_paths, &resolved)?;
             }
             app.state::<Host>().storage.mark_ready();
+            #[cfg(target_os = "linux")]
+            {
+                if let Err(error) = session_handoff_linux::register(app.handle()) {
+                    eprintln!("[desktop-session] {error}");
+                }
+                drop(admission);
+            }
             {
                 let snapshot = app
                     .state::<Host>()

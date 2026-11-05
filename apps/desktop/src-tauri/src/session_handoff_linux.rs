@@ -1,0 +1,242 @@
+// SPDX-License-Identifier: MPL-2.0
+//! A GTK/WebKit window tree belongs to one display for its lifetime. Let the
+//! target login create its own tree after the previous owner has flushed.
+use crate::capture_shortcut_desktop_linux as desktop;
+use serde::{Deserialize, Serialize};
+use std::{
+    fs::{self, File, OpenOptions},
+    io::{self, Read, Write},
+    os::{
+        linux::net::SocketAddrExt,
+        unix::{
+            fs::OpenOptionsExt,
+            net::{SocketAddr, UnixListener, UnixStream},
+        },
+    },
+    path::PathBuf,
+    sync::{atomic::Ordering, OnceLock},
+    time::Duration,
+};
+use tauri::{AppHandle, Manager};
+use uuid::Uuid;
+
+const ARG: &str = "--resume-desktop-session";
+const ENTRY: &str = "dev.mewu.remake-session.desktop";
+static OWNER: OnceLock<(File, Record)> = OnceLock::new();
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+struct Record {
+    boot: Uuid,
+    instance: Uuid,
+    portal: bool,
+}
+fn boot() -> io::Result<Uuid> {
+    fs::read_to_string("/proc/sys/kernel/random/boot_id")?
+        .trim()
+        .parse()
+        .map_err(io::Error::other)
+}
+fn state() -> io::Result<PathBuf> {
+    let path = dirs::runtime_dir()
+        .ok_or_else(|| io::Error::other("缺少用户运行时目录"))?
+        .join("mewu-session");
+    desktop::safe_path(&path).map_err(io::Error::other)?;
+    fs::create_dir_all(&path)?;
+    Ok(path)
+}
+fn active_path() -> io::Result<PathBuf> {
+    // The runtime directory may be removed between logout and the next login.
+    // Keep only the resume intent across logout; boot_id expires it on reboot.
+    let dir = dirs::state_dir()
+        .ok_or_else(|| io::Error::other("缺少用户状态目录"))?
+        .join("dev.mewu.remake");
+    desktop::safe_path(&dir).map_err(io::Error::other)?;
+    fs::create_dir_all(&dir)?;
+    Ok(dir.join("desktop-session.json"))
+}
+fn record() -> io::Result<Option<Record>> {
+    let bytes = desktop::read(&active_path()?).map_err(io::Error::other)?;
+    bytes
+        .map(|v| serde_json::from_slice(&v).map_err(io::Error::other))
+        .transpose()
+}
+fn lock(name: &str) -> io::Result<File> {
+    OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(state()?.join(name))
+}
+fn address(instance: Uuid) -> io::Result<SocketAddr> {
+    SocketAddr::from_abstract_name(format!("mewu-session-{instance}"))
+}
+pub(crate) fn is_activation() -> bool {
+    std::env::args_os().nth(1).is_some_and(|a| a == ARG)
+}
+fn valid_display(portal: bool) -> bool {
+    use gtk::prelude::*;
+    if gtk::init().is_err() {
+        return false;
+    }
+    let Some(display) = gtk::gdk::Display::default() else {
+        return false;
+    };
+    match display.type_().name() {
+        "GdkWaylandDisplay" => portal,
+        "GdkX11Display" if portal => std::env::var("DISPLAY")
+            .is_ok_and(|d| crate::capture_wayland_host::is_xwayland_server(&d)),
+        "GdkX11Display" => true,
+        _ => false,
+    }
+}
+/// Serialize competing login notifications until the new owner has published
+/// its generation. The owner lock is held to process exit, including teardown.
+pub(crate) fn admit() -> io::Result<Option<File>> {
+    if !is_activation() {
+        return Ok(None);
+    }
+    let claim = lock("activation.lock")?;
+    claim.lock()?;
+    let Some(old) = record()? else {
+        return Ok(None);
+    };
+    if old.boot != boot()? {
+        return Ok(None);
+    }
+    let portal = crate::desktop_session_linux::uses_portal();
+    if !valid_display(portal) {
+        return Err(io::Error::other("目标桌面连接不可用"));
+    }
+    let lifetime = lock("owner.lock")?;
+    loop {
+        if record()?.as_ref() != Some(&old) {
+            return Ok(None);
+        }
+        match lifetime.try_lock() {
+            Ok(()) => return Ok(Some(claim)),
+            Err(std::fs::TryLockError::WouldBlock) => {}
+            Err(std::fs::TryLockError::Error(e)) => return Err(e),
+        }
+        if old.portal == portal {
+            return Ok(None);
+        }
+        match UnixStream::connect_addr(&address(old.instance)?) {
+            Ok(mut stream) => {
+                stream.set_read_timeout(Some(Duration::from_secs(60)))?;
+                stream.write_all(&[u8::from(portal)])?;
+                let mut reply = [0];
+                match stream.read(&mut reply)? {
+                    0 => {} // Process exited while releasing its desktop.
+                    _ if reply == [2] => return Err(io::Error::other("旧桌面保存失败")),
+                    _ => {}
+                }
+            }
+            Err(e) if e.kind() == io::ErrorKind::ConnectionRefused => {}
+            Err(e) => return Err(e),
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
+}
+
+fn install_entry() -> Result<(), String> {
+    let directory = dirs::config_dir()
+        .ok_or("缺少用户配置目录")?
+        .join("autostart");
+    desktop::safe_path(&directory)?;
+    fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
+    let path = directory.join(ENTRY);
+    let previous = desktop::read(&path)?;
+    let prefix = "[Desktop Entry]\nType=Application\nName=MewuAI\nX-Mewu-Session-Activation=1\n";
+    let exec = desktop::quote_launcher(&desktop::current_launcher()?)?;
+    let entry = format!("{prefix}Exec={exec} {ARG}\nTerminal=false\nNoDisplay=true\n");
+    if previous.as_deref() == Some(entry.as_bytes()) {
+        return Ok(());
+    }
+    if let Some(bytes) = previous.as_ref() {
+        // Honour user/desktop overrides (including Hidden=true).
+        let lines = std::str::from_utf8(bytes).unwrap_or("");
+        if !lines.starts_with(prefix)
+            || !lines.ends_with("Terminal=false\nNoDisplay=true\n")
+            || lines.lines().count() != entry.lines().count()
+        {
+            return Ok(());
+        }
+    }
+    desktop::replace(&path, previous.as_deref(), entry.as_bytes(), &|| true)
+}
+
+pub(crate) fn register(app: &AppHandle) -> Result<(), String> {
+    let lifetime = lock("owner.lock").map_err(|e| e.to_string())?;
+    lifetime.try_lock().map_err(|e| e.to_string())?;
+    let owner = Record {
+        boot: boot().map_err(|e| e.to_string())?,
+        instance: Uuid::new_v4(),
+        portal: crate::desktop_session_linux::uses_portal(),
+    };
+    let listener = UnixListener::bind_addr(&address(owner.instance).map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())?;
+    install_entry()?;
+    let path = active_path().map_err(|e| e.to_string())?;
+    let previous = desktop::read(&path)?;
+    desktop::replace(
+        &path,
+        previous.as_deref(),
+        &serde_json::to_vec(&owner).map_err(|e| e.to_string())?,
+        &|| true,
+    )?;
+    let portal = owner.portal;
+    OWNER.set((lifetime, owner)).map_err(|_| "重复注册桌面")?;
+    let app = app.clone();
+    std::thread::Builder::new()
+        .name("mewu-session".into())
+        .spawn(move || {
+            for mut stream in listener.incoming().flatten() {
+                if !rustix::net::sockopt::socket_peercred(&stream)
+                    .is_ok_and(|peer| peer.uid == rustix::process::geteuid())
+                {
+                    continue;
+                }
+                let _ = stream.set_read_timeout(Some(Duration::from_secs(1)));
+                let mut target = [0];
+                if stream.read_exact(&mut target).is_err() || target != [u8::from(!portal)] {
+                    continue;
+                }
+                let host = app.state::<crate::Host>();
+                let active = host.capturing.load(Ordering::Acquire)
+                    || crate::recording::busy(&app)
+                    || crate::scroll_host::busy(&app)
+                    || host.lock().map_or(true, |h| {
+                        !h.runs.is_empty()
+                            || !h.agent_runs.is_empty()
+                            || !h.plugin_runs.is_empty()
+                            || !h.visual_runs.is_empty()
+                    });
+                let result = if active || !host.exit.accepts_new_operations() {
+                    0
+                } else if tauri::async_runtime::block_on(crate::lifecycle::yield_desktop_session(
+                    &app,
+                ))
+                .is_ok()
+                {
+                    1
+                } else {
+                    2
+                };
+                let _ = stream.write_all(&[result]);
+            }
+        })
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+pub(crate) fn disarm() {
+    if let Some((_, own)) = OWNER.get() {
+        if record().ok().flatten().as_ref() == Some(own) {
+            if let Ok(path) = active_path() {
+                let _ = fs::remove_file(path);
+            }
+        }
+    }
+}

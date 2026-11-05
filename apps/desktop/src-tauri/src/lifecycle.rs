@@ -520,10 +520,23 @@ fn abort(app: &AppHandle, id: &str, error: &str) {
 }
 
 pub fn request_shutdown(app: &AppHandle) {
-    if let Err(error) = start_shutdown(app, None, None, None) {
+    shutdown(app, false);
+}
+pub fn request_user_shutdown(app: &AppHandle) {
+    shutdown(app, true);
+}
+fn shutdown(app: &AppHandle, user_quit: bool) {
+    if let Err(error) = start_shutdown(app, None, None, None, user_quit) {
         let _ = app.emit_to("space", "host-error", &error);
         let _ = app.emit_to("settings", "host-error", &error);
     }
+}
+
+#[cfg(target_os = "linux")]
+pub async fn yield_desktop_session(app: &AppHandle) -> Result<(), String> {
+    let (send, receive) = oneshot::channel();
+    start_shutdown(app, None, Some(send), None, false)?;
+    receive.await.map_err(|_| "桌面切换中断".to_string())?
 }
 
 pub async fn request_storage_restart(
@@ -531,7 +544,7 @@ pub async fn request_storage_restart(
     migration: crate::storage_host::MigrationTask,
 ) -> Result<(), String> {
     let (send, receive) = oneshot::channel();
-    start_shutdown(app, Some(std::sync::Arc::new(migration)), Some(send), None)?;
+    start_shutdown(app, Some(std::sync::Arc::new(migration)), Some(send), None, false)?;
     receive.await.map_err(|_| "迁移重启未完成".to_string())?
 }
 
@@ -540,7 +553,7 @@ pub async fn request_update_restart(
     update: crate::app_update::PreparedInstall,
 ) -> Result<(), String> {
     let (send, receive) = oneshot::channel();
-    start_shutdown(app, None, Some(send), Some(update))?;
+    start_shutdown(app, None, Some(send), Some(update), false)?;
     receive
         .await
         .map_err(|_| "update_save_failed".to_string())?
@@ -551,11 +564,12 @@ fn start_shutdown(
     migration: Option<std::sync::Arc<crate::storage_host::MigrationTask>>,
     completion: Option<oneshot::Sender<Result<(), String>>>,
     update: Option<crate::app_update::PreparedInstall>,
+    user_quit: bool,
 ) -> Result<(), String> {
     static HOOK_PREFLIGHT: std::sync::atomic::AtomicBool =
         std::sync::atomic::AtomicBool::new(false);
     if !crate::hooks::enabled(app) {
-        return start_shutdown_after_hooks(app, migration, completion, update);
+        return start_shutdown_after_hooks(app, migration, completion, update, user_quit);
     }
     if !app.state::<Host>().exit.accepts_new_operations()
         || HOOK_PREFLIGHT.swap(true, Ordering::AcqRel)
@@ -565,7 +579,7 @@ fn start_shutdown(
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         crate::hooks::before_quit(&app).await;
-        if let Err(error) = start_shutdown_after_hooks(&app, migration, completion, update) {
+        if let Err(error) = start_shutdown_after_hooks(&app, migration, completion, update, user_quit) {
             crate::hooks::resume(&app);
             let _ = app.emit_to("settings", "host-error", &error);
             let _ = app.emit_to("space", "host-error", &error);
@@ -579,6 +593,7 @@ fn start_shutdown_after_hooks(
     migration: Option<std::sync::Arc<crate::storage_host::MigrationTask>>,
     completion: Option<oneshot::Sender<Result<(), String>>>,
     update: Option<crate::app_update::PreparedInstall>,
+    user_quit: bool,
 ) -> Result<(), String> {
     let Some(host) = app.try_state::<Host>() else {
         return Err("应用尚未启动".into());
@@ -880,6 +895,10 @@ fn start_shutdown_after_hooks(
                 app.request_restart();
             } else {
                 app.state::<Host>().exit.complete(&id);
+                #[cfg(target_os = "linux")]
+                if user_quit { crate::session_handoff_linux::disarm(); }
+                #[cfg(not(target_os = "linux"))]
+                let _ = user_quit;
                 app.exit(0);
             }
         }

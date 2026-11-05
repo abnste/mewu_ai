@@ -12,7 +12,7 @@ const ERROR: &str = "无法注册 Mewu 桌面入口，请检查用户应用目�
 #[serde(deny_unknown_fields)]
 struct Receipt { version: u32, entries: Vec<String> }
 
-fn safe_path(path: &Path) -> Result<(), String> {
+pub(crate) fn safe_path(path: &Path) -> Result<(), String> {
     if !path.is_absolute() || path.components().any(|c| matches!(c, std::path::Component::ParentDir)) { return Err(ERROR.into()); }
     let mut current = PathBuf::new();
     for component in path.components() {
@@ -26,7 +26,7 @@ fn safe_path(path: &Path) -> Result<(), String> {
     }
     Ok(())
 }
-fn read(path: &Path) -> Result<Option<Vec<u8>>, String> {
+pub(crate) fn read(path: &Path) -> Result<Option<Vec<u8>>, String> {
     safe_path(path)?;
     let file = match OpenOptions::new().read(true).custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC).open(path) {
         Ok(file) => file,
@@ -38,7 +38,7 @@ fn read(path: &Path) -> Result<Option<Vec<u8>>, String> {
     let mut bytes = Vec::new(); file.take(LIMIT + 1).read_to_end(&mut bytes).map_err(|_| ERROR)?;
     if bytes.len() as u64 > LIMIT { return Err(ERROR.into()); } Ok(Some(bytes))
 }
-fn render(executable: &Path) -> Result<String, String> {
+pub(crate) fn quote_launcher(executable: &Path) -> Result<String, String> {
     safe_path(executable)?;
     if !executable.is_file() { return Err(ERROR.into()); }
     let value = executable.to_str().ok_or(ERROR)?;
@@ -54,12 +54,15 @@ fn render(executable: &Path) -> Result<String, String> {
         }
     }
     argument.push('"');
-    let exec = argument.replace('\\', "\\\\");
+    Ok(argument.replace('\\', "\\\\"))
+}
+fn render(executable: &Path) -> Result<String, String> {
+    let exec = quote_launcher(executable)?;
     Ok(format!("[Desktop Entry]\nType=Application\nName=MewuAI\nComment=Mewu AI desktop\nExec={exec}\nIcon=MewuAI\nTerminal=false\nStartupWMClass=MewuAI\nX-Mewu-Desktop-Integration=1\n"))
 }
 struct Temporary(PathBuf);
 impl Drop for Temporary { fn drop(&mut self) { let _ = fs::remove_file(&self.0); } }
-fn replace(path: &Path, expected: Option<&[u8]>, bytes: &[u8], allowed: &impl Fn() -> bool) -> Result<(), String> {
+pub(crate) fn replace(path: &Path, expected: Option<&[u8]>, bytes: &[u8], allowed: &impl Fn() -> bool) -> Result<(), String> {
     if bytes.len() as u64>LIMIT{return Err(ERROR.into())}
     let parent = path.parent().ok_or(ERROR)?;
     safe_path(parent)?;
@@ -79,9 +82,11 @@ pub(crate) fn ensure(root: &Path, create: bool, allowed: impl Fn() -> bool) -> R
         Some(path) => PathBuf::from(path),
         None => PathBuf::from(std::env::var_os("HOME").ok_or(ERROR)?).join(".local/share"),
     };
+    integrate(root, &data.join("applications"), &current_launcher()?, create, allowed)
+}
+pub(crate) fn current_launcher() -> Result<PathBuf, String> {
     let executable=std::env::current_exe().map_err(|_| ERROR)?;
-    let launcher=launcher(&executable,std::env::var_os("APPDIR").map(PathBuf::from).as_deref(),std::env::var_os("APPIMAGE").map(PathBuf::from).as_deref())?;
-    integrate(root, &data.join("applications"), &launcher, create, allowed)
+    launcher(&executable,std::env::var_os("APPDIR").map(PathBuf::from).as_deref(),std::env::var_os("APPIMAGE").map(PathBuf::from).as_deref())
 }
 fn executable(path:&Path)->Result<File,String>{
     safe_path(path)?;
