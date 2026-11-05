@@ -18,6 +18,19 @@ test('contain geometry shares centered content offsets for non-square slots, zoo
   const zoom=images.imageObjectBox({...item(),width:item().width*1.5,height:item().height*1.5},{width:1200,height:800});assert.ok(Math.abs(zoom.width/a.width-1.5)<1e-12);assert.ok(Math.abs(zoom.height/a.height-1.5)<1e-12);
   assert.throws(()=>images.imageContentBox({x:0,y:0,width:0,height:1},{width:1,height:1}));
 });
+test('hidden desktop preserves the image editor until the display is allocated',()=>{
+  for(const viewport of [{width:0,height:0},{width:1200,height:0},{width:0,height:800}]){
+    const box=images.imageObjectBox(item(),viewport);
+    assert.equal(box.width,0);assert.equal(box.height,0);
+  }
+  assert.equal(images.imageObjectBox(item(),{width:1200,height:800}).height,320);
+});
+test('passive ink uses the fitted raster surface without measuring unrelated media on mount',async()=>{
+  const card=await readFile(new URL('./components/ArtifactCard.tsx',import.meta.url),'utf8');
+  assert.doesNotMatch(card,/imageContentBox\(/);
+  const css=await readFile(new URL('./components/image-object.css',import.meta.url),'utf8');
+  assert.match(css,/\.image-annotations-layer\{[^}]*inset:0/);
+});
 test('image document coordinates stay in source pixels, independent from scene background or display bounds',()=>{
   const value=item();value.imageAnnotations={version:1,sourceAssetId:source,revision:7,drawings:[{id:'ink',kind:'line'}],history:{undo:[],redo:[]}};
   const original=JSON.stringify(value),region=images.imageAnnotationRegion(value);

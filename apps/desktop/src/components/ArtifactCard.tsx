@@ -18,7 +18,7 @@ import TextArtifact from './TextArtifact';
 import './image-object.css';
 import VideoArtifact, { type VideoArtifactProps } from './VideoArtifact';
 import DrawingLayer from './DrawingLayer';
-import { imageAnnotationRegion, imageContentBox } from '../image-annotations';
+import { imageAnnotationRegion } from '../image-annotations';
 import ImageExportButton from './ImageExportButton';
 import DocumentArtifact from './DocumentArtifact';
 import {documentDisplay,type DocumentBounds} from '../document-layout';
@@ -113,7 +113,6 @@ export default function ArtifactCard(props: Props) {
     const width = Math.min(p.width * vp.width, p.height * vp.height * ratio);
     return { width, height: width / ratio };
   });
-  const imageInkBox=createMemo(()=>imageContentBox({x:0,y:0,...imageBox()},{width:props.item.asset.width??1,height:props.item.asset.height??1}));
   const movePosition=()=>{const p=position(),vp=viewport();return objectMoveGripPosition({x:p.x*vp.width,y:p.y*vp.height,width:isRasterMedia()?imageBox().width:isDocument()?documentSize().width:p.width*vp.width},vp);};
   const controlPosition=()=>{const p=position(),vp=viewport(),left=p.x*vp.width,top=p.y*vp.height,width=documentSize().width;return{right:'auto',left:`${Math.max(4,Math.min(vp.width-56,left+width-56))-left}px`,top:`${Math.max(4,Math.min(vp.height-28,top+(width<176?28:4)))-top}px`};};
 
@@ -277,7 +276,7 @@ export default function ArtifactCard(props: Props) {
       <Show when={props.item.asset.kind === 'image'}>
         <Show when={!failed()} fallback={<span class="inline-error">{t("无法打开图片")}</span>}>
           <img src={assetUrl(props.item.asset)} alt={props.item.asset.name} draggable={false} onError={() => setFailed(true)} />
-          <Show when={props.item.imageAnnotations&&props.sceneId&&!props.imageEditing}><div class="image-annotations-layer" style={{left:`${imageInkBox().x}px`,top:`${imageInkBox().y}px`,width:`${imageInkBox().width}px`,height:`${imageInkBox().height}px`}}><DrawingLayer region={imageAnnotationRegion(props.item)} sceneId={props.sceneId} background={props.item.asset} imageItemId={props.item.id} /></div></Show>
+          <Show when={props.item.imageAnnotations&&props.sceneId&&!props.imageEditing}><div class="image-annotations-layer"><DrawingLayer region={imageAnnotationRegion(props.item)} sceneId={props.sceneId} background={props.item.asset} imageItemId={props.item.id} /></div></Show>
         </Show>
       </Show>
       <Show when={props.item.asset.kind === 'video'}>

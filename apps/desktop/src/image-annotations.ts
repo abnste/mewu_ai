@@ -9,6 +9,12 @@ export function imageContentBox(slot:ImageContentBox, source:{width:number;heigh
 }
 /** Preserve the existing raster shell/native pin contract: fit from top-left. */
 export function imageObjectBox(item:SpaceItem,viewport:{width:number;height:number}):ImageContentBox {
+  // An unmapped or minimized desktop has no drawing surface yet. Keep the
+  // editor mounted; the next resize supplies its actual pixel coordinates.
+  if ((viewport.width === 0 || viewport.height === 0) && Number.isFinite(viewport.width)
+      && Number.isFinite(viewport.height) && viewport.width >= 0 && viewport.height >= 0) {
+    return { x:item.x*viewport.width, y:item.y*viewport.height, width:0, height:0 };
+  }
   const ratio=(item.asset.width??1)/(item.asset.height??1),width=Math.min(item.width*viewport.width,item.height*viewport.height*ratio);
   return imageContentBox({x:item.x*viewport.width,y:item.y*viewport.height,width,height:width/ratio},{width:item.asset.width??1,height:item.asset.height??1});
 }
