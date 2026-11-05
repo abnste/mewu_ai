@@ -19,6 +19,22 @@ pub(crate) fn uses_portal() -> bool {
     ) || WAYLAND_DISPLAY.get().copied().unwrap_or(false)
 }
 
+/// PAM may give graphical sessions CAP_WAKE_ALARM. A less privileged portal
+/// cannot inspect /proc/<pid>/root for that client. Re-exec our current inode
+/// without inherited privileges before opening any GUI, IPC or user storage.
+pub(crate) fn shed_ambient_capabilities() -> std::io::Result<()> {
+    use std::os::unix::process::CommandExt;
+    let status = std::fs::read_to_string("/proc/thread-self/status")?;
+    let privileged = status.lines().find_map(|s| s.strip_prefix("CapAmb:"))
+        .is_some_and(|bits| bits.trim().bytes().any(|b| b != b'0'));
+    if !privileged { return Ok(()); }
+    rustix::thread::clear_ambient_capability_set()?;
+    let mut arguments = std::env::args_os();
+    let mut command = std::process::Command::new("/proc/self/exe");
+    if let Some(name) = arguments.next() { command.arg0(name); }
+    Err(command.args(arguments).exec())
+}
+
 pub(crate) fn observe_display() {
     assert!(gtk::is_initialized_main_thread());
     WAYLAND_DISPLAY.get_or_init(|| {

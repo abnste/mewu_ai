@@ -3255,6 +3255,11 @@ fn enable_console_diagnostics(view: &webkit2gtk::WebView) {
 }
 
 fn main() {
+    #[cfg(target_os = "linux")]
+    if let Err(error) = desktop_session_linux::shed_ambient_capabilities() {
+        eprintln!("[desktop-session] {error}");
+        std::process::exit(1);
+    }
     if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("--cli")) {
         let mut args: Vec<_> = std::env::args_os().collect();
         args.remove(1);
