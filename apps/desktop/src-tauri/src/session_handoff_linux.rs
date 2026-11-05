@@ -208,28 +208,46 @@ pub(crate) fn admit() -> io::Result<Option<File>> {
             return Ok(None);
         }
         match lifetime.try_lock() {
-            Ok(()) => return Ok(Some(claim)),
+            Ok(()) => {
+                // Quit clears the record before releasing the owner lock.
+                return Ok((record()?.as_ref() == Some(&old)).then_some(claim));
+            }
             Err(std::fs::TryLockError::WouldBlock) => {}
             Err(std::fs::TryLockError::Error(e)) => return Err(e),
         }
         if old.portal == portal {
             return Ok(None);
         }
-        match UnixStream::connect_addr(&address(old.instance)?) {
-            Ok(mut stream) => {
-                stream.set_read_timeout(Some(Duration::from_secs(60)))?;
-                stream.write_all(&[u8::from(portal)])?;
-                let mut reply = [0];
-                match stream.read(&mut reply)? {
-                    0 => {} // Process exited while releasing its desktop.
-                    _ if reply == [2] => return Err(io::Error::other("旧桌面保存失败")),
-                    _ => {}
-                }
-            }
-            Err(e) if e.kind() == io::ErrorKind::ConnectionRefused => {}
+        match ask_owner(old.instance, portal) {
+            Ok(()) => {}
+            Err(e) if owner_departing(e.kind()) => {}
             Err(e) => return Err(e),
         }
         std::thread::sleep(Duration::from_millis(250));
+    }
+}
+
+// A compositor may tear down the old process between connect, send and
+// acknowledgement. Its lifetime lock and generation, not EOF, authorize entry.
+fn owner_departing(kind: io::ErrorKind) -> bool {
+    matches!(
+        kind,
+        io::ErrorKind::ConnectionRefused
+            | io::ErrorKind::BrokenPipe
+            | io::ErrorKind::ConnectionReset
+            | io::ErrorKind::UnexpectedEof
+    )
+}
+fn ask_owner(instance: Uuid, portal: bool) -> io::Result<()> {
+    let mut stream = UnixStream::connect_addr(&address(instance)?)?;
+    stream.set_read_timeout(Some(Duration::from_secs(60)))?;
+    stream.write_all(&[u8::from(portal)])?;
+    let mut reply = [0];
+    stream.read_exact(&mut reply)?;
+    match reply[0] {
+        0 | 1 => Ok(()),
+        2 => Err(io::Error::other("旧桌面保存失败")),
+        _ => Err(io::Error::other("无法识别桌面接手应答")),
     }
 }
 
@@ -340,6 +358,44 @@ pub(crate) fn disarm() {
             if let Ok(path) = active_path() {
                 let _ = fs::remove_file(path);
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn owner(reply: Option<u8>) -> (Uuid, std::thread::JoinHandle<()>) {
+        let id = Uuid::new_v4();
+        let listener = UnixListener::bind_addr(&address(id).unwrap()).unwrap();
+        (
+            id,
+            std::thread::spawn(move || {
+                let (mut client, _) = listener.accept().unwrap();
+                let mut request = [0];
+                client.read_exact(&mut request).unwrap();
+                assert_eq!(request, [1]);
+                if let Some(value) = reply {
+                    client.write_all(&[value]).unwrap();
+                }
+            }),
+        )
+    }
+    #[test]
+    fn lost_owner_is_rechecked_but_save_failure_is_terminal() {
+        for response in [None, Some(2), Some(3)] {
+            let (id, worker) = owner(response);
+            let error = ask_owner(id, true).unwrap_err();
+            assert_eq!(owner_departing(error.kind()), response.is_none());
+            worker.join().unwrap();
+        }
+    }
+    #[test]
+    fn busy_and_saved_both_require_another_owner_lock_check() {
+        for reply in [0, 1] {
+            let (id, worker) = owner(Some(reply));
+            ask_owner(id, true).unwrap();
+            worker.join().unwrap();
         }
     }
 }
