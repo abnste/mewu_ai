@@ -20,7 +20,7 @@ pub(crate) fn uses_portal() -> bool {
 }
 
 /// PAM may give graphical sessions CAP_WAKE_ALARM. A less privileged portal
-/// cannot inspect /proc/<pid>/root for that client. Re-exec our current inode
+/// cannot inspect /proc/<pid>/root for that client. Re-exec the desktop binary
 /// without inherited privileges before opening any GUI, IPC or user storage.
 pub(crate) fn shed_ambient_capabilities() -> std::io::Result<()> {
     use std::os::unix::process::CommandExt;
@@ -30,7 +30,7 @@ pub(crate) fn shed_ambient_capabilities() -> std::io::Result<()> {
     if !privileged { return Ok(()); }
     rustix::thread::clear_ambient_capability_set()?;
     let mut arguments = std::env::args_os();
-    let mut command = std::process::Command::new("/proc/self/exe");
+    let mut command = std::process::Command::new(std::env::current_exe()?);
     if let Some(name) = arguments.next() { command.arg0(name); }
     Err(command.args(arguments).exec())
 }
