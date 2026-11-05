@@ -114,12 +114,22 @@ fn installed_font_path(postscript_name: &str) -> Option<PathBuf> {
     (path.starts_with("/System/Library") && path.is_file()).then_some(path)
 }
 
-/// At most three distinct, real local files for exact installed font names.
+/// Ordered candidates for at most three loaded, real local font files.
 /// The caller retains its existing total/per-file byte budgets when reading.
 /// An unavailable font is skipped without discarding other usable fonts.
 pub fn font_paths() -> Result<Vec<PathBuf>, String> {
-    let mut paths = Vec::with_capacity(3);
-    for name in ["PingFangSC-Regular", "Helvetica", "ArialUnicodeMS"] {
+    let mut paths = Vec::with_capacity(4);
+    // Load the Latin and static CJK collections before optional fallbacks.
+    // Both contain ordinary and bold faces. Loading PingFang + Arial Unicode
+    // first can exhaust the shared 48MiB budget on older macOS, leaving no
+    // space for a real CJK bold face. Do not increase the budget or download
+    // fonts to compensate; the caller still limits actual files to three.
+    for name in [
+        "Helvetica",
+        "HiraginoSansGB-W3",
+        "PingFangSC-Regular",
+        "ArialUnicodeMS",
+    ] {
         if let Some(path) = installed_font_path(name) {
             if !paths.contains(&path) {
                 paths.push(path);

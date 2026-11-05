@@ -5,6 +5,7 @@
 - 修复更新检查读取失败后的恢复，以及并发请求导致更新状态错乱的问题。
 - 修复 Linux 首次截图时，尚未创建悬浮会话窗口导致截图被错误拒绝的问题。
 - 优化 macOS/Linux 命令行的大消息通信，减少缓冲区等待造成的延迟。
+- 修复部分 macOS 环境下中文加粗在图片、视频标注导出中失效的问题，并避免重复加载字体。
 
 本次为维护更新，保留现有配置、会话与插件数据。Linux 界面回归使用 Ubuntu WSL 的 X11 测试桌面，不代表所有 Wayland 桌面环境均已重新验收。
 
@@ -21,5 +22,6 @@
 - Recover update checks after read failures and prevent overlapping requests from overwriting newer state.
 - Fix the first Linux capture being rejected when the floating session window has not yet been created.
 - Reduce large-message CLI latency on macOS/Linux by waiting for socket readiness.
+- Fix missing CJK bold text in image/video annotation exports on some macOS versions and avoid loading font collections twice.
 
 Existing settings, conversations and plugin data are retained. Linux GUI regression used an Ubuntu WSL X11 test desktop; this does not certify every Wayland desktop environment.

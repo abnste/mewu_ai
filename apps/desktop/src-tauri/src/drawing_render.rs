@@ -34,7 +34,11 @@ const FONT_FAMILY: &str =
     "Segoe UI, Microsoft YaHei, PingFang SC, Noto Sans CJK SC, DejaVu Sans, sans-serif";
 #[cfg(target_os = "macos")]
 const FONT_FAMILY: &str = "Helvetica, PingFang SC, Arial Unicode MS, sans-serif";
-static FONTS: OnceLock<Result<Arc<usvg::fontdb::Database>, String>> = OnceLock::new();
+struct FontCache {
+    database: Arc<usvg::fontdb::Database>,
+    paths: std::collections::HashSet<PathBuf>,
+}
+static FONTS: OnceLock<Result<FontCache, String>> = OnceLock::new();
 static BOLD_FONTS: OnceLock<Result<Arc<usvg::fontdb::Database>, String>> = OnceLock::new();
 static BOLD_FONT_IDENTITY: OnceLock<Result<String, String>> = OnceLock::new();
 
@@ -766,11 +770,16 @@ pub(crate) fn styled_text_line_svg(
 }
 
 pub(crate) fn fonts() -> Result<Arc<usvg::fontdb::Database>, String> {
+    font_cache().map(|cache| Arc::clone(&cache.database))
+}
+
+fn font_cache() -> Result<&'static FontCache, String> {
     FONTS
         .get_or_init(|| {
             let mut database = usvg::fontdb::Database::new();
             let mut bytes_left = MAX_FONT_BYTES;
             let mut loaded = 0;
+            let mut loaded_paths = std::collections::HashSet::new();
             #[cfg(target_os = "macos")]
             let paths = crate::font_macos::font_paths()?;
             #[cfg(not(target_os = "macos"))]
@@ -779,7 +788,10 @@ pub(crate) fn fonts() -> Result<Arc<usvg::fontdb::Database>, String> {
                 if loaded == 3 {
                     break;
                 }
-                let Ok(file) = fs::File::open(path) else {
+                let Ok(path) = path.canonicalize() else {
+                    continue;
+                };
+                let Ok(file) = fs::File::open(&path) else {
                     continue;
                 };
                 let Ok(metadata) = file.metadata() else {
@@ -799,6 +811,7 @@ pub(crate) fn fonts() -> Result<Arc<usvg::fontdb::Database>, String> {
                 }
                 bytes_left -= bytes.len();
                 database.load_font_data(bytes);
+                loaded_paths.insert(path);
                 loaded += 1;
             }
             if database.faces().next().is_none() {
@@ -816,9 +829,13 @@ pub(crate) fn fonts() -> Result<Arc<usvg::fontdb::Database>, String> {
             {
                 database.set_sans_serif_family(macos_default_family(&database)?);
             }
-            Ok(Arc::new(database))
+            Ok(FontCache {
+                database: Arc::new(database),
+                paths: loaded_paths,
+            })
         })
-        .clone()
+        .as_ref()
+        .map_err(Clone::clone)
 }
 
 /// Ordinary capture/export keeps the original three-font cache. Only a bold
@@ -845,7 +862,9 @@ pub(crate) fn text_fonts(bold: bool) -> Result<Arc<usvg::fontdb::Database>, Stri
             let paths = crate::font_macos::bold_font_paths();
             #[cfg(not(target_os = "macos"))]
             let paths = bold_font_paths();
-            let mut seen = std::collections::HashSet::new();
+            // Collections such as Helvetica/Hiragino contain regular and bold
+            // faces in the same file. Do not allocate their bytes a second time.
+            let mut seen = font_cache()?.paths.clone();
             for path in paths.into_iter().take(3) {
                 let Ok(path) = path.canonicalize() else {
                     continue;
@@ -1369,7 +1388,9 @@ mod tests {
                     .expect("a loaded real CJK semibold/bold face must cover the character");
             assert!(
                 database.face(selected).unwrap().weight.0 >= 600,
-                "ordinary CJK coverage cannot silently replace the requested bold face"
+                "ordinary CJK coverage cannot silently replace the requested bold face; loaded: {:?}; bold candidates: {:?}",
+                font_cache().unwrap().paths,
+                crate::font_macos::bold_font_paths()
             );
         }
         let mut sources = std::collections::HashSet::new();
@@ -1392,6 +1413,19 @@ mod tests {
             regular.with_face_data(shared, |bytes, _| bytes.as_ptr() as usize),
             database.with_face_data(shared, |bytes, _| bytes.as_ptr() as usize)
         );
+        // Faces in a TTC may share bytes; the same physical collection must
+        // never be reloaded into a second allocation by the bold cache.
+        use sha2::{Digest, Sha256};
+        let mut allocations = std::collections::HashMap::new();
+        for face in database.faces() {
+            database.with_face_data(face.id, |bytes, _| {
+                let digest = Sha256::digest(bytes);
+                let pointer = bytes.as_ptr() as usize;
+                if let Some(previous) = allocations.insert(digest, pointer) {
+                    assert_eq!(previous, pointer, "font collection was allocated twice");
+                }
+            });
+        }
     }
 
     #[test]
