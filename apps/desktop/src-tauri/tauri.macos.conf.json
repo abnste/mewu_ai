@@ -12,7 +12,8 @@
       "icons/icon.png"
     ],
     "macOS": {
-      "minimumSystemVersion": "12.3"
+      "minimumSystemVersion": "12.3",
+      "signingIdentity": "-"
     }
   },
   "app": {

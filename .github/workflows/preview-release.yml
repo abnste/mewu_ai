@@ -168,9 +168,29 @@ jobs:
           JS
       - name: Verify the packaged console and user-level CLI integrator
         run: node scripts/cli-package.mjs ${{ matrix.platform }}
-      - name: Archive Mac application for later coordinator signing
+      - name: Verify Mac application seals in the DMG and update archive
         if: runner.os == 'macOS'
-        run: tar -czf target/release/bundle/macos/MewuAI.app.tar.gz -C target/release/bundle/macos MewuAI.app
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle=target/release/bundle/macos
+          app="$bundle/MewuAI.app"
+          version=$(node -p "require('./apps/desktop/src-tauri/tauri.conf.json').version")
+          dmg="target/release/bundle/dmg/MewuAI_${version}_aarch64.dmg"
+          mount=$(mktemp -d "$RUNNER_TEMP/mewu-dmg.XXXXXX")
+          extracted=$(mktemp -d "$RUNNER_TEMP/mewu-update.XXXXXX")
+          codesign --verify --deep --strict "$app"
+          hdiutil verify "$dmg"
+          hdiutil attach -readonly -nobrowse -mountpoint "$mount" "$dmg"
+          trap 'hdiutil detach "$mount"' EXIT
+          codesign --verify --deep --strict "$mount/MewuAI.app"
+          tar -czf "$bundle/MewuAI.app.tar.gz" -C "$bundle" MewuAI.app
+          tar -xzf "$bundle/MewuAI.app.tar.gz" -C "$extracted"
+          codesign --verify --deep --strict "$extracted/MewuAI.app"
+          for file in Contents/Info.plist Contents/_CodeSignature/CodeResources Contents/MacOS/MewuAI Contents/MacOS/mewu; do
+            cmp "$app/$file" "$mount/MewuAI.app/$file"
+            cmp "$app/$file" "$extracted/MewuAI.app/$file"
+          done
       - name: Verify host graphics providers with actual EGL pixels
         if: runner.os == 'Linux'
         shell: bash

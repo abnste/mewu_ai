@@ -46,7 +46,7 @@ node scripts/publish-release.mjs out/release
 
 发布脚本先建立或恢复同版本草稿、校验固定源提交并上传所有成品，再公开版本并确认 GitHub Latest。草稿上传中断后用原提交与原始字节重跑；源提交或已上传内容不同则拒绝，不删除旧资产来强行重试。不要额外上传测试回执、校验日志、SDK、插件包或开发目录；社区插件有自己的发行仓库。
 
-Windows 与 Linux 更新使用版本发行的安装包；Mac 使用同一版本发行的 `.app.tar.gz`，用户安装仍选 DMG。原生端严格校验仓库、版本标签、平台文件名、更新签名及签名中的版本。macOS 更新包签名不等同于 Developer ID 签名或公证，必须分别验收。
+Windows 与 Linux 更新使用版本发行的安装包；Mac 使用同一版本发行的 `.app.tar.gz`，用户安装仍选 DMG。原生端严格校验仓库、版本标签、平台文件名、更新签名及签名中的版本。没有 Developer ID 时，macOS 打包使用 ad-hoc 身份签署完整应用。CI 必须挂载 DMG、解开更新压缩包，分别执行 `codesign --verify --deep --strict`，并比对应用资源签名和程序字节。应用的 ad-hoc 签名、自动更新签名、Developer ID 与公证是不同的检查。
 
 正式发行须设置 `prerelease: false` 并显式成为 GitHub latest。发布后匿名核对 Latest API 的真实标签、正文签名块、四个软件包与 Mac 更新归档；五个附件的实际字节及三端签名必须与验收一致。正常发布在旧更新通道不存在时也必须成功。
 
