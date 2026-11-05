@@ -197,6 +197,7 @@ pub(crate) fn admit() -> io::Result<Option<File>> {
         return Err(io::Error::other("目标桌面连接不可用"));
     }
     let lifetime = lock("owner.lock")?;
+    let mut rejected = 0;
     loop {
         if action().as_deref() == Some(ARG)
             && std::env::var_os("XDG_SESSION_ID").is_some()
@@ -219,7 +220,15 @@ pub(crate) fn admit() -> io::Result<Option<File>> {
             return Ok(None);
         }
         match ask_owner(old.instance, portal) {
-            Ok(()) => {}
+            Ok(Reply::Busy | Reply::Saved) => {}
+            Ok(Reply::Rejected) if rejected < 2 => {
+                // A just-finished recording can still be publishing its edit.
+                // A failed prepare restores admission; retry only after checking
+                // the seat, owner generation and lifetime lock again.
+                rejected += 1;
+                std::thread::sleep(Duration::from_secs(rejected));
+            }
+            Ok(Reply::Rejected) => return Err(io::Error::other("旧桌面保存失败")),
             Err(e) if owner_departing(e.kind()) => {}
             Err(e) => return Err(e),
         }
@@ -238,15 +247,22 @@ fn owner_departing(kind: io::ErrorKind) -> bool {
             | io::ErrorKind::UnexpectedEof
     )
 }
-fn ask_owner(instance: Uuid, portal: bool) -> io::Result<()> {
+#[derive(Debug, PartialEq)]
+enum Reply {
+    Busy,
+    Saved,
+    Rejected,
+}
+fn ask_owner(instance: Uuid, portal: bool) -> io::Result<Reply> {
     let mut stream = UnixStream::connect_addr(&address(instance)?)?;
     stream.set_read_timeout(Some(Duration::from_secs(60)))?;
     stream.write_all(&[u8::from(portal)])?;
     let mut reply = [0];
     stream.read_exact(&mut reply)?;
     match reply[0] {
-        0 | 1 => Ok(()),
-        2 => Err(io::Error::other("旧桌面保存失败")),
+        0 => Ok(Reply::Busy),
+        1 => Ok(Reply::Saved),
+        2 => Ok(Reply::Rejected),
         _ => Err(io::Error::other("无法识别桌面接手应答")),
     }
 }
@@ -316,6 +332,7 @@ pub(crate) fn register(app: &AppHandle) -> Result<(), String> {
                 }
                 let host = app.state::<crate::Host>();
                 let active = host.capturing.load(Ordering::Acquire)
+                    || crate::recording_wayland_host::has_lease()
                     || crate::recording::busy(&app)
                     || crate::scroll_host::busy(&app)
                     || host.lock().map_or(true, |h| {
@@ -326,14 +343,16 @@ pub(crate) fn register(app: &AppHandle) -> Result<(), String> {
                     });
                 let result = if active || !host.exit.accepts_new_operations() {
                     0
-                } else if tauri::async_runtime::block_on(crate::lifecycle::yield_desktop_session(
-                    &app,
-                ))
-                .is_ok()
-                {
-                    1
                 } else {
-                    2
+                    match tauri::async_runtime::block_on(crate::lifecycle::yield_desktop_session(
+                        &app,
+                    )) {
+                        Ok(()) => 1,
+                        Err(error) => {
+                            eprintln!("[desktop-session] 无法交接旧桌面: {error}");
+                            2
+                        }
+                    }
                 };
                 let _ = stream.write_all(&[result]);
             }
@@ -382,8 +401,8 @@ mod tests {
         )
     }
     #[test]
-    fn lost_owner_is_rechecked_but_save_failure_is_terminal() {
-        for response in [None, Some(2), Some(3)] {
+    fn lost_owner_is_rechecked_but_unknown_replies_are_rejected() {
+        for response in [None, Some(3)] {
             let (id, worker) = owner(response);
             let error = ask_owner(id, true).unwrap_err();
             assert_eq!(owner_departing(error.kind()), response.is_none());
@@ -391,10 +410,10 @@ mod tests {
         }
     }
     #[test]
-    fn busy_and_saved_both_require_another_owner_lock_check() {
-        for reply in [0, 1] {
+    fn distinguish_save_rejection_from_busy_and_saved() {
+        for (reply, expected) in [(0, Reply::Busy), (1, Reply::Saved), (2, Reply::Rejected)] {
             let (id, worker) = owner(Some(reply));
-            ask_owner(id, true).unwrap();
+            assert_eq!(ask_owner(id, true).unwrap(), expected);
             worker.join().unwrap();
         }
     }
