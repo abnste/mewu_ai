@@ -62,6 +62,11 @@ const doc = { engine: 'native-layout', language: 'zh-Hans', width: 500, height: 
   { text: '第二条原始行', words: [{ text: '第二条原始行', x: 10, y: 100, width: 150, height: 22 }] },
 ] };
 const layout = selection.namespace.ocrLayout(doc);
+const joinedLayout=selection.namespace.ocrLayout({width:200,height:40,lines:[{text:'你好世界',words:[
+  {text:'你',x:0,y:0,width:20,height:20},{text:'好',x:22,y:0,width:20,height:20},
+  {text:'世界',x:44,y:0,width:40,height:20}]}]});
+assert.equal(joinedLayout.text,'你好世界');
+assert.deepEqual(plain(joinedLayout.glyphs.map(g=>[joinedLayout.text.slice(g.start,g.end),g.x])),[['你',0],['好',22],['世',44],['界',64]]);
 assert.equal(layout.text, '中文换行后也不插入空格 <svg> 👩‍💻\n第二条原始行');
 assert.ok(layout.glyphs.some(glyph => glyph.y === 45)); assert.ok(layout.glyphs.some(glyph => layout.text.slice(glyph.start, glyph.end) === '👩‍💻'));
 assert.equal(translationLanguages.length, 7); assert.deepEqual(plain(translationLanguages.map(value => value[0])), ['zh-Hans', 'en', 'ja', 'ko', 'de', 'fr', 'es']);

@@ -41,6 +41,7 @@ mod capture_wayland_host;
 mod capture_wayland_portal;
 mod clipboard_video_storage;
 mod clipboard_text;
+mod clipboard_write;
 #[cfg(windows)]
 mod clipboard_write_windows;
 mod code_decode;
@@ -126,6 +127,7 @@ mod memory_tools;
 mod mosaic_preview;
 mod network_policy;
 mod ocr;
+mod ocr_spacing;
 mod ocr_host;
 #[cfg(any(target_os = "macos", test))]
 mod ocr_worker;
@@ -219,6 +221,7 @@ mod runtime_platform;
 mod save_dialog;
 mod scroll_capture;
 mod scroll_host;
+mod scroll_pacing;
 mod scroll_stitch;
 mod session_title;
 mod settings_host;

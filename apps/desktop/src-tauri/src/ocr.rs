@@ -28,6 +28,12 @@ const TIMEOUT_ERROR: &str = "文字识别超时，请缩小选区后重试";
 /// Returns coordinates in original crop
 /// pixels in the recognizer's OCR coordinate frame; apply text_angle once about center.
 pub fn recognize(bitmap: PixelBuffer, cancel: Arc<AtomicBool>) -> Result<OcrDocument, String> {
+    let mut document = recognize_raw(bitmap, cancel)?;
+    crate::ocr_spacing::normalize(&mut document);
+    Ok(document)
+}
+
+fn recognize_raw(bitmap: PixelBuffer, cancel: Arc<AtomicBool>) -> Result<OcrDocument, String> {
     #[cfg(windows)]
     {
         native::recognize_impl(bitmap, cancel, || {})

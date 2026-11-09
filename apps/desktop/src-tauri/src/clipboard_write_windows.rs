@@ -7,7 +7,7 @@ const RETRY_FOR: Duration = Duration::from_millis(600);
 const RETRY_INTERVAL: Duration = Duration::from_millis(15);
 static GENERATION: AtomicU64 = AtomicU64::new(0);
 
-fn authority(check: impl Fn() -> Result<(), String>) -> impl Fn() -> Result<(), String> {
+pub(crate) fn authority(check: impl Fn() -> Result<(), String>) -> impl Fn() -> Result<(), String> {
     let generation = GENERATION.fetch_add(1, Ordering::AcqRel).wrapping_add(1);
     move || {
         if GENERATION.load(Ordering::Acquire) != generation {
@@ -17,7 +17,7 @@ fn authority(check: impl Fn() -> Result<(), String>) -> impl Fn() -> Result<(), 
     }
 }
 
-fn publish(
+pub(crate) fn publish(
     check: impl Fn() -> Result<(), String>,
     mut write: impl FnMut() -> Result<(), arboard::Error>,
     failure: &str,

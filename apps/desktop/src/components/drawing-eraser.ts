@@ -127,6 +127,25 @@ export function eraserStrokeHits(drawings: readonly Drawing[], from: EraserPoint
   }).map(drawing=>drawing.id);
 }
 
+// Build once per immutable document snapshot, not once per pointer sample.
+// Bounds only reject impossible candidates; the existing capsule test decides hits.
+export function createStrokeHitTester(drawings: readonly Drawing[]) {
+  const entries = drawings.filter(drawing => pixelErasable(drawing) && drawing.points.length).map(drawing => {
+    let left=Infinity,top=Infinity,right=-Infinity,bottom=-Infinity;
+    for(const point of drawing.points){left=Math.min(left,point.x);top=Math.min(top,point.y);right=Math.max(right,point.x);bottom=Math.max(bottom,point.y);}
+    const radius=drawing.strokeWidth/2;
+    return {drawing,left:left-radius,top:top-radius,right:right+radius,bottom:bottom+radius};
+  });
+  return (from:EraserPoint,to:EraserPoint,diameter:number,allowed?:ReadonlySet<string>) => {
+    if(![from.x,from.y,to.x,to.y,diameter].every(Number.isFinite)||diameter<=0)return [];
+    const radius=diameter/2,left=Math.min(from.x,to.x)-radius,right=Math.max(from.x,to.x)+radius,
+      top=Math.min(from.y,to.y)-radius,bottom=Math.max(from.y,to.y)+radius;
+    const candidates=entries.filter(entry=>(!allowed||allowed.has(entry.drawing.id))
+      &&entry.right>=left&&entry.left<=right&&entry.bottom>=top&&entry.top<=bottom).map(entry=>entry.drawing);
+    return eraserStrokeHits(candidates,from,to,diameter);
+  };
+}
+
 export function eraserCursor(diameter: number, height = diameter) {
   // The ring is centered on the hotspot and has the actual on-screen diameter.
   const w=Math.max(5,Math.min(126,Math.ceil(diameter)+4)),h=Math.max(5,Math.min(126,Math.ceil(height)+4));

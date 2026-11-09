@@ -618,7 +618,9 @@ pub async fn start_scroll_capture(
             let mut preview_dirty = false;
             let started = Instant::now();
             let mut holding = false;
+            let mut pacing = crate::scroll_pacing::ScrollPacing::default();
             loop {
+                let frame_started = Instant::now();
                 if cancel.load(Ordering::Acquire) {
                     return Ok(None);
                 }
@@ -640,7 +642,7 @@ pub async fn start_scroll_capture(
                     NextFrame::Cancel => return Ok(None),
                     NextFrame::Save => break,
                     NextFrame::Wait => {
-                        std::thread::sleep(Duration::from_millis(80));
+                        wait_for_scroll(Duration::from_millis(80), &cancel, &action);
                         continue;
                     }
                     NextFrame::Capture { finish_after } => finish_after,
@@ -674,7 +676,7 @@ pub async fn start_scroll_capture(
                 if finish_after && complete_frame(state.status) {
                     break;
                 }
-                std::thread::sleep(Duration::from_millis(80));
+                wait_for_scroll(pacing.delay(frame_started.elapsed()), &cancel, &action);
             }
             if cancel.load(Ordering::Acquire) {
                 return Ok(None);
@@ -751,6 +753,15 @@ fn verify_capture(app: &AppHandle, id: &str) -> Result<(), String> {
             .and_then(|active| active.capture_session.as_ref()).ok_or("长截图已结束")?.verify()
     })
 }
+fn wait_for_scroll(duration: Duration, cancel: &AtomicBool, action: &AtomicU8) {
+    let started = Instant::now();
+    while !cancel.load(Ordering::Acquire) && action.load(Ordering::Acquire) == 0 {
+        let remaining = duration.saturating_sub(started.elapsed());
+        if remaining.is_zero() { break; }
+        std::thread::sleep(remaining.min(Duration::from_millis(8)));
+    }
+}
+
 fn publish_preview(
     app: &AppHandle,
     id: &str,
@@ -758,12 +769,25 @@ fn publish_preview(
     stitch: &ScrollStitcher,
     cancel: &AtomicBool,
 ) -> Result<(), String> {
-    use base64::Engine;
     let image = stitch
         .preview(220, 1536, cancel)
         .map_err(|e| e.to_string())?;
+    let value = encode_preview(&image)?;
+    if cancel.load(Ordering::Acquire) { return Err("长截图已取消".into()); }
+    #[cfg(windows)]
+    update_scroll_hud(app, id, geometry, stitch.state(), cancel)?;
+    #[cfg(not(windows))]
+    let _ = geometry;
+    update(app, id, |s| s.preview = Some(value));
+    Ok(())
+}
+
+fn encode_preview(image: &image::RgbaImage) -> Result<String, String> {
+    use base64::Engine;
     let mut bytes = Vec::new();
-    image::codecs::png::PngEncoder::new(&mut bytes)
+    // Transient thumbnails favor latency, while remaining pixel-exact PNG.
+    image::codecs::png::PngEncoder::new_with_quality(&mut bytes,
+        image::codecs::png::CompressionType::Fast, image::codecs::png::FilterType::Adaptive)
         .write_image(
             image.as_raw(),
             image.width(),
@@ -771,16 +795,10 @@ fn publish_preview(
             image::ExtendedColorType::Rgba8,
         )
         .map_err(|_| "无法生成长截图预览")?;
-    let value = format!(
+    Ok(format!(
         "data:image/png;base64,{}",
         base64::engine::general_purpose::STANDARD.encode(bytes)
-    );
-    #[cfg(windows)]
-    update_scroll_hud(app, id, geometry, stitch.state(), cancel)?;
-    #[cfg(not(windows))]
-    let _ = geometry;
-    update(app, id, |s| s.preview = Some(value));
-    Ok(())
+    ))
 }
 fn update(app: &AppHandle, id: &str, change: impl FnOnce(&mut Status)) {
     if let Ok(mut slot) = app.state::<ScrollState>().0.lock() {
@@ -1299,6 +1317,24 @@ pub async fn cancel_for_shutdown(app: &AppHandle) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fast_scroll_preview_round_trips_exact_rgba_pixels() {
+        use base64::Engine;
+        let image = image::RgbaImage::from_fn(220, 320, |x,y| image::Rgba([
+            (x % 256) as u8, (y % 256) as u8, ((x+y)%256) as u8, ((x*3+y)%256) as u8]));
+        let encoded = encode_preview(&image).unwrap();
+        let bytes = base64::engine::general_purpose::STANDARD.decode(encoded.strip_prefix("data:image/png;base64,").unwrap()).unwrap();
+        assert_eq!(image::load_from_memory(&bytes).unwrap().into_rgba8(), image);
+    }
+
+    #[test]
+    fn scroll_wait_yields_immediately_to_cancel_and_pending_controls() {
+        let start = Instant::now();
+        wait_for_scroll(Duration::from_secs(10), &AtomicBool::new(true), &AtomicU8::new(0));
+        wait_for_scroll(Duration::from_secs(10), &AtomicBool::new(false), &AtomicU8::new(2));
+        assert!(start.elapsed() < Duration::from_secs(1));
+    }
 
     #[test]
     fn side_preview_uses_original_negative_monitor_coordinates_and_fits_small_scaled_monitors() {

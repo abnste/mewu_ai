@@ -17,6 +17,23 @@ const MAX_ACTIONS: usize = 128;
 const MAX_DOCUMENT_BYTES: usize = 4 * 1024 * 1024;
 const MAX_HISTORY_BYTES: usize = 4 * 1024 * 1024;
 
+// Measure the exact wire representation without allocating a second multi-MiB
+// copy of every drawing/history during validation and persistence.
+fn serialized_size(value: &(impl serde::Serialize + ?Sized)) -> Result<usize> {
+    struct Counter(usize);
+    impl std::io::Write for Counter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0 = self.0.checked_add(bytes.len())
+                .ok_or_else(|| std::io::Error::other("drawing size overflow"))?;
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+    }
+    let mut counter = Counter(0);
+    serde_json::to_writer(&mut counter, value)?;
+    Ok(counter.0)
+}
+
 pub(crate) enum Mutation {
     Add(Drawing),
     AppendBatch(Vec<Drawing>),
@@ -205,7 +222,7 @@ fn validate_object(object: &Drawing, width: f64, height: f64) -> Result<()> {
 }
 
 fn validate_objects(objects: &[Drawing], width: f64, height: f64) -> Result<()> {
-    if objects.len() > MAX_OBJECTS || serde_json::to_vec(objects)?.len() > MAX_DOCUMENT_BYTES {
+    if objects.len() > MAX_OBJECTS || serialized_size(objects)? > MAX_DOCUMENT_BYTES {
         return Err(invalid("此选区的绘制内容过多"));
     }
     let mut ids = HashSet::new();
@@ -326,7 +343,7 @@ pub(crate) fn validate(region: &Region, background: Option<&Asset>) -> Result<()
     validate_objects(&region.drawings, width, height)?;
     let history = &region.drawing_history;
     if history.undo.len() + history.redo.len() > MAX_ACTIONS
-        || serde_json::to_vec(history)?.len() > MAX_HISTORY_BYTES
+        || serialized_size(history)? > MAX_HISTORY_BYTES
     {
         return Err(invalid("绘制历史超过保留范围"));
     }
@@ -358,12 +375,21 @@ pub(crate) fn validate(region: &Region, background: Option<&Asset>) -> Result<()
 }
 
 fn trim_history(history: &mut DrawingHistory) -> Result<()> {
-    while history.undo.len() > MAX_ACTIONS {
-        history.undo.remove(0);
+    trim_history_to(history, MAX_ACTIONS, MAX_HISTORY_BYTES)
+}
+
+fn trim_history_to(history: &mut DrawingHistory, actions: usize, bytes: usize) -> Result<()> {
+    let excess = history.undo.len().saturating_sub(actions);
+    history.undo.drain(..excess);
+    let mut size = serialized_size(history)?;
+    let mut remove = 0;
+    while size > bytes && history.undo.len() - remove > 1 {
+        // Every removed array item also removes exactly one comma. Keep the
+        // newest step, even if oversized, so the existing validator rejects it.
+        size -= serialized_size(&history.undo[remove])? + 1;
+        remove += 1;
     }
-    while serde_json::to_vec(history)?.len() > MAX_HISTORY_BYTES && history.undo.len() > 1 {
-        history.undo.remove(0);
-    }
+    history.undo.drain(..remove);
     Ok(())
 }
 
@@ -765,6 +791,31 @@ fn update_batch(
 #[cfg(test)]
 mod history_replay_tests {
     use super::*;
+
+    #[test]
+    fn byte_count_and_linear_history_trim_match_literal_json_policy() {
+        let steps: Vec<DrawingStep> = (0..12).map(|index| {
+            let mut drawing = pen();
+            drawing.text = Some(format!("中文\\\"\n\t{}", "𠮷".repeat(index * 5)));
+            DrawingEdit { index, before: None, after: Some(drawing) }.into()
+        }).collect();
+        for count in 0..=steps.len() {
+            let history = DrawingHistory { undo: steps[..count].to_vec(), redo: steps.iter().take(2).cloned().collect() };
+            assert_eq!(serialized_size(&history).unwrap(), serde_json::to_vec(&history).unwrap().len());
+            for actions in [1, 4, 128] {
+                for bytes in [0, 128, 1024, 4096, MAX_HISTORY_BYTES] {
+                    let mut expected = history.clone();
+                    while expected.undo.len() > actions { expected.undo.remove(0); }
+                    while serde_json::to_vec(&expected).unwrap().len() > bytes && expected.undo.len() > 1 {
+                        expected.undo.remove(0);
+                    }
+                    let mut actual = history.clone();
+                    trim_history_to(&mut actual, actions, bytes).unwrap();
+                    assert_eq!(actual, expected);
+                }
+            }
+        }
+    }
 
     #[test]
     fn duplicate_preserves_originals_and_undoes_the_entire_selection_once() {

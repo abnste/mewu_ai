@@ -308,22 +308,12 @@ pub async fn copy_drawing_table(
                     F::Csv => table.delimited(','),
                     _ => table.delimited('\t'),
                 };
-                arboard::Clipboard::new()
-                    .map_err(|_| "无法打开剪贴板")?
-                    .set_text(text)
-                    .map_err(|_| "无法复制表格")?;
+                crate::clipboard_write::text(&text, || read_target(&app, &owner, &target).map(|_| ()))?;
             }
             F::Png => {
                 let image = decode(&layout)?;
                 read_target(&app, &owner, &target)?;
-                arboard::Clipboard::new()
-                    .map_err(|_| "无法打开剪贴板")?
-                    .set_image(arboard::ImageData {
-                        width: image.width() as usize,
-                        height: image.height() as usize,
-                        bytes: std::borrow::Cow::Owned(image.into_raw()),
-                    })
-                    .map_err(|_| "无法复制表格图片")?;
+                crate::clipboard_write::image(&image, || read_target(&app, &owner, &target).map(|_| ()))?;
             }
             F::Table => {
                 let image = decode(&layout)?;
@@ -335,7 +325,7 @@ pub async fn copy_drawing_table(
                     csv: table.delimited(','),
                     image,
                     png_path: path,
-                })?;
+                }, || read_target(&app, &owner, &target).map(|_| ()))?;
             }
         }
         Ok(())

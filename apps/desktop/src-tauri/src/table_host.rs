@@ -117,10 +117,9 @@ async fn export_legacy(
                 };
                 let _clipboard = CLIPBOARD.lock().map_err(|_| "剪贴板正在使用")?;
                 unchanged(&app, &scene_id, &message_id, &text)?;
-                arboard::Clipboard::new()
-                    .map_err(|_| "无法打开剪贴板")?
-                    .set_text(output)
-                    .map_err(|_| "无法复制表格")?;
+                crate::clipboard_write::text(&output, || {
+                    unchanged(&app, &scene_id, &message_id, &text)
+                })?;
             }
             ExportFormat::Png => {
                 let image = table_document::render(table)?;
@@ -151,7 +150,7 @@ async fn export_legacy(
                     csv: table.delimited(','),
                     image,
                     png_path: path,
-                })?;
+                }, || unchanged(&app, &scene_id, &message_id, &text))?;
             }
         }
         Ok(())

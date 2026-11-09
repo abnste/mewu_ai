@@ -6,7 +6,7 @@ import { ArrowUpRight, BrushCleaning, Check, Circle, Copy, Eraser, Grid2X2, Hash
 import type { Drawing, DrawingKind, DrawingPoint, DrawingTextStyle, ImageExportVariant, ManualDrawingKind } from '../contracts';
 import { constrainedEnd, drawingBounds, drawingMoveDelta, drawingOrder, drawingResizeHandles, drawingTextRuns, resizedDrawingPoints, validNextNumber } from "./drawing-geometry";
 import { finishDrawing, outputDrawing } from "../capture-completion";
-import { clipEraserSweep, eraserCursor, eraserHit, eraserStrokeHits, ObjectEraser, PixelEraser, type EraserMode } from "./drawing-eraser";
+import { clipEraserSweep, createStrokeHitTester, eraserCursor, eraserHit, ObjectEraser, PixelEraser, type EraserMode } from "./drawing-eraser";
 import { changeProperty, drawingDraftKey, drawingDrafts, drawingPropertyCommand, propertyDraft, settleDrawingEdit, strokeKinds, type DrawingPropertyDraft } from "./drawing-properties";
 import { DrawingAddQueue, drawingFrame, drawingPointerSamples, liveDrawing } from './drawing-pointer';
 import { DrawingMouseInput } from './drawing-input';
@@ -411,6 +411,8 @@ export default function SharedDrawingEditor(props: Props) {
       eraseSource = undefined;
       setErasing(false);
     };
+    let indexedDrawings: ReturnType<typeof drawings> | undefined;
+    let hitStrokes = createStrokeHitTester([]);
     const eraser = new ObjectEraser({ x: event.clientX, y: event.clientY }, {
       current: () => !disposed && !stopped && Boolean(eraseSource?.()) && (secondary || tool() === 'eraser') && (releasedPointer || (!props.busy && !props.inputLocked)) && !finishing(),
       hit: (point,previous) => {
@@ -420,9 +422,11 @@ export default function SharedDrawingEditor(props: Props) {
         // Toolbar/media controls cover the surface; never erase through them.
         const top=document.elementFromPoint(point.x,point.y);
         if(!top||(top!==svg&&!svg.contains(top)))return [];
-        const ink=drawings().filter(value=>allowed.has(value.id)&&['pen','highlighter','line'].includes(value.kind));
+        const currentDrawings=drawings();
+        if(currentDrawings!==indexedDrawings){indexedDrawings=currentDrawings;hitStrokes=createStrokeHitTester(currentDrawings);}
+        const ink=currentDrawings.filter(value=>allowed.has(value.id)&&['pen','highlighter','line'].includes(value.kind));
         const sweep=clipEraserSweep(inkPoint(previous),inkPoint(point),frame);
-        if(sweep)for(const id of eraserStrokeHits(ink,sweep[0],sweep[1],diameter))hits.add(id);
+        if(sweep)for(const id of hitStrokes(sweep[0],sweep[1],diameter,allowed))hits.add(id);
         const inkIds=new Set(ink.map(value=>value.id));
         const others=new Set([...allowed].filter(id=>!inkIds.has(id)));
         if(others.size){

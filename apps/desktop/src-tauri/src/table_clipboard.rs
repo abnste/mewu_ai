@@ -32,14 +32,14 @@ pub struct PreparedTableClipboard {
     pub png_path: PathBuf,
 }
 
-pub fn write(prepared: PreparedTableClipboard) -> Result<(), String> {
+pub fn write(prepared: PreparedTableClipboard, check: impl Fn() -> Result<(), String>) -> Result<(), String> {
     #[cfg(windows)]
     {
-        windows::write(prepared)
+        windows::write_checked(prepared, check)
     }
     #[cfg(not(windows))]
     {
-        let _ = prepared;
+        let _ = (prepared, check);
         Err("完整表格复制目前仅支持 Windows".into())
     }
 }
@@ -546,19 +546,12 @@ mod windows {
     }
 
     impl Clipboard {
-        fn open(hwnd: HWND) -> Result<Self, String> {
-            for attempt in 0..5 {
-                if unsafe { OpenClipboard(hwnd) } != 0 {
-                    return Ok(Self {
-                        open: true,
-                        _thread: PhantomData,
-                    });
-                }
-                if attempt < 4 {
-                    std::thread::sleep(std::time::Duration::from_millis(5));
-                }
-            }
-            Err(native_error("剪贴板正被占用，请稍后再试"))
+        fn open(hwnd: HWND, check: impl Fn() -> Result<(), String>) -> Result<Self, String> {
+            crate::clipboard_write_windows::publish(check, || {
+                if unsafe { OpenClipboard(hwnd) } != 0 { Ok(()) }
+                else { Err(arboard::Error::ClipboardOccupied) }
+            }, "无法打开剪贴板")?;
+            Ok(Self { open: true, _thread: PhantomData })
         }
 
         fn close(&mut self) -> Result<(), String> {
@@ -610,6 +603,7 @@ mod windows {
         path: &std::path::Path,
         accept: impl FnOnce() -> Result<(), String>,
     ) -> FileDropPublication {
+        let current = crate::clipboard_write_windows::authority(|| Ok(()));
         let prepared = (|| {
             let writer = WRITER.try_lock().map_err(|_| "剪贴板操作尚未结束")?;
             if !path.is_absolute() {
@@ -622,7 +616,7 @@ mod windows {
                 GlobalMemory::new(&1u32.to_le_bytes())?,
             );
             let owner = OwnerWindow::new()?;
-            let clipboard = Clipboard::open(owner.hwnd)?;
+            let clipboard = Clipboard::open(owner.hwnd, &current)?;
             Ok::<_, String>((writer, owner, clipboard, primary, preference))
         })();
         match prepared {
@@ -631,12 +625,19 @@ mod windows {
                 // All allocations and file preparation precede Open/Empty. The
                 // callback only checks host authority; it must release its locks
                 // and never access UI APIs or perform I/O before returning.
-                publish_file_drop_parts(&mut clipboard, primary, preference, accept)
+                publish_file_drop_parts(&mut clipboard, primary, preference, || { current()?; accept() })
             }
         }
     }
 
-    pub(super) fn write(prepared: PreparedTableClipboard) -> Result<(), String> {
+    #[cfg(test)]
+    fn write(prepared: PreparedTableClipboard) -> Result<(), String> {
+        write_checked(prepared, || Ok(()))
+    }
+
+    pub(super) fn write_checked(prepared: PreparedTableClipboard, check: impl Fn() -> Result<(), String>) -> Result<(), String> {
+        let current = crate::clipboard_write_windows::authority(check);
+        current()?;
         let _writer = WRITER
             .try_lock()
             .map_err(|_| "已有表格正在复制，请稍后再试")?;
@@ -678,7 +679,8 @@ mod windows {
             .map(|(format, bytes)| Ok((format, GlobalMemory::new(&bytes)?)))
             .collect::<Result<Vec<_>, String>>()?;
         let owner = OwnerWindow::new()?;
-        let mut clipboard = Clipboard::open(owner.hwnd)?;
+        let mut clipboard = Clipboard::open(owner.hwnd, &current)?;
+        current()?;
         let result = publish(&mut clipboard, formats);
         let close = clipboard.close();
         match (result, close) {

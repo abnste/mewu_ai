@@ -1070,10 +1070,9 @@ pub async fn act_on_code(
             // No application mutex lives across an OS clipboard/browser call.
             // Cancellation after publication cannot roll back that side effect.
             match action {
-                CodeAction::Copy => arboard::Clipboard::new()
-                    .map_err(|_| "剪贴板不可用".to_string())?
-                    .set_text(text)
-                    .map_err(|_| "无法复制识别内容".to_string()),
+                CodeAction::Copy => crate::clipboard_write::text(&text, || {
+                    action_allowed(&worker_app, &worker_id, &worker_cancel)
+                }),
                 CodeAction::Open => crate::code_open::open_registered(format, &text, move || {
                     action_allowed(&worker_app, &worker_id, &worker_cancel)
                 }),
