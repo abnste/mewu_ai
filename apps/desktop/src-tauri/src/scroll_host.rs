@@ -23,6 +23,8 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 pub const LABEL: &str = "scroll-controls";
 #[path = "scroll_presentation.rs"]
 mod presentation;
+#[path = "scroll_preview.rs"]
+mod preview;
 #[derive(Clone, Serialize)]
 pub struct Rect {
     x: f64,
@@ -559,6 +561,24 @@ pub async fn start_scroll_capture(
             authorized(&work_app, &target, &plugin_id, revision, &contribution_id)?;
             #[cfg(windows)]
             verify_capture(&work_app, &work_id)?;
+            let preview_app = work_app.clone();
+            let preview_id = work_id.clone();
+            let preview_cancel = cancel.clone();
+            let previews = preview::LatestPreview::start(move |image: image::RgbaImage| {
+                if preview_cancel.load(Ordering::Acquire) { return Ok(()); }
+                let value = encode_preview(&image)?;
+                // Encode outside capture and state locks. Revalidate the exact
+                // operation after encoding; canceled/finishing work cannot repaint.
+                if let Ok(mut slot) = preview_app.state::<ScrollState>().0.lock() {
+                    if let Some(active) = slot.as_mut().filter(|active|
+                        active.status.id == preview_id && active.status.phase == "capturing"
+                        && !active.cancel.load(Ordering::Acquire)) {
+                        active.status.preview = Some(value);
+                        emit(&preview_app, &Some(active.status.clone()));
+                    }
+                }
+                Ok(())
+            })?;
             if let Some(window) = snapshot_window {
                 let selection = crate::application_snapshot::Viewport {
                     x: geometry.x,
@@ -578,12 +598,14 @@ pub async fn start_scroll_capture(
                         #[cfg(windows)]
                         verify_capture(&work_app, &work_id)?;
                         progress(&work_app, &work_id, state);
-                        publish_preview(&work_app, &work_id, &geometry, stitch, &cancel)
+                        publish_preview(&work_app, &work_id, &geometry, stitch, &cancel, &previews)
                     });
                 let closed = session.close();
                 let image = result?;
                 closed?;
                 drop(session);
+                update(&work_app, &work_id, |s| s.phase = "finishing");
+                previews.finish()?;
                 return if let Some(image) = image {
                     update(&work_app, &work_id, |s| s.phase = "finishing");
                     persist(
@@ -613,7 +635,7 @@ pub async fn start_scroll_capture(
             )
             .map_err(|e| e.to_string())?;
             update(&work_app, &work_id, |s| s.phase = "capturing");
-            publish_preview(&work_app, &work_id, &geometry, &stitch, &cancel)?;
+            publish_preview(&work_app, &work_id, &geometry, &stitch, &cancel, &previews)?;
             let mut preview_at = Instant::now();
             let mut preview_dirty = false;
             let started = Instant::now();
@@ -628,7 +650,7 @@ pub async fn start_scroll_capture(
                     return Ok(None);
                 }
                 if preview_dirty && preview_at.elapsed() >= Duration::from_millis(200) {
-                    publish_preview(&work_app, &work_id, &geometry, &stitch, &cancel)?;
+                    publish_preview(&work_app, &work_id, &geometry, &stitch, &cancel, &previews)?;
                     preview_at = Instant::now();
                     preview_dirty = false;
                 }
@@ -682,6 +704,7 @@ pub async fn start_scroll_capture(
                 return Ok(None);
             }
             update(&work_app, &work_id, |s| s.phase = "finishing");
+            previews.finish()?;
             let image = stitch.finish().map_err(|e| e.to_string())?;
             persist(
                 &work_app,
@@ -709,10 +732,12 @@ pub async fn start_scroll_capture(
     Ok(())
 }
 fn progress(app: &AppHandle, id: &str, state: StitchState) {
-    update(app, id, |s| {
+    update_when(app, id, |s| {
+        if (s.width, s.height, s.status) == (state.width, state.height, state.status) { return false; }
         s.width = state.width;
         s.height = state.height;
         s.status = state.status;
+        true
     });
 }
 #[cfg(windows)]
@@ -768,18 +793,17 @@ fn publish_preview(
     geometry: &Geometry,
     stitch: &ScrollStitcher,
     cancel: &AtomicBool,
+    previews: &preview::LatestPreview<image::RgbaImage>,
 ) -> Result<(), String> {
     let image = stitch
         .preview(220, 1536, cancel)
         .map_err(|e| e.to_string())?;
-    let value = encode_preview(&image)?;
     if cancel.load(Ordering::Acquire) { return Err("长截图已取消".into()); }
     #[cfg(windows)]
     update_scroll_hud(app, id, geometry, stitch.state(), cancel)?;
     #[cfg(not(windows))]
     let _ = geometry;
-    update(app, id, |s| s.preview = Some(value));
-    Ok(())
+    previews.submit(image)
 }
 
 fn encode_preview(image: &image::RgbaImage) -> Result<String, String> {
@@ -801,10 +825,13 @@ fn encode_preview(image: &image::RgbaImage) -> Result<String, String> {
     ))
 }
 fn update(app: &AppHandle, id: &str, change: impl FnOnce(&mut Status)) {
+    update_when(app, id, |status| { change(status); true });
+}
+fn update_when(app: &AppHandle, id: &str, change: impl FnOnce(&mut Status) -> bool) {
     if let Ok(mut slot) = app.state::<ScrollState>().0.lock() {
         if let Some(active) = slot.as_mut().filter(|a| a.status.id == id) {
             let was_finishing = active.status.phase == "finishing";
-            change(&mut active.status);
+            if !change(&mut active.status) { return; }
             if was_finishing {
                 active.status.phase = "finishing";
             }

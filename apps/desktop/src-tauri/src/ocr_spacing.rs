@@ -32,8 +32,17 @@ fn adjacent(left: &OcrWord, right: &OcrWord) -> bool {
     let gap = right.x - (left.x + left.width);
     let advance = (left.width / left.text.chars().count().max(1) as f64)
         .min(right.width / right.text.chars().count().max(1) as f64);
+    // Fullwidth punctuation may have only a tiny ink box at the baseline.
+    // Its ink width is not its typographic advance. Use the adjacent CJK
+    // character's em for that pair, retaining the same line/column checks.
+    let left_cjk = left.text.chars().next_back().is_some_and(cjk);
+    let right_cjk = right.text.chars().next().is_some_and(cjk);
+    let gap_limit = if left_cjk != right_cjk {
+        let text = if left_cjk { left } else { right };
+        (text.width / text.text.chars().count().max(1) as f64).min(text.height)
+    } else { advance.min(height) * 0.5 };
     overlap >= height * 0.5 && right.x >= left.x && gap >= -height * 0.25
-        && gap <= advance.min(height) * 0.5
+        && gap <= gap_limit
 }
 
 fn normalize_line(line: &mut OcrLine) {
@@ -121,5 +130,20 @@ mod tests {
     fn inconsistent_words_preserve_the_complete_original_line() {
         let mut value = line("你 好 世界", &["你", "好", "错误"]);
         normalize_line(&mut value); assert_eq!(value.text, "你 好 世界");
+    }
+
+    #[test]
+    fn narrow_baseline_punctuation_uses_the_neighboring_cjk_advance() {
+        let mut value = OcrLine { text: "界 ， 文".into(), words: vec![
+            OcrWord { text: "界".into(), x: 118., y: 35., width: 29., height: 27. },
+            OcrWord { text: "，".into(), x: 151., y: 54., width: 5., height: 8. },
+            OcrWord { text: "文".into(), x: 177., y: 31., width: 29., height: 29. },
+        ] };
+        let mut columns = value.clone();
+        columns.words[2].x += 100.;
+        normalize_line(&mut value);
+        assert_eq!(value.text, "界，文");
+        normalize_line(&mut columns);
+        assert_eq!(columns.text, "界， 文");
     }
 }
