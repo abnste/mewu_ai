@@ -32,6 +32,26 @@ export class SystemPreferencesController {
     this.accept(state);
     if (this.draft === expectedDraft) { this.draft = undefined; this.error = ''; this.emit(); }
   }
+  saveStartup(enabled: boolean): Promise<void> {
+    if (this.flight) return this.flight;
+    if (this.disposed || !this.state) return Promise.resolve();
+    if (this.view().conflict) { this.failed(conflictMessage); return Promise.resolve(); }
+    // Commit this switch independently of unfinished proxy/other field edits.
+    // Display the registered state until the native transaction confirms it.
+    const request = { expectedRevision: this.state.revision, value: { ...values(this.state), launchAtStartup: enabled } };
+    this.error = '';
+    this.flight = Promise.resolve().then(() => this.save(request.expectedRevision, request.value)).then(receipt => {
+      if (this.disposed) return;
+      if (!validSystemPreferences(receipt) || !sameSystemValues(receipt, request.value) || receipt.startupRegistered !== enabled || receipt.revision < request.expectedRevision || receipt.revision > request.expectedRevision + 1) throw new Error('系统设置保存回执无效');
+      this.accept(receipt);
+      if (!this.state || this.state.revision !== receipt.revision || !sameSystemValues(this.state, receipt) || this.state.startupRegistered !== enabled) { this.error = conflictMessage; return; }
+      if (this.draft?.expectedRevision === request.expectedRevision) {
+        const value = { ...this.draft.value, launchAtStartup: enabled };
+        this.draft = sameSystemValues(value, receipt) ? undefined : { value, expectedRevision: receipt.revision };
+      }
+    }).catch(error => { this.failed(error); }).finally(() => { this.flight = undefined; this.emit(); });
+    this.emit(); return this.flight;
+  }
   saveDraft(): Promise<void> {
     if (this.flight) return this.flight;
     if (this.disposed || !this.draft || !this.state) return Promise.resolve();

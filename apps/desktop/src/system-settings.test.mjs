@@ -147,12 +147,86 @@ test('actual general settings initialize real status, edit startup/sharing/proxy
   const context = vm.createContext({ props, SystemPreferencesController, createSignal: value => [() => value, next => { value = typeof next === 'function' ? next(value) : next; }], createEffect() {}, on() {}, onCleanup() {}, settingsApi: undefined });
   vm.runInContext(ts(`${body.filter(node => node.type !== 'ReturnStatement').map(slice).join('\n')}\nglobalThis.qa={initialize,view,controller,changes:{startup:${change('登录 Windows 后自动启动')},sharing:${change('允许屏幕共享看到框选和标注')},proxy:${change('网络代理')},labels:${change('显示按钮功能文字')},titles:${change('自动生成会话标题')}}};`), context);
   await context.qa.initialize();
-  context.qa.changes.startup(true); context.qa.changes.sharing(false); context.qa.changes.proxy({ currentTarget: { value: 'direct' } }); context.qa.changes.labels(false);
+  context.qa.changes.startup(true); await tick();
+  assert.equal(calls.length, 1); assert.equal(context.qa.view().state.startupRegistered, true); assert.equal(context.qa.view().draft, undefined);
+  context.qa.changes.sharing(false); context.qa.changes.proxy({ currentTarget: { value: 'direct' } }); context.qa.changes.labels(false);
   context.qa.changes.titles(false);
   await context.qa.controller.saveDraft();
-  assert.equal(calls.length, 1); assert.equal(calls[0].value.launchAtStartup, true); assert.equal(calls[0].value.allowScreenShare, false); assert.equal(calls[0].value.networkProxyMode, 'direct'); assert.equal(props.preferences.showButtonLabels, false);
+  assert.equal(calls.length, 2); assert.equal(calls[1].value.launchAtStartup, true); assert.equal(calls[1].value.allowScreenShare, false); assert.equal(calls[1].value.networkProxyMode, 'direct'); assert.equal(props.preferences.showButtonLabels, false);
   assert.equal(context.qa.view().draft, undefined); assert.equal(context.qa.view().state.startupRegistered, true);
-  assert.equal(calls[0].value.autoGenerateTitle, false); assert.equal(context.qa.view().values.autoGenerateTitle, false);
+  assert.equal(calls[1].value.autoGenerateTitle, false); assert.equal(context.qa.view().values.autoGenerateTitle, false);
+});
+
+test('startup switch commits independently, preserves incomplete proxy drafts and survives reopening', async () => {
+  const calls = [], controller = new SystemPreferencesController(async (revision, value) => {
+    calls.push({ revision, value }); return state({ revision: revision + 1, ...value, startupRegistered: value.launchAtStartup });
+  }, () => {});
+  controller.loaded(state({ revision: 2 }));
+  controller.edit({ networkProxyMode: 'custom', networkProxyUrl: 'http://' });
+  await controller.saveStartup(true);
+  assert.equal(calls.length, 1); assert.equal(calls[0].value.networkProxyMode, 'system');
+  assert.equal(controller.view().state.startupRegistered, true);
+  assert.equal(controller.view().draft.value.networkProxyUrl, 'http://');
+  assert.equal(controller.view().draft.value.launchAtStartup, true);
+  assert.equal(controller.view().draft.expectedRevision, 3);
+  controller.discard();
+  const reopened = new SystemPreferencesController(async () => { throw Error('Unexpected write'); }, () => {});
+  reopened.loaded(controller.view().state); assert.equal(reopened.view().state.startupRegistered, true);
+  await controller.saveStartup(false); assert.equal(controller.view().state.startupRegistered, false);
+  assert.equal(controller.view().draft, undefined);
+});
+test('startup switch waits for native registration and coalesces pending clicks', async () => {
+  const task = deferred(); let calls = 0;
+  const controller = new SystemPreferencesController(async () => { calls++; return task.promise; }, () => {});
+  controller.loaded(state());
+  const first = controller.saveStartup(true), second = controller.saveStartup(true);
+  assert.equal(first, second); assert.equal(controller.view().pending, true);
+  assert.equal(controller.view().state.startupRegistered, false);
+  controller.edit({ networkProxyMode: 'direct' });
+  task.resolve(state({ revision: 1, launchAtStartup: true, startupRegistered: true })); await first;
+  assert.equal(calls, 1); assert.equal(controller.view().pending, false);
+  assert.equal(controller.view().draft.value.networkProxyMode, 'direct');
+  assert.equal(controller.view().draft.value.launchAtStartup, true);
+  assert.equal(controller.view().draft.expectedRevision, 1);
+});
+test('startup failure remains visibly off, preserves other edits and can be retried', async () => {
+  let fail = true;
+  const controller = new SystemPreferencesController(async (revision, value) => {
+    if (fail) throw Error('无法保存开机启动配置');
+    return state({ revision: revision + 1, ...value, startupRegistered: value.launchAtStartup });
+  }, () => {});
+  controller.loaded(state()); controller.edit({ autoGenerateTitle: false });
+  await controller.saveStartup(true);
+  assert.equal(controller.view().state.startupRegistered, false);
+  assert.equal(controller.view().draft.value.autoGenerateTitle, false);
+  assert.equal(controller.view().draft.expectedRevision, 0);
+  assert.match(controller.view().error, /无法保存/);
+  fail = false; await controller.saveStartup(true);
+  assert.equal(controller.view().state.startupRegistered, true); assert.equal(controller.view().error, '');
+});
+test('startup never accepts a false OS receipt or rebases drafts across a foreign update', async () => {
+  const rejected = new SystemPreferencesController(async () => state({ revision: 1, launchAtStartup: true }), () => {});
+  rejected.loaded(state()); await rejected.saveStartup(true);
+  assert.equal(rejected.view().state.startupRegistered, false); assert.match(rejected.view().error, /回执无效/);
+  const task = deferred(); let calls = 0;
+  const controller = new SystemPreferencesController(async () => { calls++; return task.promise; }, () => {});
+  controller.loaded(state()); controller.edit({ networkProxyMode: 'direct' });
+  const saving = controller.saveStartup(true);
+  controller.accept(state({ revision: 2, autoGenerateTitle: false }));
+  task.resolve(state({ revision: 1, launchAtStartup: true, startupRegistered: true })); await saving;
+  assert.equal(controller.view().draft.expectedRevision, 0); assert.equal(controller.view().state.revision, 2);
+  assert.equal(controller.view().conflict, true); await controller.saveStartup(true); assert.equal(calls, 1);
+});
+test('startup repair works with unchanged preference revision and closing the page does not cancel native save', async () => {
+  let persisted;
+  const controller = new SystemPreferencesController(async (revision, value) => {
+    persisted = state({ revision, ...value, startupRegistered: true }); return persisted;
+  }, () => {});
+  controller.loaded(state({ revision: 4, launchAtStartup: true, startupRegistered: false }));
+  const saving = controller.saveStartup(true); controller.dispose(); await saving;
+  assert.equal(persisted.startupRegistered, true); assert.equal(persisted.revision, 4);
+  const reopened = new SystemPreferencesController(async () => { throw Error('Unexpected write'); }, () => {});
+  reopened.loaded(persisted); assert.equal(reopened.view().state.startupRegistered, true);
 });
 
 const reactive = await import(new URL('../../../node_modules/solid-js/dist/solid.js', import.meta.url));

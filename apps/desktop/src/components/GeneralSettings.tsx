@@ -36,7 +36,7 @@ export default function GeneralSettings(props: { active: boolean; agentEnabled?:
   }
   createEffect(on(() => props.active, active => { if (active && !started) { started = true; void initialize(); } }));
   onCleanup(() => { disposed = true; stop?.(); controller.dispose(); });
-  const startup = () => view().draft?.value.launchAtStartup ?? view().state?.startupRegistered ?? false;
+  const startup = () => view().state?.startupRegistered ?? false;
   return <div class="general-settings">
     <header class="settings-page-heading"><h2>{t('通用')}</h2></header>
     <AppearanceSetting/>
@@ -47,13 +47,14 @@ export default function GeneralSettings(props: { active: boolean; agentEnabled?:
     <Row title={t('减少动态效果')}><Toggle label={t('减少动态效果')} checked={props.preferences.reduceMotion} onChange={value => props.onPreferences({ ...props.preferences, reduceMotion: value })} /></Row>
     <Show when={view().values} fallback={<Show when={loading()}><LoaderCircle size={16} class="spin" aria-label={t('加载系统设置')} /></Show>}>
       <Show when={props.agentEnabled !== false}><Row title={t('自动生成会话标题')}><Toggle label={t('自动生成会话标题')} checked={view().values!.autoGenerateTitle} disabled={view().pending} onChange={value => controller.edit({ autoGenerateTitle: value })} /></Row></Show>
-      <Show when={props.platform === 'windows'}><Row title={t('登录 Windows 后自动启动')}><Toggle label={t('登录 Windows 后自动启动')} checked={startup()} disabled={view().pending} onChange={value => controller.edit({ launchAtStartup: value })} /></Row></Show>
+      <Show when={props.platform === 'windows'}><Row title={t('登录 Windows 后自动启动')}><Toggle label={t('登录 Windows 后自动启动')} checked={startup()} disabled={view().pending || view().conflict} onChange={value => void controller.saveStartup(value)} /></Row></Show>
       <Show when={view().state?.startupWarning}><p class="settings-error" role="alert">{t(view().state!.startupWarning!)}</p></Show>
+      <Show when={view().error}><p class="settings-error" role="alert">{t(view().error)}</p></Show>
       <Row title={t('允许屏幕共享看到框选和标注')}><Toggle label={t('允许屏幕共享看到框选和标注')} checked={view().values!.allowScreenShare} disabled={view().pending} onChange={value => controller.edit({ allowScreenShare: value })} /></Row>
       <Row title={t('网络代理')}><select aria-label={t('网络代理')} value={view().values!.networkProxyMode} onChange={event => controller.edit({ networkProxyMode: event.currentTarget.value as 'system' | 'direct' | 'custom' })}><option value="system">{t('跟随系统')}</option><option value="direct">{t('直接连接')}</option><option value="custom">{t('自定义代理')}</option></select></Row>
       <Show when={view().values!.networkProxyMode === 'custom'}><label class="field-label">{t('代理地址')}<input aria-label={t('代理地址')} placeholder="http://127.0.0.1:7890" value={view().values!.networkProxyUrl} maxlength={2048} onInput={event => controller.edit({ networkProxyUrl: event.currentTarget.value })} /></label></Show>
       <Show when={view().draft}><div class="settings-actions"><button class="secondary-button" disabled={view().pending} onClick={() => controller.discard()}>{t('取消')}</button><Show when={view().conflict}><button class="secondary-button" disabled={loading() || view().pending} onClick={() => void loadLatest()}>{t('载入最新设置')}</button></Show><button class="primary-button" disabled={view().pending || view().conflict} onClick={() => void controller.saveDraft()}><Show when={view().pending}><LoaderCircle size={14} class="spin" /></Show>{t('保存')}</button></div></Show>
     </Show>
-    <Show when={view().error}><p class="settings-error" role="alert">{t(view().error)}</p><Show when={!view().state}><button class="secondary-button" disabled={loading()} onClick={() => void initialize()}>{t('重试')}</button></Show></Show>
+    <Show when={view().error && !view().state}><p class="settings-error" role="alert">{t(view().error)}</p><button class="secondary-button" disabled={loading()} onClick={() => void initialize()}>{t('重试')}</button></Show>
   </div>;
 }
