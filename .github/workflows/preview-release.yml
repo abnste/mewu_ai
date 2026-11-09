@@ -15,7 +15,7 @@ jobs:
           - os: windows-latest
             platform: windows-x86_64
             bundles: nsis
-          - os: macos-14
+          - os: macos-15
             platform: darwin-aarch64
             bundles: app,dmg
           - os: ubuntu-22.04
