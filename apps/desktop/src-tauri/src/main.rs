@@ -41,6 +41,8 @@ mod capture_wayland_host;
 mod capture_wayland_portal;
 mod clipboard_video_storage;
 mod clipboard_text;
+#[cfg(windows)]
+mod clipboard_write_windows;
 mod code_decode;
 mod code_host;
 mod code_open;

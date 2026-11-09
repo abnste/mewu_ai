@@ -192,7 +192,11 @@ export default function SharedDrawingEditor(props: Props) {
   };
   const resizeHandles = () => { const drawing = resizeDrawing(), size = surfaceSize(); return drawing && size.width > 0 && size.height > 0 ? drawingResizeHandles(drawing) : []; };
   const handleSize = () => ({ x: 10 * props.port.frame().width / surfaceSize().width, y: 10 * props.port.frame().height / surfaceSize().height });
-  const strokeSource = () => JSON.stringify([cacheKey(), props.port.sourceIdentity(), props.port.sourceSize(), props.port.frame(), props.box]);
+  // A viewport move/resize changes pointer coordinates, not the document being
+  // saved. Replacing this lane mid-save strands its remembered strokes and can
+  // subsequently block copy, pin and freeze as an unsaved drawing. Gestures still
+  // fence props.box separately in gestureIdentity and their pointer listeners.
+  const strokeSource = () => JSON.stringify([cacheKey(), props.port.sourceIdentity(), props.port.sourceSize(), props.port.frame()]);
   const continuousStrokes = () => !props.documentOnly && !props.port.stored;
   const gestureIdentity = () => { strokeVersion(); return JSON.stringify([cacheKey(), props.port.sourceIdentity(), props.port.sourceSize(), historyLane?.revisionIdentity() ?? strokeQueue?.revisionIdentity() ?? props.port.revision(), props.box]); };
   const target = (expectedRevision = props.port.revision()) => ({ expectedRevision });

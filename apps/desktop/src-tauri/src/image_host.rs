@@ -720,13 +720,22 @@ async fn export_document(app: AppHandle, window: WebviewWindow, scene_id: String
             }
             work.check_cancel()?;
             if clipboard {
+                #[cfg(windows)]
+                {
+                    accept_region(&app, &work, &origin, handle)?;
+                    crate::clipboard_write_windows::image(&image, || {
+                        app.state::<Host>().exit.ensure_running()?;
+                        ensure_visible(handle)
+                    })?;
+                    return Ok(());
+                }
                 #[cfg(target_os = "linux")]
                 {
                     accept_region(&app, &work, &origin, handle)?;
                     crate::window_actions_linux::copy_image(picker_window.clone(), handle, image, cancel.clone())?;
                     return Ok(());
                 }
-                #[cfg(not(target_os = "linux"))]
+                #[cfg(not(any(target_os = "linux", windows)))]
                 {
                 let mut board = arboard::Clipboard::new().map_err(|_| "无法打开剪贴板")?;
                 accept_region(&app, &work, &origin, handle)?;

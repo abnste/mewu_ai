@@ -78,7 +78,7 @@ export default function OcrTextLayer(props: Props) {
     copying = true;
     const authority = key();
     try { await writeClipboardText(text); if (!disposed && props.active && key() === authority) props.onCopied?.(); }
-    catch { props.onError('无法复制文字'); }
+    catch (error) { props.onError(typeof error === 'string' ? error : error instanceof Error ? error.message : '无法复制文字'); }
     finally { copying = false; }
   }
   function clipboard(event: ClipboardEvent) {

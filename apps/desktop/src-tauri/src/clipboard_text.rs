@@ -36,37 +36,60 @@ pub async fn write_clipboard_text(
     validate(window.label(), &text)?;
     app.state::<crate::Host>().exit.ensure_running()?;
     let _request = REQUESTS.try_acquire().map_err(|_| "剪贴板正在使用")?;
-    let (send, receive) = oneshot::channel();
-    let target = window.clone();
-    window
-        .run_on_main_thread(move || {
-            deliver(send, || {
+    #[cfg(windows)]
+    {
+        let handle = crate::image_host::window_handle(&window)?;
+        // Clipboard managers may hold OpenClipboard briefly. Do not stall the
+        // window's event loop while waiting for them to release it.
+        let (send, receive) = oneshot::channel();
+        tauri::async_runtime::spawn_blocking(move || {
+            let _request = _request;
+            let result = crate::clipboard_write_windows::text(&text, || {
+                if send.is_closed() {
+                    return Err("复制操作已取消".into());
+                }
                 app.state::<crate::Host>().exit.ensure_running()?;
-                if !target.is_visible().unwrap_or(false) {
-                    return Err("截图窗口已关闭".into());
-                }
-                // Other exports can hold this lock while awaiting a GTK callback;
-                // never block the UI thread waiting for that worker.
-                let _clipboard = crate::table_host::CLIPBOARD
-                    .try_lock()
-                    .map_err(|_| "剪贴板正在使用")?;
-                #[cfg(target_os = "linux")]
-                {
-                    use gtk::prelude::WidgetExt;
-                    let widget = target.gtk_window().map_err(|_| "截图窗口已关闭")?;
-                    crate::table_clipboard::linux::Data::text(text)?.publish_on(&widget.display())
-                }
-                #[cfg(not(target_os = "linux"))]
-                {
-                    arboard::Clipboard::new()
-                        .map_err(|_| "无法打开剪贴板")?
-                        .set_text(text)
-                        .map_err(|_| "无法复制文字".into())
-                }
+                crate::image_host::ensure_visible(handle)
             });
-        })
-        .map_err(|_| "无法复制文字")?;
-    receive.await.map_err(|_| "复制操作中断")?
+            let _ = send.send(result);
+        });
+        return receive.await.map_err(|_| "复制操作中断")?;
+    }
+    #[cfg(not(windows))]
+    {
+        let (send, receive) = oneshot::channel();
+        let target = window.clone();
+        window
+            .run_on_main_thread(move || {
+                deliver(send, || {
+                    app.state::<crate::Host>().exit.ensure_running()?;
+                    if !target.is_visible().unwrap_or(false) {
+                        return Err("截图窗口已关闭".into());
+                    }
+                    // Other exports can hold this lock while awaiting a GTK callback;
+                    // never block the UI thread waiting for that worker.
+                    let _clipboard = crate::table_host::CLIPBOARD
+                        .try_lock()
+                        .map_err(|_| "剪贴板正在使用")?;
+                    #[cfg(target_os = "linux")]
+                    {
+                        use gtk::prelude::WidgetExt;
+                        let widget = target.gtk_window().map_err(|_| "截图窗口已关闭")?;
+                        crate::table_clipboard::linux::Data::text(text)?
+                            .publish_on(&widget.display())
+                    }
+                    #[cfg(not(target_os = "linux"))]
+                    {
+                        arboard::Clipboard::new()
+                            .map_err(|_| "无法打开剪贴板")?
+                            .set_text(text)
+                            .map_err(|_| "无法复制文字".into())
+                    }
+                });
+            })
+            .map_err(|_| "无法复制文字")?;
+        receive.await.map_err(|_| "复制操作中断")?
+    }
 }
 
 #[cfg(test)]

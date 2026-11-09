@@ -1600,14 +1600,11 @@ async fn export_supervised(
                         cancel.check()?;
                         crate::image_host::ensure_visible(handle)
                     })?;
-                    let mut board = arboard::Clipboard::new().map_err(|_| "无法打开剪贴板")?;
-                    board
-                        .set_image(arboard::ImageData {
-                            width: pixels.width() as usize,
-                            height: pixels.height() as usize,
-                            bytes: std::borrow::Cow::Owned(pixels.into_raw()),
-                        })
-                        .map_err(|_| "无法复制贴图".into())
+                    crate::clipboard_write_windows::image(&pixels, || {
+                        app.state::<Host>().exit.ensure_running()?;
+                        cancel.check()?;
+                        crate::image_host::ensure_visible(handle)
+                    })
                 })
             }
         })();
