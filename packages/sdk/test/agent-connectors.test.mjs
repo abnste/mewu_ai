@@ -304,3 +304,28 @@ test('upstream prompt failures emit safe actionable diagnostics without replayin
   assert.match(f.events[0].value,expected);assert.doesNotMatch(JSON.stringify(f.events),/private|credential/);
  }
 });
+
+test('classified ACP failures persist as failures on capable hosts and never expose provider details',async()=>{
+ for(const [category,code] of [['quota','QUOTA_EXCEEDED'],['auth','AUTH_REQUIRED'],['unknown','REQUEST_FAILED']]){
+  const f=fixture((m,q)=>m.method==='session/prompt'
+   ?{stopReason:'refusal',_meta:{'codebuddy.ai/errorMessage':JSON.stringify({code:-32003,data:{category,details:'private credential response'}})}}
+   :acp(m,q));
+  f.ctx.runtime.describe=async()=>({capabilities:['ui.settings','configuration.shared','process.jsonlines','process.frame-bindings','agent.failure-result']});
+  f.data.set('config/connections',{minimax:config});await activate(f.ctx);
+  const result=await f.services.get('minimax').handler({task:'synthetic'},{context:{agentId:'a',sceneId:'one'}});
+  assert.deepEqual(result,{isError:true,error:{code}});
+  assert.equal(f.writes.filter(v=>v.message.method==='session/prompt').length,1);
+  assert.equal(f.closed(),1);assert.deepEqual(f.events,[]);
+  assert.doesNotMatch(JSON.stringify(result),/private|credential/);
+ }
+});
+
+test('legacy hosts still receive a failed invocation and a safe quota diagnostic',async()=>{
+ const f=fixture((m,q)=>m.method==='session/prompt'
+  ?{stopReason:'refusal',_meta:{'codebuddy.ai/errorMessage':{data:{category:'quota',details:'private credential'}}}}
+  :acp(m,q));
+ f.data.set('config/connections',{minimax:config});await activate(f.ctx);
+ await assert.rejects(f.services.get('minimax').handler({task:'synthetic'},{context:{agentId:'a',sceneId:'one'}}),/额度/);
+ assert.match(f.events[0].value,/额度/);assert.equal(f.closed(),1);
+ assert.equal(f.writes.filter(v=>v.message.method==='session/prompt').length,1);
+});

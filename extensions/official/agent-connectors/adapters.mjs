@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
-import {openPeer} from './rpc.mjs';
+import {openPeer,providerFailure} from './rpc.mjs';
 
 const textInput=(input,resumed)=>{
   const messages=Array.isArray(input.messages)?input.messages:[];
@@ -140,9 +140,10 @@ export async function runAcp(ctx,config,input,previous,checkpoint=async()=>{}){
     if(result.stopReason!=='end_turn'){
       let detail=result._meta?.['codebuddy.ai/errorMessage'];
       if(typeof detail==='string'){try{detail=JSON.parse(detail);}catch{detail=null;}}
-      if(detail?.data?.category==='auth')throw Error(config.transport==='workbuddy-http'
+      if(detail?.data?.category==='auth')throw providerFailure('AUTH_REQUIRED',config.transport==='workbuddy-http'
         ?'WorkBuddy 桌面登录尚未传递给运行时。请打开桌面客户端并完成一次对话，再重新连接；无需安装 CLI 或复制密钥。'
         :'请先在该 Agent 的官方客户端或 CLI 中登录');
+      if(detail?.data?.category==='quota')throw providerFailure('QUOTA_EXCEEDED','外部 Agent 的请求额度不足或已限流，请检查官方客户端账户及所选模型');
       throw Error(`Agent 未完成回答：${result.stopReason??'未知状态'}`);
     }
     if(!content.trim())throw Error('Agent 未返回回答');

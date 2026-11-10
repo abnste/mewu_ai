@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 import {workbuddyProcess} from './workbuddy.mjs';
+export function providerFailure(code,message){
+  const error=Error(message);error.providerCode=code;error.publicMessage=message;return error;
+}
 /** Protocol implementation belongs to this independently packaged module. */
 export async function openPeer(ctx, config, jsonrpc = true){
   config=workbuddyProcess(config);
@@ -40,12 +43,14 @@ export async function openPeer(ctx, config, jsonrpc = true){
         if(message.error){
           // Classify locally; upstream bodies can include credentials or paths.
           const detail=String(message.error.message??'');
-          const publicMessage=(jsonrpc&&message.error.code===-32000)||/authenticat|unauthori[sz]ed|not logged|login required/i.test(detail)
+          const auth=(jsonrpc&&message.error.code===-32000)||/authenticat|unauthori[sz]ed|not logged|login required/i.test(detail);
+          const quota=/rate.?limit|quota|insufficient|429/i.test(detail);
+          const publicMessage=auth
             ?'请先在该 Agent 的官方客户端或 CLI 中登录'
-            :/rate.?limit|quota|insufficient|429/i.test(detail)
+            :quota
               ?'外部 Agent 的请求额度不足或已限流，请检查官方客户端账户'
               :'外部 Agent 拒绝了请求，请检查所选模型的权限及官方客户端的服务状态';
-          const error=Error(publicMessage);error.publicMessage=publicMessage;throw error;
+          throw providerFailure(auth?'AUTH_REQUIRED':quota?'QUOTA_EXCEEDED':'REQUEST_FAILED',publicMessage);
         }
         if(!Object.hasOwn(message,'result'))throw Error(`${method}: 响应不完整`);
         return message.result;

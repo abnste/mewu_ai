@@ -6,6 +6,7 @@
 - 优化中文、日文识别结果中的多余空格，保留英文词间距和表格列间距。
 - 减少绘制历史处理和橡皮命中检测的重复计算。
 - 长截图预览改为独立处理并限制排队数量，改善滚动时的响应和取消速度。
+- 支持外部 Agent 返回明确的登录、额度及模型错误，失败状态不会被当成正常回答或自动重试。
 - 改善 Linux 图形桌面切换时的截图、录屏授权恢复与会话接手，修复恢复媒体后截图界面持续加载的问题。
 
 保留现有配置、会话与插件数据。
@@ -24,6 +25,7 @@
 - Remove unnecessary CJK recognition spaces while retaining English word spacing and table column separation.
 - Reduce repeated work in drawing history and eraser hit testing.
 - Process scrolling capture previews separately with a bounded pending queue.
+- Preserve classified external Agent failures, including login, quota and unavailable models, without treating them as answers or replaying requests.
 - Improve Linux desktop-session handoff, capture and recording authorization recovery, and media restoration.
 
 Existing settings, conversations and plugin data are retained.

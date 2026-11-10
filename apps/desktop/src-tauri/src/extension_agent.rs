@@ -207,6 +207,17 @@ pub(crate) async fn start_external_run(
 }
 
 fn response_text(result: &Value) -> Result<String, String> {
+    // A provider may explicitly classify a failure. Never persist an arbitrary
+    // upstream exception (which can contain credentials) or turn it into an answer.
+    if result.get("isError").and_then(Value::as_bool) == Some(true) {
+        return Err(match result.pointer("/error/code").and_then(Value::as_str) {
+            Some("AUTH_REQUIRED") => "外部 Agent 登录已失效，请在官方客户端登录后重新连接",
+            Some("QUOTA_EXCEEDED") => "外部 Agent 的请求额度不足或已限流，请检查官方客户端账户及所选模型",
+            Some("MODEL_UNAVAILABLE") => "外部 Agent 无法使用所选模型，请重新选择可用模型",
+            Some("CONNECTION_FAILED") => "无法连接外部 Agent，请检查官方客户端和连接设置",
+            _ => "外部 Agent 未完成请求，请检查官方客户端的服务状态",
+        }.into());
+    }
     let answer = result
         .as_str()
         .or_else(|| result.get("content").and_then(Value::as_str))
@@ -288,6 +299,17 @@ pub(crate) fn append_memory_unavailable(body:&mut Value)->Result<(),String> {
 
 #[cfg(test)] mod memory_tests {
     use super::*;
+    #[test] fn provider_failure_remains_failed_without_exposing_upstream_text() {
+        for (code,expected) in [("AUTH_REQUIRED","登录"),("QUOTA_EXCEEDED","额度"),("MODEL_UNAVAILABLE","模型"),("CONNECTION_FAILED","连接"),("untrusted-secret","未完成")] {
+            let result=json!({"isError":true,"error":{"code":code,"message":"private upstream credential"},"content":"must not become an answer"});
+            let error=response_text(&result).unwrap_err();
+            assert!(error.contains(expected));
+            assert!(!error.contains("private") && !error.contains("untrusted") && !error.contains("answer"));
+        }
+        assert!(response_text(&json!({"isError":true})).is_err());
+        assert_eq!(response_text(&json!({"content":"valid answer"})).unwrap(),"valid answer");
+        assert_eq!(response_text(&json!("legacy answer")).unwrap(),"legacy answer");
+    }
     #[test] fn memory_is_reference_data_and_does_not_replace_the_current_request() {
         let mut body=json!({"messages":[{"role":"system","content":"system rules"},{"role":"user","content":"current task"}]});
         append_memory_context(&mut body,&json!({"memories":[{"text":"quoted instruction"}]})).unwrap();

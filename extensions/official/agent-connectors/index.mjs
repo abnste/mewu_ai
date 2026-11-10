@@ -45,6 +45,10 @@ export default definePlugin(async ctx=>{
       session=>ctx.storage.set(key,{config:fingerprint,session}));
     return {content:result.content};
     }catch(error){
+      if(runtime.capabilities.includes('agent.failure-result')){
+        const codes=['AUTH_REQUIRED','QUOTA_EXCEEDED','MODEL_UNAVAILABLE','CONNECTION_FAILED','REQUEST_FAILED'];
+        return {isError:true,error:{code:codes.includes(error?.providerCode)?error.providerCode:'REQUEST_FAILED'}};
+      }
       // Explicit public diagnostics, never arbitrary exceptions, paths or stacks.
       const publicErrors=['请先在该 Agent 的官方客户端或 CLI 中登录','请先在 Codex 官方客户端登录','请选择已安装的运行程序','所选 Codex 模型不可用','该 Agent 未声明图片支持','请先在外部 Agent 设置中检测并保存连接','未找到已安装的官方客户端，请在外部 Agent 设置中重新检测','无法启动外部程序，请检查程序路径、工作目录和启动参数'];
       const message=publicErrors.includes(error?.message)||['该 Agent 无法切换到所选模型，请选择默认模型或更新官方客户端','该 Agent 未提供所选模型','WorkBuddy 桌面登录尚未传递给运行时。请打开桌面客户端并完成一次对话，再重新连接；无需安装 CLI 或复制密钥。'].includes(error?.message)

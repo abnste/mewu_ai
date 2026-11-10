@@ -93,6 +93,16 @@ A bound Agent runs without requiring a host model connection or API key. It rece
 
 Each invocation receives a bounded recent conversation window, preserving the Agent soul and current request. `context.history` reports total, included and omitted message counts. This limits a single request rather than the durable conversation or memory collection; full history stays in Mewu, and the selected memory provider retains data independently across runs.
 
+When `runtime.describe()` advertises `agent.failure-result`, an Agent may return
+`{ "isError": true, "error": { "code": "QUOTA_EXCEEDED" } }` for an expected provider
+failure. Supported codes are `AUTH_REQUIRED`, `QUOTA_EXCEEDED`, `MODEL_UNAVAILABLE`,
+`CONNECTION_FAILED`, and `REQUEST_FAILED`. Mewu records a failed run with a fixed,
+localized diagnostic; it does not save a successful answer, retain memory, or
+automatically replay the request. Unknown codes produce the generic failure.
+Raw provider messages, credentials and stack traces must never be placed in
+stream events; the host ignores additional error fields. On older hosts, keep
+throwing the error rather than returning a failure as successful answer text.
+
 `ctx.model.invoke` uses the current conversation's selected model and host-held credentials. It accepts visible messages, a prompt and image artifact identifiers. No connection key is passed to plugin code. A plugin can implement its own observation/action loop instead of inheriting the built-in Agent's loop.
 
 `ctx.ui.render({html, width, height})` creates a persistent HTML object in the current space. It uses the existing isolated, movable object renderer and blackboard behavior. HTML/SVG/Canvas can be interactive inside the sandbox; it does not receive unrestricted Tauri IPC or access to the application's DOM.
