@@ -362,14 +362,23 @@ fn snapshot_target(
     }
     Ok(window)
 }
-fn next_frame(request: u8, holding: bool) -> NextFrame {
-    match request {
-        2 => NextFrame::Cancel,
-        3 => NextFrame::Save,
-        _ if holding => NextFrame::Wait,
-        _ => NextFrame::Capture {
-            finish_after: request == 1,
-        },
+#[derive(Default)]
+struct CaptureControl {
+    finish_pending: bool,
+}
+impl CaptureControl {
+    fn next_frame(&mut self, request: u8, holding: bool) -> NextFrame {
+        // A finish request survives transient alignment failures. It never
+        // authorizes saving an uncertain frame or overrides cancellation.
+        self.finish_pending |= request == 1;
+        match request {
+            2 => NextFrame::Cancel,
+            3 => NextFrame::Save,
+            _ if holding => NextFrame::Wait,
+            _ => NextFrame::Capture {
+                finish_after: self.finish_pending,
+            },
+        }
     }
 }
 fn complete_frame(status: StitchStatus) -> bool {
@@ -640,6 +649,7 @@ pub async fn start_scroll_capture(
             let mut preview_dirty = false;
             let started = Instant::now();
             let mut holding = false;
+            let mut control = CaptureControl::default();
             let mut pacing = crate::scroll_pacing::ScrollPacing::default();
             loop {
                 let frame_started = Instant::now();
@@ -660,7 +670,7 @@ pub async fn start_scroll_capture(
                         s.status = StitchStatus::LimitReached
                     });
                 }
-                let finish_after = match next_frame(action.swap(0, Ordering::AcqRel), holding) {
+                let finish_after = match control.next_frame(action.swap(0, Ordering::AcqRel), holding) {
                     NextFrame::Cancel => return Ok(None),
                     NextFrame::Save => break,
                     NextFrame::Wait => {
@@ -1398,6 +1408,53 @@ mod tests {
     }
 
     #[test]
+    fn one_finish_request_completes_after_a_real_stitcher_recovers_without_saving_blank_rows() {
+        let frame = |top: u32| image::RgbaImage::from_fn(128, 96, |x, y| {
+            let value = (y + top).wrapping_mul(0x9e3779b9) ^ x.wrapping_mul(0x85ebca6b);
+            let value = (value ^ (value >> 16)).wrapping_mul(0x7feb352d);
+            image::Rgba([value as u8, (value >> 8) as u8, (value >> 16) as u8, 255])
+        });
+        let mut stitch = ScrollStitcher::new(frame(0), StitchLimits::default()).unwrap();
+        let mut control = CaptureControl::default();
+        let NextFrame::Capture { finish_after } = control.next_frame(1, false) else { panic!() };
+        let invalid = image::RgbaImage::from_pixel(128, 96, image::Rgba([255; 4]));
+        assert!(!(finish_after && complete_frame(stitch.accept(invalid).unwrap().status)));
+        let NextFrame::Capture { finish_after } = control.next_frame(0, false) else { panic!() };
+        let recovered = stitch.accept(frame(24)).unwrap();
+        assert_eq!(recovered.status, StitchStatus::Extended);
+        assert!(finish_after && complete_frame(recovered.status));
+        let output = stitch.finish().unwrap();
+        assert_eq!(output.dimensions(), (128, 120));
+        let (first, last) = (frame(0), frame(24));
+        for (x, y, pixel) in output.enumerate_pixels() {
+            assert_eq!(pixel, if y < 96 { first.get_pixel(x, y) } else { last.get_pixel(x, y - 24) });
+        }
+    }
+
+    #[test]
+    fn finish_survives_alignment_recovery_but_cancel_and_explicit_keep_take_priority() {
+        let mut control = CaptureControl::default();
+        for (request, status, finished) in [
+            (1, StitchStatus::LostOverlap, false),
+            (0, StitchStatus::Ambiguous, false),
+            (0, StitchStatus::LowInformation, false),
+            (0, StitchStatus::Retraced, true),
+        ] {
+            let NextFrame::Capture { finish_after } = control.next_frame(request, false) else {
+                panic!("finish must wait for a verified frame");
+            };
+            assert_eq!(finish_after && complete_frame(status), finished);
+        }
+        assert_eq!(control.next_frame(0, true), NextFrame::Wait);
+        assert_eq!(control.next_frame(2, true), NextFrame::Cancel);
+        assert_eq!(control.next_frame(2, false), NextFrame::Cancel);
+        assert_eq!(control.next_frame(3, true), NextFrame::Save);
+        assert_eq!(control.next_frame(3, false), NextFrame::Save);
+        assert_eq!(CaptureControl::default().next_frame(0, false),
+            NextFrame::Capture { finish_after: false });
+    }
+
+    #[test]
     fn finish_never_implies_keep_on_uncertain_last_frame_or_a_stopped_source() {
         for status in [
             StitchStatus::LostOverlap,
@@ -1415,20 +1472,20 @@ mod tests {
             assert!(complete_frame(status));
         }
         assert_eq!(
-            next_frame(1, false),
+            CaptureControl::default().next_frame(1, false),
             NextFrame::Capture { finish_after: true }
         );
         assert_eq!(
-            next_frame(0, false),
+            CaptureControl::default().next_frame(0, false),
             NextFrame::Capture {
                 finish_after: false
             }
         );
-        assert_eq!(next_frame(1, true), NextFrame::Wait);
-        assert_eq!(next_frame(0, true), NextFrame::Wait);
-        assert_eq!(next_frame(3, true), NextFrame::Save);
-        assert_eq!(next_frame(3, false), NextFrame::Save);
-        assert_eq!(next_frame(2, true), NextFrame::Cancel);
+        assert_eq!(CaptureControl::default().next_frame(1, true), NextFrame::Wait);
+        assert_eq!(CaptureControl::default().next_frame(0, true), NextFrame::Wait);
+        assert_eq!(CaptureControl::default().next_frame(3, true), NextFrame::Save);
+        assert_eq!(CaptureControl::default().next_frame(3, false), NextFrame::Save);
+        assert_eq!(CaptureControl::default().next_frame(2, true), NextFrame::Cancel);
         assert_eq!(
             serde_json::from_str::<Action>("\"keep\"")
                 .map(|a| matches!(a, Action::Keep))
