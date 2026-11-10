@@ -208,7 +208,11 @@ export default function SpaceCanvas(props: Props) {
   const [drawingSession, setDrawingSession] = createSignal<DrawingSession>();
   const [imageDrawing, setImageDrawing] = createSignal<{sceneId:string;itemId:string;assetId:string}>();
   const imageDrawingItem = createMemo(() => { const target=imageDrawing(); return target?.sceneId===props.scene.id ? props.scene.items.find(item=>item.id===target.itemId&&item.asset.id===target.assetId&&item.asset.kind==='image') : undefined; });
-  const closeImageDrawing = () => { setImageDrawing(undefined); setSelectionActivity(false); props.onFocusComposer?.(); };
+  const closeImageDrawing = () => {
+    setImageDrawing(undefined);
+    setSelectionActivity(false);
+    canvas.focus({ preventScroll: true });
+  };
   const beginImageDrawing = (id:string) => { const item=props.scene.items.find(item=>item.id===id); if(!item||blocked()||drawingSession()||props.scene.run?.status==='running'||!props.onImageDrawingCommand)return; activateItem(id);setImageDrawing({sceneId:props.scene.id,itemId:id,assetId:item.asset.id});setSelectionActivity(true); };
   const [pluginMenu, setPluginMenu] = createSignal<'workflow' | 'ocr' | 'scroll' | 'translation' | 'pin'>();
   const [extensionButtonCount, setExtensionButtonCount] = createSignal(0);
@@ -462,7 +466,14 @@ export default function SpaceCanvas(props: Props) {
     if (activity() === value) return;
     setActivity(value); props.onSelectionActivity?.(value);
   }
-  function closeDrawing() { if(props.blackboard){void props.onBlackboardClose?.();return;} setDrawingSession(undefined); setSelectionActivity(false); const region = activeRegion(); if (region) revealToolbar(region); props.onFocusComposer?.(); }
+  function closeDrawing() {
+    if (props.blackboard) { void props.onBlackboardClose?.(); return; }
+    setDrawingSession(undefined);
+    setSelectionActivity(false);
+    const region = activeRegion();
+    if (region) revealToolbar(region);
+    canvas.focus({ preventScroll: true });
+  }
   function beginDrawing(region: Region) {
     if (blocked() || !props.scene.background) return;
     void settledRegion(region, region => {
