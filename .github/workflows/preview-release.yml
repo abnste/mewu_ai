@@ -31,10 +31,12 @@ jobs:
           node-version: '24'
           cache: npm
       - name: Install Linux native build dependencies
+        id: linux-dependencies
         if: runner.os == 'Linux'
-        timeout-minutes: 10
+        timeout-minutes: 12
         run: bash scripts/install-linux-ci-dependencies.sh
       - name: Build verified Linux media SDK and TIFF dependency in Docker
+        id: linux-media
         if: runner.os == 'Linux'
         timeout-minutes: 30
         shell: bash
@@ -49,6 +51,7 @@ jobs:
           readelf --file-header --dynamic --version-info /usr/lib/x86_64-linux-gnu/libGLESv2.so.2
           sha256sum /usr/lib/x86_64-linux-gnu/libGLESv2.so.2 /usr/share/doc/libgles2/copyright
       - name: Install locked frontend dependencies
+        id: frontend-dependencies
         run: npm ci
       - name: Resolve Mac test temporary directory
         if: runner.os == 'macOS'
@@ -69,7 +72,7 @@ jobs:
         if: runner.os == 'Windows'
         run: cargo test -p mewu-desktop --locked recording_backend::native -- --ignored --nocapture --test-threads=1
       - name: Test Linux GTK regressions in isolated display processes
-        if: runner.os == 'Linux' && !cancelled()
+        if: runner.os == 'Linux' && !cancelled() && steps.linux-dependencies.outcome == 'success' && steps.linux-media.outcome == 'success' && steps.frontend-dependencies.outcome == 'success'
         shell: bash
         run: |
           set -euo pipefail
@@ -80,32 +83,32 @@ jobs:
             xvfb-run -a env -u WAYLAND_DISPLAY GDK_BACKEND=x11 cargo test -p mewu-desktop --bin mewu-desktop --locked "$regression" -- --exact --ignored --nocapture --test-threads=1
           done
       - name: Test Linux window visibility on a real X server
-        if: runner.os == 'Linux' && !cancelled()
+        if: runner.os == 'Linux' && !cancelled() && steps.linux-dependencies.outcome == 'success' && steps.linux-media.outcome == 'success' && steps.frontend-dependencies.outcome == 'success'
         shell: bash
         run: |
           set -e
           xvfb-run -a cargo test -p mewu-desktop --locked --features linux-x11-tests x11_visibility_native -- --nocapture --test-threads=1
       - name: Verify Linux GLib source backport and optimized FFI
-        if: runner.os == 'Linux' && !cancelled()
+        if: runner.os == 'Linux' && !cancelled() && steps.linux-dependencies.outcome == 'success' && steps.linux-media.outcome == 'success' && steps.frontend-dependencies.outcome == 'success'
         shell: bash
         run: |
           set -e
           node scripts/check-glib-backport.mjs
           cargo test -p mewu-desktop --locked --release --features tauri/custom-protocol --test glib_variant_iter -- --nocapture
       - name: Test Linux credentials on an isolated real session bus
-        if: runner.os == 'Linux' && !cancelled()
+        if: runner.os == 'Linux' && !cancelled() && steps.linux-dependencies.outcome == 'success' && steps.linux-media.outcome == 'success' && steps.frontend-dependencies.outcome == 'success'
         shell: bash
         run: |
           set -e
           dbus-run-session -- env MEWU_SECRET_SERVICE_TEST_ISOLATED=1 cargo test -p mewu-desktop --locked --features linux-secret-service-tests native_secret_service -- --nocapture --test-threads=1
       - name: Test Linux lifetime owners and closed-stdio descendants
-        if: runner.os == 'Linux' && !cancelled()
+        if: runner.os == 'Linux' && !cancelled() && steps.linux-dependencies.outcome == 'success' && steps.linux-media.outcome == 'success' && steps.frontend-dependencies.outcome == 'success'
         shell: bash
         run: |
           set -e
           env MEWU_LINUX_WORKER_TEST_ISOLATED=1 cargo test -p mewu-desktop --bin mewu-desktop --locked --features linux-worker-tests native_linux_ -- --nocapture --test-threads=1
       - name: Test Linux trusted worker factory and admission failures
-        if: runner.os == 'Linux' && !cancelled()
+        if: runner.os == 'Linux' && !cancelled() && steps.linux-dependencies.outcome == 'success' && steps.linux-media.outcome == 'success' && steps.frontend-dependencies.outcome == 'success'
         shell: bash
         run: |
           set -e
