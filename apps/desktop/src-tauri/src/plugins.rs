@@ -804,7 +804,8 @@ pub(crate) fn manifest_platform_error(manifest: &PluginManifest, platform: &str)
                 OcrEngine::AppleVision => platform == "darwin-aarch64",
                 OcrEngine::LinuxTesseract => platform == "linux-x86_64",
             },
-            PluginContribution::InputSpeechToText { .. } => platform == "windows-x86_64",
+            PluginContribution::InputSpeechToText { .. }
+            | PluginContribution::Scroll { .. } => platform == "windows-x86_64",
             PluginContribution::Codes { .. } => platform != "linux-x86_64",
             _ => true,
         };
@@ -2587,6 +2588,25 @@ mod tests {
         for target in mewu_extension::PLUGIN_PLATFORMS { assert!(manifest_platform_error(&package("1.0.0"),target).is_none()); }
     }
     #[test]
+    fn scrolling_requires_an_available_native_frame_source_even_for_restored_plugins() {
+        let mut manifest = parse_manifest(OFFICIAL_SCROLL).unwrap();
+        for platform in mewu_extension::PLUGIN_PLATFORMS {
+            assert_eq!(manifest_platform_error(&manifest, platform).is_none(), platform == "windows-x86_64");
+        }
+        if cfg!(windows) { return; }
+        manifest.id = "example.scroll".into();
+        let directory = Directory::new();
+        let mut store = PluginStore::open(&directory.0).unwrap();
+        // A formerly enabled installation must not retain a runnable capability
+        // just because its saved state predates the platform check.
+        let old = store.install_package_with_state(manifest, PluginSource::Official, None, true, PluginState::Enabled).unwrap();
+        let record = store.list().unwrap().into_iter().find(|p| p.manifest.id == old.manifest.id).unwrap();
+        assert!(record.error.is_some());
+        assert!(store.scroll(&old.manifest.id, old.revision, "capture").is_err());
+        assert!(store.set_enabled(&old.manifest.id, old.revision, true).is_err());
+        assert_eq!(store.read(&old.manifest.id).unwrap().unwrap().revision, old.revision);
+    }
+    #[test]
     fn model_connections_validate_typed_protocols_addresses_and_secret_free_options() {
         let bytes = include_bytes!("../../plugins/migrations/retired-model-connection.json");
         let valid: serde_json::Value = serde_json::from_slice(bytes).unwrap();
@@ -3388,6 +3408,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(windows)]
     fn scroll_capability_is_revision_bound_and_removal_survives_restart() {
         let dir = Directory::new();
         let mut store = PluginStore::open(&dir.0).unwrap();

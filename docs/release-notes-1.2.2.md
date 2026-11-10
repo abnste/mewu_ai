@@ -10,6 +10,7 @@
 - 支持外部 Agent 返回明确的登录、额度及模型错误，失败状态不会被当成正常回答或自动重试。
 - 改善 Linux 图形桌面切换时的截图、录屏授权恢复与会话接手，修复恢复媒体后截图界面持续加载的问题。
 - 修复 Linux 重启后设备编号变化导致原数据目录被误判、软件无法启动的问题。
+- 修正原生插件的系统支持检查；滚动长截图当前仅支持 Windows，其他系统不再显示无效的截图工具入口。
 
 保留现有配置、会话与插件数据。
 
@@ -31,5 +32,6 @@
 - Preserve classified external Agent failures, including login, quota and unavailable models, without treating them as answers or replaying requests.
 - Improve Linux desktop-session handoff, capture and recording authorization recovery, and media restoration.
 - Keep Linux data directories accessible when a reboot changes the filesystem device number.
+- Correct native plugin availability checks. Scrolling captures currently require Windows; unsupported systems no longer expose a nonfunctional capture action.
 
 Existing settings, conversations and plugin data are retained.
