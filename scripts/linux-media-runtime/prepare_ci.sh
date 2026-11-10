@@ -5,8 +5,11 @@ set -euo pipefail
 : "${RUNNER_TEMP:?}" "${GITHUB_ENV:?}"
 test ! -e /opt/mewu-gst-next
 stage=$(mktemp -d "$RUNNER_TEMP/mewu-linux-media.XXXXXX")
-docker build -f scripts/linux-media-runtime/sdk/Dockerfile -t mewu-linux-media-sdk:ci scripts/linux-media-runtime
-docker build --target library-artifact -f scripts/linux-tiff-no-jbig/Dockerfile -t mewu-linux-tiff-artifact:ci scripts/linux-tiff-no-jbig
+# The minimal base has no CA bundle. Mount the runner's public trust roots for
+# the first HTTPS apt transaction; install the distro CA package normally.
+test -s /etc/ssl/certs/ca-certificates.crt
+docker build --secret id=system-ca,src=/etc/ssl/certs/ca-certificates.crt -f scripts/linux-media-runtime/sdk/Dockerfile -t mewu-linux-media-sdk:ci scripts/linux-media-runtime
+docker build --secret id=system-ca,src=/etc/ssl/certs/ca-certificates.crt --target library-artifact -f scripts/linux-tiff-no-jbig/Dockerfile -t mewu-linux-tiff-artifact:ci scripts/linux-tiff-no-jbig
 sdk= tiff=
 cleanup() { if [ -n "$sdk" ]; then docker rm "$sdk" >/dev/null; fi; if [ -n "$tiff" ]; then docker rm "$tiff" >/dev/null; fi; }
 trap cleanup EXIT

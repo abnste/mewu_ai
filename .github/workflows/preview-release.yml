@@ -32,9 +32,11 @@ jobs:
           cache: npm
       - name: Install Linux native build dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential libssl-dev librsvg2-dev libayatana-appindicator3-dev patchelf libfuse2 fonts-noto-cjk fonts-dejavu-core xvfb xauth dbus bubblewrap squashfs-tools libtesseract4 tesseract-ocr-eng libgles2 file python3-pyelftools
+        timeout-minutes: 10
+        run: bash scripts/install-linux-ci-dependencies.sh
       - name: Build verified Linux media SDK and TIFF dependency in Docker
         if: runner.os == 'Linux'
+        timeout-minutes: 30
         shell: bash
         run: bash scripts/linux-media-runtime/prepare_ci.sh
       - name: Inspect the system GLES wrapper and license

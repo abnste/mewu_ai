@@ -26,9 +26,14 @@ Run from the repository root. Compilation and native tests run inside complete
 Docker builds. There is no host compiler requirement and no app/package input.
 
 ```text
-docker build --target verified -t mewu-linux-tiff-no-jbig:verified scripts/linux-tiff-no-jbig
-docker build --target library-artifact --output type=local,dest=<new-artifact-directory> scripts/linux-tiff-no-jbig
+docker build --secret id=system-ca,src=/etc/ssl/certs/ca-certificates.crt --target verified -t mewu-linux-tiff-no-jbig:verified scripts/linux-tiff-no-jbig
+docker build --secret id=system-ca,src=/etc/ssl/certs/ca-certificates.crt --target library-artifact --output type=local,dest=<new-artifact-directory> scripts/linux-tiff-no-jbig
 ```
+
+The initial HTTPS package download mounts the build host's public PEM CA bundle
+as `system-ca`; adjust its source path on other hosts. Ubuntu's CA package is then
+installed normally. TLS verification, signed package indexes and locked source
+hashes remain required. Download retries and connection/data waits are bounded.
 
 The `verified` target checks all 19 retained codec factories, writes and decodes
 nine RGB TIFF compression types plus Group 3/4 bilevel TIFF, and checks decoded

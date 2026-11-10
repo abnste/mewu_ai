@@ -10,8 +10,15 @@ Build the complete SDK in Docker from the repository root:
 
 ```sh
 docker build -f scripts/linux-media-runtime/sdk/Dockerfile \
+  --secret id=system-ca,src=/etc/ssl/certs/ca-certificates.crt \
   -t mewu-linux-media-sdk scripts/linux-media-runtime
 ```
+
+The build uses official Ubuntu HTTPS repositories, bounded download retries and
+the build host's public CA bundle only for the first package installation. On
+other build hosts, supply the path to their PEM CA bundle through the same
+`system-ca` build secret. TLS and Ubuntu package signature verification remain
+enabled; no credentials are needed. Later steps use Ubuntu's installed CA package.
 
 The Ubuntu 22.04 base digest is fixed. Source archives are verified before
 extraction. The build uses shared LGPL FFmpeg with GPL, nonfree and version3

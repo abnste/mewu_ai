@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: MPL-2.0
 FROM ubuntu:22.04@sha256:5ec03bb3441e8b0bf3b4f9cd4629a1ae763010dc3035bb8da3ae6cf026486401
 ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get update && apt-get install -y --no-install-recommends build-essential rustc pkg-config python3-pip ninja-build nasm gnupg ca-certificates flex bison libglib2.0-dev libvo-aacenc-dev libmp3lame-dev libpulse-dev libudev-dev libdbus-1-dev libgl-dev libgles-dev libegl-dev libx11-dev libx11-xcb-dev libxext-dev libwayland-dev wayland-protocols libdrm-dev libgbm-dev binutils file patchelf python3-pyelftools && rm -rf /var/lib/apt/lists/*
+RUN sed -i 's|http://archive.ubuntu.com|https://archive.ubuntu.com|g; s|http://security.ubuntu.com|https://security.ubuntu.com|g' /etc/apt/sources.list && printf '%s\n' 'Acquire::Retries "2";' 'Acquire::https::Timeout "30";' 'Acquire::http::Timeout "30";' 'APT::Update::Error-Mode "any";' > /etc/apt/apt.conf.d/80mewu-build-network
+RUN --mount=type=secret,id=system-ca,required=true,mode=0444 apt-get -o Acquire::https::CAInfo=/run/secrets/system-ca update && apt-get -o Acquire::https::CAInfo=/run/secrets/system-ca install -y --no-install-recommends build-essential rustc pkg-config python3-pip ninja-build nasm gnupg ca-certificates flex bison libglib2.0-dev libvo-aacenc-dev libmp3lame-dev libpulse-dev libudev-dev libdbus-1-dev libgl-dev libgles-dev libegl-dev libx11-dev libx11-xcb-dev libxext-dev libwayland-dev wayland-protocols libdrm-dev libgbm-dev binutils file patchelf python3-pyelftools && rm -rf /var/lib/apt/lists/*
 COPY sdk/requirements.txt /tmp/requirements.txt
 RUN pip3 install --no-cache-dir --require-hashes -r /tmp/requirements.txt
 COPY sdk/sources.json sdk/fetch.py sdk/build_phases.py sdk/audit.py /opt/mewu-gst-src/
