@@ -1,35 +1,44 @@
 name: Desktop release candidates
 on:
   workflow_dispatch:
+    inputs:
+      platform:
+        description: Platform to build (other platforms are left running)
+        type: choice
+        default: all
+        options: [all, windows, macos, linux]
+      sourceCommit:
+        description: Exact source commit; leave empty to build this workflow commit
+        type: string
+        required: false
 permissions:
   contents: read
 concurrency:
-  group: desktop-release-candidates-${{ github.sha }}
+  group: desktop-release-candidates-${{ inputs.sourceCommit || github.sha }}-${{ inputs.platform || 'all' }}
   cancel-in-progress: false
 jobs:
   build:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: windows-latest
-            platform: windows-x86_64
-            bundles: nsis
-          - os: macos-15
-            platform: darwin-aarch64
-            bundles: app,dmg
-          - os: ubuntu-22.04
-            platform: linux-x86_64
-            bundles: appimage
+        include: ${{ fromJSON(inputs.platform == 'windows' && '[{"os":"windows-latest","platform":"windows-x86_64","bundles":"nsis"}]' || inputs.platform == 'macos' && '[{"os":"macos-15","platform":"darwin-aarch64","bundles":"app,dmg"}]' || inputs.platform == 'linux' && '[{"os":"ubuntu-22.04","platform":"linux-x86_64","bundles":"appimage"}]' || '[{"os":"windows-latest","platform":"windows-x86_64","bundles":"nsis"},{"os":"macos-15","platform":"darwin-aarch64","bundles":"app,dmg"},{"os":"ubuntu-22.04","platform":"linux-x86_64","bundles":"appimage"}]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.sourceCommit || github.sha }}
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24'
           cache: npm
+      - name: Verify exact build source
+        id: source
+        env:
+          EXPECTED_COMMIT: ${{ inputs.sourceCommit || github.sha }}
+          WORKFLOW_COMMIT: ${{ github.sha }}
+        run: |
+          node -e "const fs=require('node:fs'),cp=require('node:child_process');const expected=process.env.EXPECTED_COMMIT;if(!/^[a-f0-9]{40}$/.test(expected))throw Error('Full source commit required');const actual=cp.execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim();if(actual!==expected)throw Error('Checkout source mismatch');fs.appendFileSync(process.env.GITHUB_OUTPUT,'commit='+actual+'\n');console.log(JSON.stringify({sourceCommit:actual,workflowCommit:process.env.WORKFLOW_COMMIT}))"
       - name: Install Linux native build dependencies
         id: linux-dependencies
         if: runner.os == 'Linux'
@@ -141,12 +150,12 @@ jobs:
         run: cargo test -p mewu-desktop --bin mewu-desktop --locked real_linux_tesseract_recognizes_known_english_and_blank -- --ignored --nocapture --test-threads=1
       - name: Build native candidate
         env:
-          MEWU_BUILD_COMMIT: ${{ github.sha }}
+          MEWU_BUILD_COMMIT: ${{ steps.source.outputs.commit }}
         run: npm run desktop:build -- --bundles ${{ matrix.bundles }} --config "${{ github.workspace }}/out/native-build-config.json"
       - name: Stage verified Linux media runtime
         if: runner.os == 'Linux'
         env:
-          MEWU_BUILD_COMMIT: ${{ github.sha }}
+          MEWU_BUILD_COMMIT: ${{ steps.source.outputs.commit }}
         shell: bash
         run: |
           set -euo pipefail
@@ -154,7 +163,7 @@ jobs:
       - name: Normalize and verify new Linux AppImage permissions
         if: runner.os == 'Linux'
         env:
-          MEWU_BUILD_COMMIT: ${{ github.sha }}
+          MEWU_BUILD_COMMIT: ${{ steps.source.outputs.commit }}
         shell: bash
         run: |
           set -e
@@ -209,12 +218,12 @@ jobs:
       - name: Build isolated Linux package worker verification feature
         if: runner.os == 'Linux'
         env:
-          MEWU_BUILD_COMMIT: ${{ github.sha }}
+          MEWU_BUILD_COMMIT: ${{ steps.source.outputs.commit }}
         run: npm run desktop:build -- --bundles appimage --features linux-worker-tests --config "${{ github.workspace }}/out/native-build-config.json"
       - name: Stage verified media runtime for feature-only Linux package
         if: runner.os == 'Linux'
         env:
-          MEWU_BUILD_COMMIT: ${{ github.sha }}
+          MEWU_BUILD_COMMIT: ${{ steps.source.outputs.commit }}
         shell: bash
         run: |
           set -euo pipefail
@@ -222,7 +231,7 @@ jobs:
       - name: Verify isolated Linux package permissions and real Code worker
         if: runner.os == 'Linux'
         env:
-          MEWU_BUILD_COMMIT: ${{ github.sha }}
+          MEWU_BUILD_COMMIT: ${{ steps.source.outputs.commit }}
         shell: bash
         run: |
           set -e
@@ -256,7 +265,7 @@ jobs:
       - name: Preserve candidates for native installation tests
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: mewu-${{ matrix.platform }}-${{ github.sha }}
+          name: mewu-${{ matrix.platform }}-${{ steps.source.outputs.commit }}
           path: out/release-${{ matrix.platform }}/
           include-hidden-files: true
           if-no-files-found: error
