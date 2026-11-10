@@ -4,6 +4,8 @@
 
 协议、安装路径规则、配置页面、模型查询、会话恢复和消息转换都在本插件中。宿主只提供设置插槽、隔离配置、受控的本机进程及 JSON 行通信；不包含这些平台的专用适配分支。对话条内的引擎与模型选择需要 Mewu 1.0.10 或更新版本；旧宿主仍可在 Agent 设置中绑定引擎。
 
+Linux AppImage 用户请更新至 Mewu 1.0.11 或更高版本，避免宿主的私有 Python/动态库路径影响官方客户端。插件按模型目录校验 Codex 思考程度，并把输入框自动大写造成的 `Low` 匹配为服务实际公布的 `low`；不支持的选项会在发送任务前明确拒绝。
+
 ## 使用
 
 1. 安装插件，打开设置 → 外部 Agent。
@@ -17,14 +19,18 @@
 
 ## 平台接口
 
-WorkBuddy 桌面优先复用已登录客户端的受管运行时，不要求安装 CodeBuddy CLI，也不读取或复制登录密钥。客户端首次启动尚未初始化任务后端时，需在 WorkBuddy 中完成一次对话再连接。连接结束和桥接异常退出会关闭本连接的运行时，不影响已有桌面任务。自动重新定位同时更新启动方式，手动配置保留。
-
 | 平台 | 接口 | 说明 |
 | --- | --- | --- |
 | Codex | `codex app-server --listen stdio://` | 官方客户端登录、账户与模型检测，持久线程恢复。默认采用只读 sandbox。 |
 | MiniMax Code | `mcode acp` | 官方 CLI 的 ACP 服务；不将桌面应用的私有令牌接口冒充正式 Agent 协议。 |
 | WorkBuddy / CodeBuddy | 桌面内置 `--serve` HTTP ACP；或 `codebuddy --acp` | 自动检测桌面程序及 CLI，桥接逻辑完全在插件里。需要使用对应官方客户端/CLI 的登录。 |
 | Hermes | `hermes acp` | 需要安装 ACP 支持；沿用 Hermes 的身份、记忆、技能和模型配置。 |
+
+WorkBuddy 桌面桥接同时接受 ACP 的 `application/json` 单次响应和 `text/event-stream` 流式响应，避免单次响应被当成空 SSE 丢弃而导致连接失败。
+
+新版 WorkBuddy 会加密桌面登录凭据。请保持已登录的 WorkBuddy 桌面客户端运行：插件会校验其 sidecar 身份，再通过原生 `session.create` 握手启动受管连接，由桌面端传递凭据初始化。插件不读取或复制登录密钥；结束时只关闭自己创建的受管进程，不影响桌面已有任务。没有桌面运行记录的旧版客户端仍使用直接启动方式；存在运行记录但身份校验或连接失败时，不降级到无法复用加密登录的独立进程。
+桌面连接自动采用当前仍运行客户端的最新产品配置，模型列表随官方客户端刷新；过期进程的配置不会使用，手动配置的产品环境保持不变。文件只交由原客户端读取，不复制登录密钥。
+自动检测优先选择 WorkBuddy 桌面客户端；仅未发现桌面安装时尝试 CodeBuddy CLI。首次安装或重启后，若客户端尚未启动自己的任务后端，请先在 WorkBuddy 中完成一次对话再连接。Windows、macOS 的 WorkBuddy 5.9.3 已实测复用桌面登录并获得模型实际回复；Ubuntu WSL 使用官方 CodeBuddy CLI 2.179.3 完成模型选择、两轮对话与宿主重启后的会话恢复。这不是所有版本、模型或系统的兼容性保证。登录、切换账号或客户端升级后，请重新测试连接并选择当前模型目录中的项目；旧的自定义模型标识可能已不可用，插件不会静默改用其他模型。
 
 配置全插件共享；会话按角色、Mewu 会话及连接配置隔离。支持恢复时复用远端会话；不支持时发送 Mewu 已投影的对话历史。每轮进程归该调用所有，结束、取消或插件撤权会关闭。图片通过本轮原生素材句柄注入协议消息，不允许插件传入任意本机图片路径。
 
@@ -43,7 +49,13 @@ WorkBuddy 桌面优先复用已登录客户端的受管运行时，不要求安�
 入口为 `index.mjs`，无需 Node 依赖随插件安装。使用项目 SDK 打包器生成安装 ZIP，README 和测试文件不放入运行包。
 
 ```sh
-node tools/extension-market/cli.mjs pack extensions/official/agent-connectors --out out/agent-connectors-0.1.8.zip --file profiles.mjs --file rpc.mjs --file adapters.mjs --file view.mjs --file workbuddy.mjs --file catalog.mjs --validator /path/to/mewu-plugin-validator
+node tools/extension-market/cli.mjs pack extensions/official/agent-connectors --out out/agent-connectors-0.1.9.zip --file profiles.mjs --file rpc.mjs --file adapters.mjs --file view.mjs --file workbuddy.mjs --file catalog.mjs --validator /path/to/mewu-plugin-validator
 ```
 
-一手参考：[ACP v1](https://agentclientprotocol.com/protocol/v1/overview)、[Codex App Server](https://developers.openai.com/codex/app-server)、[MiniMax Code](https://github.com/MiniMax-AI/minimax-code)、[CodeBuddy ACP](https://www.codebuddy.ai/docs/cli/acp)、[Hermes ACP](https://hermes-agent.nousresearch.com/docs/user-guide/features/acp/)。
+协议文档：[ACP v1](https://agentclientprotocol.com/protocol/v1/overview)、[Codex App Server](https://developers.openai.com/codex/app-server)、[MiniMax Code](https://github.com/MiniMax-AI/minimax-code)、[CodeBuddy ACP](https://www.codebuddy.ai/docs/cli/acp)、[Hermes ACP](https://hermes-agent.nousresearch.com/docs/user-guide/features/acp/)。
+
+## 实际界面
+
+![Windows 中的独立外部 Agent 设置页面](screenshots/settings-windows.jpg)
+
+截图来自 Windows 原生 MewuAI 1.0.4 候选程序，插件版本 0.1.2。连接检测不等于账户已登录或模型调用已通过。

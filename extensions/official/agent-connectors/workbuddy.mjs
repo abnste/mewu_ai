@@ -10,9 +10,35 @@ export function workbuddyProcess(config){
   const cli=config.args[0].replace(/^\\\\\?\\(?=[A-Za-z]:\\)/,'');
   return {...config,args:['--eval',`eval(${JSON.stringify(bootstrap)})`,JSON.stringify({cli,args:config.args.slice(1)})]};
 }
+// Desktop product catalogs are refreshed independently of the bundled CLI.
+// Pass the desktop-owned file to that CLI; never copy account credentials.
+export function desktopProductEnvironment({fs,path,root,cli,env,isAlive}){
+ if(['ACC_PRODUCT_CONFIG_PATH','ACC_PRODUCT_CONFIG_V3','ACC_PRODUCT_CONFIG_V2','ACC_PRODUCT_CONFIG'].some(key=>env[key]?.trim()))return {};
+ const readProduct=file=>{
+  try{
+   const stat=fs.lstatSync(file);
+   if(!stat.isFile()||stat.isSymbolicLink()||stat.size>4*1024*1024)return null;
+   const value=JSON.parse(fs.readFileSync(file,'utf8'));
+   return value.productName==='WorkBuddy'&&Array.isArray(value.models)?stat:null;
+  }catch{return null;}
+ };
+ const cache=path.join(root,'cache');let entries=[];
+ try{
+  if(!fs.lstatSync(cache).isSymbolicLink())entries=fs.readdirSync(cache).flatMap(name=>{
+   const match=/^acc-product-config-v3-(\d+)-[a-f0-9-]+\.json$/i.exec(name);
+   if(!match||!isAlive(Number(match[1])))return [];
+   const file=path.join(cache,name),stat=readProduct(file);
+   return stat?[{file,time:stat.mtimeMs}]:[];
+  });
+ }catch{}
+ entries.sort((a,b)=>b.time-a.time||a.file.localeCompare(b.file));
+ const file=entries[0]?.file??path.resolve(path.dirname(cli),'..','product.json');
+ return readProduct(file)?{ACC_PRODUCT_CONFIG_PATH:file}:{};
+}
 export const bootstrap=String.raw`
 const http=require('node:http'),net=require('node:net'),readline=require('node:readline'),{spawn}=require('node:child_process');
 const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),crypto=require('node:crypto');
+${desktopProductEnvironment.toString()}
 const config=JSON.parse(process.argv[1]);let child,port,connection,stopped=false,managed,control;
 let leaseServer;const leaseSockets=new Set();
 const closeLease=()=>{for(const socket of leaseSockets)socket.destroy();leaseServer?.close();};
@@ -68,7 +94,8 @@ async function startManagedDesktop(){
  managed={sessionId};
  const lease=await createLease();
  const args=['--eval','('+managedEntrypoint.toString()+')()',JSON.stringify({cli:config.cli,args:[...config.args.filter(arg=>arg!=='--acp'),'--serve','--host','127.0.0.1'],lease})];
- const result=await desktopCall('session.create',{sessionId,command:process.execPath,args,cwd:process.cwd(),env:{...process.env,CODEBUDDY_CONFIG_DIR:root,WORKBUDDY_CONFIG_DIR:root,...(record.epochAddress?{SANDBOX_CENTER_IPC_ADDRESS:record.epochAddress}:{})},port:0,cols:80,rows:24});
+ const productEnv=desktopProductEnvironment({fs,path,root,cli:config.cli,env:process.env,isAlive:pid=>{try{process.kill(pid,0);return true;}catch{return false;}}});
+ const result=await desktopCall('session.create',{sessionId,command:process.execPath,args,cwd:process.cwd(),env:{...process.env,...productEnv,CODEBUDDY_CONFIG_DIR:root,WORKBUDDY_CONFIG_DIR:root,...(record.epochAddress?{SANDBOX_CENTER_IPC_ADDRESS:record.epochAddress}:{})},port:0,cols:80,rows:24});
  if(result?.sessionId!==sessionId||!Number.isInteger(result.pid)||typeof result.runtimeId!=='string')throw Error('Invalid desktop session');
  managed.runtimeId=result.runtimeId;
  const endpoint=new URL(result.acpEndpoint);
