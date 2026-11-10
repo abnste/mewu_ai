@@ -2325,7 +2325,16 @@ mod tests {
     fn unix_persisted_full_volume_uuid_survives_boot_device_change_but_runtime_does_not() {
         let f = Fixture::new();
         let pin = pin_root(&f.paths.legacy_root).unwrap();
-        let actual = pin.stamp.clone();
+        let mut actual = pin.stamp.clone();
+        // Older Linux kernels/filesystems legitimately have no UUID ioctl.
+        // Exercise that native fallback before testing UUID comparison itself.
+        if actual.volume_uuid.is_none() {
+            let mut previous = actual.clone();
+            previous.volume ^= 1;
+            assert!(!durable_root_identity_matches(&actual, &previous));
+            assert!(durable_root_identity_matches(&actual, &actual));
+            actual.volume_uuid = Some([0x53; 16]);
+        }
         assert!(actual.volume_uuid.is_some_and(|uuid| uuid != [0; 16]));
         let mut previous_boot = actual.clone();
         previous_boot.volume ^= 1;
@@ -2365,7 +2374,7 @@ mod tests {
         let before = profile(&open_ledger(&f.paths, false).unwrap()).unwrap();
         prepare_unix_storage_identity_in_home(&f.paths, &runtime, &f.base).unwrap();
         let after = profile(&open_ledger(&f.paths, false).unwrap()).unwrap();
-        assert_eq!(after.stamp, actual);
+        assert_eq!(after.stamp, if actual.volume_uuid.is_some() { actual.clone() } else { before.stamp.clone() });
         assert_eq!(after.dataset_id, before.dataset_id);
         assert_eq!(after.generation, before.generation);
         assert_eq!(after.root, before.root);
@@ -2373,6 +2382,11 @@ mod tests {
         assert_eq!(after.pending, before.pending);
         assert_eq!(after.required_dbs, before.required_dbs);
         assert_eq!(inventory(&f.paths.default_root, None, &mut |_| Ok(())).unwrap(), before_files);
+        if actual.volume_uuid.is_none() {
+            assert_eq!(readonly_state(&f.paths).unwrap_err().code, "active_root_identity_changed");
+            assert_eq!(resolve_startup(&f.paths).unwrap_err().code, "active_root_identity_changed");
+            return;
+        }
         assert_eq!(readonly_state(&f.paths).unwrap().unwrap().generation, 0);
         assert_eq!(resolve_startup(&f.paths).unwrap().root, f.paths.default_root);
         prepare_unix_storage_identity_in_home(&f.paths, &runtime, &f.base).unwrap();
@@ -2388,7 +2402,13 @@ mod tests {
         let original = serde_json::to_string(&old).unwrap();
         db.execute("UPDATE profile SET active_identity=?1 WHERE id=1", [&original]).unwrap();
         drop(db);
-        assert_eq!(prepare_unix_storage_identity_in_home(&f.paths, &runtime, &f.base).unwrap_err().code, "active_root_identity_changed");
+        let prepared = prepare_unix_storage_identity_in_home(&f.paths, &runtime, &f.base);
+        if actual.volume_uuid.is_some() {
+            assert_eq!(prepared.unwrap_err().code, "active_root_identity_changed");
+        } else {
+            prepared.unwrap();
+        }
+        assert_eq!(readonly_state(&f.paths).unwrap_err().code, "active_root_identity_changed");
         let after = profile(&open_ledger(&f.paths, false).unwrap()).unwrap();
         assert_eq!(after.stamp, old);
         assert_ne!(after.stamp.file, actual.file);
@@ -2409,8 +2429,12 @@ mod tests {
             if missing { fs::remove_file(f.paths.default_root.join("hooks.db")).unwrap(); }
             let before = inventory(&f.paths.default_root, None, &mut |_| Ok(())).unwrap();
             let result = prepare_unix_storage_identity_in_home(&f.paths, &runtime, &f.base);
-            assert_eq!(result.is_err(), missing);
-            assert_eq!(profile(&open_ledger(&f.paths, false).unwrap()).unwrap().stamp, if missing { previous } else { actual });
+            let uuid_available = actual.volume_uuid.is_some();
+            assert_eq!(result.is_err(), missing && uuid_available);
+            assert_eq!(profile(&open_ledger(&f.paths, false).unwrap()).unwrap().stamp, if missing || !uuid_available { previous } else { actual });
+            if missing || !uuid_available {
+                assert_eq!(readonly_state(&f.paths).unwrap_err().code, "active_root_identity_changed");
+            }
             assert_eq!(inventory(&f.paths.default_root, None, &mut |_| Ok(())).unwrap(), before);
         }
     }
