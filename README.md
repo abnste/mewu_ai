@@ -13,6 +13,10 @@
   <p><a href="./README.zh-CN.md">简体中文</a> · <strong>English</strong> · <a href="https://www.mewu.ai/?lang=en">Website</a> · <a href="https://github.com/abnste/mewu_ai/releases/latest">Release notes</a> · <a href="https://github.com/abnste/mewu_ai/issues">Report an issue</a></p>
 </div>
 
+<!-- yarkr:badges:start -->
+[![Indexed on Yarkr](https://api.yarkr.com/functions/v1/api/api/v1/badges/repos/abnste/mewu_ai/version.svg)](https://yarkr.com/arks/abnste/mewu-ai)
+<!-- yarkr:badges:end -->
+
 **MewuAI is an open-source desktop Agent app for Windows, macOS, and Linux.** Select screen content and express what you need through annotations, freehand drawings, and files. Chat, organize references, generate interactive tools, and use plugins to act in the same space. **Mewu with you** — working alongside you.
 
 | At a glance | Details |
@@ -227,6 +231,40 @@ Check **Settings → About**, or download the [latest release](https://github.co
 Report an [Issue](https://github.com/abnste/mewu_ai/issues) with your system, app version, reproduction steps, and relevant screenshots.
 
 </details>
+
+<!-- yarkr:install:start -->
+## Install with Yarkr
+
+This repo is indexed on [Yarkr](https://yarkr.com/arks/abnste/mewu-ai) as the ark [abnste/mewu-ai](https://yarkr.com/arks/abnste/mewu-ai), so its skills install into Claude Code, Codex, Cursor and other agent harnesses with one command.
+
+### CLI
+
+Install the whole ark, which Yarkr keeps equal to this repo:
+
+```bash
+npx yarkr-cli sync abnste/mewu-ai
+```
+
+Or add individual skills:
+
+```bash
+npx yarkr-cli add skill:abnste/mewu-ai/mewu-image-annotation
+npx yarkr-cli add skill:abnste/mewu-ai/mewu-interactive-objects
+npx yarkr-cli add skill:abnste/mewu-ai/mewu-plugin-authoring
+```
+
+No Node.js? `curl -fsSL https://yarkr.com/install.sh | sh` (macOS, Linux) or `irm https://yarkr.com/install.ps1 | iex` (Windows PowerShell) installs `yarkr` as a standalone binary; then type `yarkr` in place of `npx yarkr-cli`.
+
+### MCP
+
+Connect your agent to the ark over MCP:
+
+```bash
+npx yarkr-cli mcp add abnste/mewu-ai
+```
+
+Or point any MCP client at `https://api.yarkr.com/functions/v1/api/mcp/o/abnste/mewu-ai`.
+<!-- yarkr:install:end -->
 
 ## Contributing
 
